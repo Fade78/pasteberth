@@ -1,0 +1,26 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+
+# Environnements / caches
+.venv/
+venv/
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Configuration privée et secrets (jamais versionnés)
+config.toml
+passwd
+*.passwd
+
+# Données runtime
+data/
+*.log
+*.session
+
+# Travail local non versionné
+work/

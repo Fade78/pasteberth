@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pasteberth"
+version = "1.0.0"
+description = "Clipboard-to-filesystem bridge for remote CLI/TUI harnesses (OpenCode and friends)"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [{ name = "Pasteberth contributors" }]
+# Aucune dépendance runtime : bibliothèque standard uniquement.
+dependencies = []
+
+[project.scripts]
+pasteberth = "pasteberth.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["pasteberth*"]
+
+[tool.setuptools.package-data]
+pasteberth = ["static/*", "templates/*"]

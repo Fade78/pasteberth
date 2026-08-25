@@ -1,0 +1,26 @@
+[Unit]
+Description=Pasteberth — pont clipboard navigateur vers filesystem
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# %h = home de l'utilisateur ; unité prévue pour `systemctl --user`.
+# Adaptez le chemin si le wrapper est installé ailleurs.
+ExecStart=%h/.local/bin/pasteberth serve
+Restart=on-failure
+RestartSec=2
+
+# Durcissement sans risque pour un service utilisateur :
+NoNewPrivileges=true
+PrivateTmp=true
+RestrictSUIDSGID=true
+
+# Durcissement optionnel (décommentez et adaptez les chemins à VOS zones,
+# sinon le service refusera de démarrer si un chemin déclaré manque) :
+#ProtectSystem=full
+#ProtectHome=read-only
+#ReadWritePaths=%h/Depots %h/.config/pasteberth %h/.local/share/pasteberth
+
+[Install]
+WantedBy=default.target

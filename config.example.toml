@@ -1,0 +1,68 @@
+# Configuration exemple de Pasteberth.
+#
+# Emplacement réel attendu : ~/.config/pasteberth/config.toml
+#   (ou $PASTEBERTH_CONFIG, ou --config PATH)
+#
+# Le mot de passe n'est JAMAIS écrit ici : `pasteberth passwd` le hash
+# (scrypt salé) dans un fichier « passwd » à côté de ce config.toml.
+
+listen_address = "127.0.0.1"      # "0.0.0.0" pour exposer au réseau (auth exigée)
+port = 8765
+max_upload_size = "20MB"          # octets, KB/KiB, MB/MiB, GB/GiB
+
+# Proxys autorisés à poser X-Forwarded-* (IP ou CIDR).
+# Ne jamais y inclure des adresses joignables depuis Internet.
+trusted_proxies = ["127.0.0.1", "::1"]
+
+# Refus explicite du démarrage non-loopback sans auth, sauf si vous forcez :
+allow_unauthenticated_remote = false
+
+log_level = "INFO"                # DEBUG | INFO | WARNING | ERROR
+
+[auth]
+enabled = true                    # false uniquement en usage local derrière vos mains
+session_ttl_hours = 72            # durée de vie des sessions (serveur)
+
+# ---------------------------------------------------------------- zones ----
+# id : identifiant logique utilisé par l'API et l'UI ([a-z0-9_-])
+# directory : chemin ABSOLU vu PAR LE SERVEUR (celui qu'utilise OpenCode)
+# retain    : nombre d'images conservées par zone (rétention circulaire)
+# reference_prefix : préfixe collé devant le chemin dans la référence
+# color     : fond de la zone (#RRGGBB) ; contraste texte calculé auto
+# create_directory : créer le répertoire s'il manque (défaut true)
+
+[[zones]]
+id = "lwp"
+label = "LWP"
+type = "local"
+directory = "/home/devint3/Depots/lightwebpres/.opencode-images"
+retain = 10
+reference_prefix = "@"
+color = "#26394a"
+
+[[zones]]
+id = "lwp_gui"
+label = "LWP_GUI"
+type = "local"
+directory = "/home/devint3/Depots/lightwebpres-gui/.opencode-images"
+retain = 10
+reference_prefix = "@"
+color = "#3a3348"
+
+[[zones]]
+id = "pulse"
+label = "Pulse"
+type = "local"
+directory = "/home/devint3/Depots/Pulse/.opencode-images"
+retain = 15
+reference_prefix = "@"
+color = "#304237"
+
+[[zones]]
+id = "pulse_carri"
+label = "Pulse-carri"
+type = "local"
+directory = "/home/devint3/Depots/Pulse-carri/.opencode-images"
+retain = 5
+reference_prefix = "@"
+color = "#46323c"
