@@ -22,6 +22,7 @@ module.exports = defineConfig({
     browserName,
     baseURL: "http://127.0.0.1:8876",
     headless: true,
+    permissions: ["clipboard-read", "clipboard-write"],
     screenshot: "only-on-failure",
     trace: "retain-on-failure",
     video: "retain-on-failure",

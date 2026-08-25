@@ -563,7 +563,7 @@ def make_handler(cfg: Config, service: PasteService, sessions: SessionStore,
                 self._json(
                     429,
                     {"error": {"code": "rate_limited",
-                               "message": "trop de tentatives, réessayez plus tard"}},
+                               "message": "too many attempts, try again later"}},
                     extra_headers=[("Retry-After", str(int(retry_after) + 1))],
                 )
                 return
@@ -614,7 +614,7 @@ def make_handler(cfg: Config, service: PasteService, sessions: SessionStore,
                     time.sleep(0.5)
                     limiter.register_failure(ip)
                     log.warning("échec de connexion (%s)", ip)
-                    self._render_login(401, "Mot de passe incorrect.")
+                    self._render_login(401, "Incorrect password.")
             finally:
                 limiter.release(ip)
 

@@ -1,11 +1,11 @@
 [Unit]
-Description=Pasteberth — pont clipboard navigateur vers filesystem
+Description=Pasteberth — browser clipboard to harness filesystem bridge
 After=network-online.target
 Wants=network-online.target
 
 [Service]
 Type=simple
-# Chemin par défaut du clone documenté ; adaptez-le si le dépôt est ailleurs.
+# Default path for the documented clone; adapt it if the repository is elsewhere.
 WorkingDirectory=%h/Depots/pasteberth
 ExecStart=%h/Depots/pasteberth/bin/pasteberth
 Restart=on-failure
@@ -13,13 +13,13 @@ RestartSec=2
 TimeoutStopSec=90
 UMask=0077
 
-# Durcissement sans risque pour un service utilisateur :
+# Safe hardening for a user service:
 NoNewPrivileges=true
 PrivateTmp=true
 RestrictSUIDSGID=true
 
-# Durcissement optionnel (décommentez et adaptez les chemins à VOS zones,
-# sinon le service refusera de démarrer si un chemin déclaré manque) :
+# Optional hardening (uncomment and adapt paths to YOUR zones; otherwise the
+# service will refuse to start if a declared path is missing):
 #ProtectSystem=full
 #ProtectHome=read-only
 #ReadWritePaths=%h/Depots %h/.config/pasteberth %h/.local/share/pasteberth

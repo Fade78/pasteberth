@@ -27,10 +27,12 @@ class TestContratsFrontend(unittest.TestCase):
     def test_aucune_zone_devinee(self):
         # Sans zone active : demande explicite, jamais d'envoi ambigu.
         self.assertIn("requireActiveZone", self.app_js)
-        self.assertIn("Choisissez d'abord une zone", self.app_js)
+        self.assertIn("Choose a zone first", self.app_js)
 
     def test_copy_clipboard_api_avec_repli(self):
         self.assertIn("navigator.clipboard.writeText", self.app_js)
+        self.assertIn("navigator.clipboard.write", self.app_js)
+        self.assertIn("function copyImage", self.app_js)
         self.assertIn("execCommand(\"copy\")", self.app_js.replace("'", '"'))
 
     def test_effacement_clipboard(self):
@@ -80,7 +82,9 @@ class TestContratsFrontend(unittest.TestCase):
         self.assertIn("selectedByZone", self.app_js)
         self.assertIn("history-index", self.app_js)
         self.assertIn('className = "zoom-btn"', self.app_js)
+        self.assertIn('className = "copy-image-btn"', self.app_js)
         self.assertIn('id="pv-clear"', self.index_html)
+        self.assertIn('id="pv-copy-image"', self.index_html)
 
     def test_version_dans_le_branding(self):
         self.assertIn("brand-version", self.index_html)

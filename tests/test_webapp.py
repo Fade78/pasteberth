@@ -189,7 +189,7 @@ class TestAuthentification(Base):
         elapsed = time.monotonic() - start
         self.assertEqual(status, 401)
         self.assertGreaterEqual(elapsed, 0.4)  # temporisation anti-bruteforce
-        self.assertIn("Mot de passe incorrect", body.decode())
+        self.assertIn("Incorrect password", body.decode())
         self.assertNotIn("set-cookie", headers)
 
     def test_bon_mot_de_passe_cookie_drapeaux(self):

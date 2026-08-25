@@ -1,110 +1,111 @@
+[English](README.md) | [Français](README.fr.md)
+
 # Pasteberth
 
-**Le pont entre un presse-papiers graphique et un harness CLI/TUI qui ne sait
-pas recevoir facilement des images.**
+**The bridge between a graphical clipboard and a CLI/TUI harness that cannot
+easily receive images.**
 
-Pasteberth est pensé avant tout pour les harness qui travaillent dans un
-terminal — OpenCode et similaires. Ces outils savent très bien lire un fichier
-sur leur machine, mais ils n'ont pas toujours accès au presse-papiers graphique
-du poste de travail, ni à une fonction pratique pour recevoir une capture.
+Pasteberth is designed first and foremost for harnesses that work in a
+terminal — OpenCode and similar tools. These tools are very good at reading a
+file on their machine, but they do not always have access to the workstation's
+graphical clipboard, nor a convenient way to receive a screenshot.
 
-Pasteberth garde donc le transfert volontairement simple : le navigateur reçoit
-l'image, le serveur l'écrit sur le filesystem de la machine du harness, puis
-retourne le chemin exact à coller dans le terminal.
+Pasteberth therefore keeps the transfer deliberately simple: the browser
+receives the image, the server writes it to the filesystem of the harness
+machine, then returns the exact path to paste into the terminal.
 
-Vous faites une capture d'écran sur votre poste, vous la collez (Ctrl+V) dans
-la zone du bon projet dans votre navigateur, et vous récupérez une référence
-filesystem prête à coller dans le harness :
+You take a screenshot on your workstation, paste it (Ctrl+V) into the area for
+the right project in your browser, and retrieve a filesystem reference ready to
+paste into the harness:
 
 ```
 @/home/user/PasteBerth/captures/2026-08-25_22-58-10_7ad5d9.png
 ```
 
 ```
-POSTE DE TRAVAIL                         MACHINE DU HARNESS
-capture ──▶ navigateur ── HTTPS ──▶ Pasteberth ──▶ captures/<zone>/
+WORKSTATION                              HARNESS MACHINE
+capture ──▶ browser ── HTTPS ──▶ Pasteberth ──▶ captures/<zone>/
                   ▲                         │
-                  └──── référence copiée ◀──┘
+                  └──── copied reference ◀──┘
                                                │
                                                ▼
-                                      terminal / harness CLI-TUI
+                                      terminal / CLI-TUI harness
 ```
 
-Le navigateur n'a **jamais** besoin d'accéder au chemin retourné. Ce chemin est
-celui que voit le harness, sur la machine où tourne Pasteberth.
+The browser **never** needs to access the returned path. This is the path seen
+by the harness, on the machine where Pasteberth runs.
 
-La version actuelle est `1.0.1`.
+The current version is `1.0.1`.
 
 ---
 
-## Sommaire
+## Contents
 
-1. [Cas d'usage](#cas-dusage)
-2. [Fonctionnement](#fonctionnement)
+1. [Use Cases](#use-cases)
+2. [How It Works](#how-it-works)
 3. [Installation](#installation)
 4. [Configuration](#configuration)
-5. [Mot de passe](#mot-de-passe)
-6. [Lancement & service systemd](#lancement--service-systemd)
+5. [Password](#password)
+6. [Launching & systemd service](#launching--systemd-service)
 7. [HTTPS & reverse proxy](#https--reverse-proxy)
 8. [API](#api)
-9. [Sécurité](#sécurité)
+9. [Security](#security)
 10. [Tests](#tests)
 11. [Limitations & V2](#limitations--v2)
 
 ---
 
-## Cas d'usage
+## Use Cases
 
-Pasteberth est utile quand les deux côtés du travail ne sont pas le même
-environnement :
+Pasteberth is useful when the two sides of the work are not in the same
+environment:
 
-- la capture est faite dans un environnement graphique, éventuellement sur un
-  autre poste ;
-- le harness travaille dans un terminal ou une session distante ;
-- le harness peut lire le filesystem de sa machine, mais ne peut pas recevoir
-  directement une image depuis le presse-papiers graphique ;
-- vous voulez conserver quelques captures par projet sans créer un service de
-  partage d'images généraliste.
+- the screenshot is taken in a graphical environment, possibly on another
+  workstation;
+- the harness works in a terminal or a remote session;
+- the harness can read the filesystem on its machine, but cannot receive an
+  image directly from the graphical clipboard;
+- you want to keep a few captures per project without creating a general-purpose
+  image-sharing service.
 
-Pasteberth n'est pas un stockage public, un CDN ou un outil de synchronisation
-entre utilisateurs. C'est un sas local et ciblé entre une interface graphique
-et un processus de terminal.
+Pasteberth is not public storage, a CDN, or a synchronization tool between
+users. It is a local, targeted gateway between a graphical interface and a
+terminal process.
 
-## Fonctionnement
+## How It Works
 
-- **Une zone par projet** : chaque zone a un identifiant, un label, une couleur,
-  un répertoire et une rétention indépendants. Cliquez une zone pour la rendre
-  active, puis utilisez Ctrl+V ou le glisser-déposer.
-- **Panneau de l'image sélectionnée** : après un upload, la nouvelle image est
-  sélectionnée en haut avec son nom, sa référence et les actions `Copier`,
-  `Effacer` et `Zoom`.
-- **Index des images** : les miniatures du bas forment l'historique complet de
-  la zone, plus récent en premier. Cliquez une miniature pour la sélectionner
-  dans le panneau supérieur ; la miniature sélectionnée est signalée.
-- **Presse-papiers** : après un upload, Pasteberth tente de copier la référence
-  exacte dans le presse-papiers. Le bouton `Effacer` remplace son contenu par
-  un texte vide, dans la limite des permissions Clipboard du navigateur.
-- **Références exactes** : le serveur construit et retourne le chemin ; le
-  frontend le copie tel quel, sans jamais le reconstruire côté client. Le
-  préfixe et le suffixe sont configurables, par exemple pour obtenir
-  `` `/chemin/image.png` ``.
-- **Rétention circulaire par zone** (`retain = N`) : au-delà de N images, les
-  plus anciennes sont supprimées — uniquement des fichiers créés par
-  Pasteberth avec leur sidecar JSON.
-- **Page permanente** : prévue pour rester ouverte des heures ; les miniatures
-  viennent du serveur, aucune Blob URL ne s'accumule, et l'historique est
-  resynchronisé toutes les 45 secondes ainsi qu'au retour sur l'onglet.
+- **One zone per project**: each zone has an independent identifier, label,
+  color, directory, and retention policy. Click a zone to make it active, then
+  use Ctrl+V or drag and drop.
+- **Selected image panel**: after an upload, the new image is selected at the
+  top with its name, reference, and the `Copy link`, `Copy image`, `Clear`, and
+  `Zoom` actions.
+- **Image index**: the thumbnails at the bottom form the zone's complete
+  history, newest first. Click a thumbnail to select it in the upper panel; the
+  selected thumbnail is marked.
+- **Clipboard**: after an upload, Pasteberth tries to copy the exact reference
+  to the clipboard. `Copy link` copies that reference, `Copy image` copies the
+  image itself, and `Clear` replaces the clipboard contents with empty text,
+  within the limits of the browser's Clipboard permissions.
+- **Exact references**: the server builds and returns the path; the frontend
+  copies it as-is, never reconstructing it client-side. The prefix and suffix
+  are configurable, for example to obtain `` `/path/image.png` ``.
+- **Circular retention per zone** (`retain = N`): beyond N images, the oldest
+  ones are deleted — only files created by Pasteberth with their JSON sidecar.
+- **Persistent page**: intended to remain open for hours; thumbnails come from
+  the server, no Blob URL accumulates, and the history is resynchronized every
+  45 seconds and when returning to the tab.
 
-Pour que le sélecteur `@` d'OpenCode trouve directement les images, placez la
-zone dans le workspace ouvert par OpenCode ou ouvrez un workspace qui contient
-à la fois le projet et le répertoire de captures. Sinon, le chemin reste valide
-pour une lecture explicite par le harness.
+For OpenCode's `@` selector to find images directly, place the zone in the
+workspace opened by OpenCode, or open a workspace that contains both the
+project and the capture directory. Otherwise, the path remains valid for an
+explicit read by the harness.
 
 ## Installation
 
-Prérequis : **Python ≥ 3.11**, aucune dépendance tierce (bibliothèque
-standard uniquement). Le dépôt est directement l'installation ; aucun script
-d'installation ni root ne sont nécessaires.
+Prerequisite: **Python ≥ 3.11**, no third-party dependencies (standard library
+only). The repository is the installation itself; no installation script or
+root access is required.
 
 ```sh
 git clone https://glb.didierb.name/didier/pasteberth.git
@@ -114,17 +115,17 @@ cd pasteberth
 ./bin/pasteberth
 ```
 
-Avant le premier démarrage, vérifiez l'environnement :
+Before the first start, check the environment:
 
 ```sh
 ./bin/pasteberth audit --config config.toml
 ```
 
-Un audit qui ne signale que des avertissements retourne `1` ; les erreurs de
-configuration retournent `2`.
+An audit that reports only warnings returns `1`; configuration errors return
+`2`.
 
-Pour utiliser la commande depuis n'importe quel répertoire, ajoutez
-`bin/` au `PATH` ou utilisez directement `./bin/pasteberth`.
+To use the command from any directory, add `bin/` to the `PATH` or use
+`./bin/pasteberth` directly.
 
 ```sh
 export PATH="$PWD/bin:$PATH"
@@ -133,52 +134,51 @@ pasteberth
 
 ## Configuration
 
-Après génération, le fichier local est `config.toml` à la racine du dépôt et
-reste ignoré par Git. Une configuration explicite peut aussi être fournie par
-`--config PATH` ou `$PASTEBERTH_CONFIG`. Une ancienne configuration XDG dans
-`~/.config/pasteberth/config.toml` reste reconnue. Voir
-[`config.example.toml`](config.example.toml) commenté.
+After generation, the local file is `config.toml` at the repository root and
+remains ignored by Git. An explicit configuration can also be provided with
+`--config PATH` or `$PASTEBERTH_CONFIG`. An older XDG configuration at
+`~/.config/pasteberth/config.toml` remains recognized. See the commented
+[`config.example.toml`](config.example.toml).
 
-Sans `config.toml`, `pasteberth` démarre volontairement en mode minimal,
-uniquement sur loopback, avec le stockage `<depot>/storage/default` et sans
-authentification. Un avertissement est affiché à chaque démarrage. Le même
-avertissement apparaît si une configuration modifiée continue de cibler ce
-stockage par défaut. Ce mode sert au premier essai local, pas à une exposition
-via reverse proxy.
+Without `config.toml`, `pasteberth` intentionally starts in minimal mode,
+loopback-only, with storage at `<repository>/storage/default` and no
+authentication. A warning is displayed at every start. The same warning
+appears if a modified configuration continues to target this default storage.
+This mode is for a first local trial, not for exposure through a reverse proxy.
 
-`pasteberth --generate-config` génère une configuration sécurisée avec
-authentification activée. Modifiez ensuite manuellement `config.toml` selon
-les zones et chemins souhaités. Le fichier reste ignoré par Git.
+`pasteberth --generate-config` generates a secure configuration with
+authentication enabled. Then manually edit `config.toml` according to the
+desired zones and paths. The file remains ignored by Git.
 
-| Clé | Défaut | Rôle |
+| Key | Default | Role |
 |---|---|---|
-| `listen_address` | `"127.0.0.1"` | écoute ; non-loopback exige HTTPS explicite |
-| `port` | `8765` | port TCP |
-| `max_upload_size` | `"20MiB"` | plafond par upload (20 MiB par défaut, 50 MiB maximum) |
-| `max_image_pixels` | `25000000` | budget de décodage (25 MP par défaut, 50 MP maximum) |
-| `trusted_proxies` | loopback | seuls ces pairs peuvent poser `X-Forwarded-*` |
-| `allow_unauthenticated_local` | `false` | opt-in explicite pour le mode anonyme loopback/proxy |
-| `allow_unauthenticated_remote` | `false` | déverrouillage explicite (déconseillé) |
-| `allow_insecure_http_remote` | `false` | opt-in séparé pour HTTP non-loopback (réseau privé uniquement) |
+| `listen_address` | `"127.0.0.1"` | listening address; non-loopback requires explicit HTTPS |
+| `port` | `8765` | TCP port |
+| `max_upload_size` | `"20MiB"` | per-upload limit (20 MiB by default, 50 MiB maximum) |
+| `max_image_pixels` | `25000000` | decoding budget (25 MP by default, 50 MP maximum) |
+| `trusted_proxies` | loopback | only these peers may set `X-Forwarded-*` |
+| `allow_unauthenticated_local` | `false` | explicit opt-in for anonymous loopback/proxy mode |
+| `allow_unauthenticated_remote` | `false` | explicit unlock (discouraged) |
+| `allow_insecure_http_remote` | `false` | separate opt-in for non-loopback HTTP (private network only) |
 | `log_level` | `"INFO"` | DEBUG/INFO/WARNING/ERROR |
-| `[tls] enabled` | `false` | termine TLS directement avec `certificate` et `private_key` |
-| `[auth] enabled` | `true` | protection par mot de passe |
-| `[auth] session_ttl_hours` | `72` | durée des sessions serveur |
-| `[auth] password_file` | à côté de `config.toml` | chemin absolu du hash `passwd` (fichier régulier 0600) |
+| `[tls] enabled` | `false` | terminates TLS directly with `certificate` and `private_key` |
+| `[auth] enabled` | `true` | password protection |
+| `[auth] session_ttl_hours` | `72` | server session lifetime |
+| `[auth] password_file` | next to `config.toml` | absolute path to the `passwd` hash (regular 0600 file) |
 | `[[zones]] …` | `default` | `id`, `label`, `type=local`, `directory`, `retain`, `reference_prefix`, `reference_suffix`, `color` (#RRGGBB), `create_directory`, `min_free_percent` |
 
-`directory` est un chemin **absolu vu par le serveur** — c'est là
-qu'OpenCode lit les images, pas votre navigateur.
+`directory` is an **absolute path as seen by the server** — this is where
+OpenCode reads the images, not your browser.
 
-Pour copier une référence entourée de backquotes, par exemple `` `/chemin/image.png` `` :
+To copy a reference enclosed in backticks, for example `` `/path/image.png` ``:
 
 ```toml
 reference_prefix = "`"
 reference_suffix = "`"
 ```
 
-Pour trois projets, répétez `[[zones]]` ; chaque bloc décrit une entrée de la
-liste `zones` :
+For three projects, repeat `[[zones]]`; each block describes an entry in the
+`zones` list:
 
 ```toml
 [[zones]]
@@ -212,50 +212,49 @@ reference_suffix = ""
 color = "#394252"
 ```
 
-Le stockage intégré par défaut est `<racine-du-dépôt>/storage/default`. Le
-répertoire `storage/` est ignoré par Git, mais il faut le sauvegarder séparément
-si les images ont de la valeur. Un chemin externe peut être indiqué
-manuellement dans `config.toml`.
+The default integrated storage is `<repository-root>/storage/default`. The
+`storage/` directory is ignored by Git, but must be backed up separately if the
+images are valuable. An external path can be specified manually in
+`config.toml`.
 
-Les zones doivent être des répertoires cibles distincts et accessibles en écriture.
-Le mode privé `0700` est recommandé ; un mode plus ouvert produit un avertissement
-à l'audit mais n'empêche pas le démarrage, ce qui permet un partage contrôlé entre
-plusieurs utilisateurs. Chaque zone refuse un nouvel upload si l'espace libre prévu après écriture passerait
-sous `min_free_percent` (défaut `2.0`). La mesure porte sur le filesystem du
-répertoire, pas sur le seul dossier ; plusieurs zones peuvent donc partager un
-filesystem, mais elles partagent alors aussi sa réserve d'espace.
+Zones must be distinct, writable target directories. Private mode `0700` is
+recommended; a more open mode produces an audit warning but does not prevent
+startup, allowing controlled sharing between multiple users. Each zone refuses
+a new upload if the free space expected after writing would fall below
+`min_free_percent` (default `2.0`). The measurement applies to the directory's
+filesystem, not just the folder; multiple zones can therefore share a
+filesystem, but then they also share its free-space reserve.
 
-Les images sont limitées à `16 384 × 16 384` pixels et `25 MP` par défaut,
-ce qui couvre les écrans 4K à 6K usuels. Les images 8K dépassant `25 MP`
-nécessitent une extension explicite du budget.
+Images are limited to `16 384 × 16 384` pixels and `25 MP` by default, which
+covers usual 4K to 6K displays. 8K images exceeding `25 MP` require an explicit
+budget extension.
 
-## Mot de passe
+## Password
 
 ```sh
-pasteberth passwd            # demande + confirmation, hash scrypt salé
-                             # écrit dans password_file ou à côté de config.toml (0600)
+pasteberth passwd            # prompt + confirmation, salted scrypt hash
+                             # writes to password_file or next to config.toml (0600)
 ```
 
-Le mot de passe n'est jamais stocké en clair ni écrit dans config.toml ;
-le hash est vérifié avec `hashlib.scrypt` + comparaison en temps constant.
-Un changement est effectif immédiatement (rechargé à chaque tentative),
-sans redémarrer le service, et invalide les sessions existantes.
-Le serveur refuse de démarrer si l'authentification est activée sans fichier
-`passwd` lisible et valide.
+The password is never stored in plaintext or written to config.toml; the hash
+is verified with `hashlib.scrypt` plus a constant-time comparison. A change
+takes effect immediately (reloaded on every attempt), without restarting the
+service, and invalidates existing sessions. The server refuses to start if
+authentication is enabled without a readable, valid `passwd` file.
 
-## Lancement & service systemd
+## Launching & systemd service
 
 ```sh
-pasteberth                         # premier plan, stockage par défaut si besoin
-pasteberth audit                   # vérification sans modification
-systemctl --user enable --now pasteberth.service   # optionnel
+pasteberth                         # foreground, default storage if needed
+pasteberth audit                   # check without modification
+systemctl --user enable --now pasteberth.service   # optional
 journalctl --user -u pasteberth -f                 # logs
 ```
 
-L'unité fournie (`deploy/pasteberth.service`) est optionnelle et ne nécessite
-aucun root. Adaptez son `WorkingDirectory`, son `ExecStart` et son chemin de
-configuration au dépôt réel avant activation. Exemple si le dépôt est dans
-`/home/devint3/PasteBerth` et la configuration dans `config/` :
+The supplied unit (`deploy/pasteberth.service`) is optional and requires no
+root. Adapt its `WorkingDirectory`, `ExecStart`, and configuration path to the
+actual repository before enabling it. Example if the repository is in
+`/home/devint3/PasteBerth` and the configuration is in `config/`:
 
 ```ini
 [Service]
@@ -263,7 +262,7 @@ WorkingDirectory=%h/PasteBerth
 ExecStart=%h/PasteBerth/bin/pasteberth --config %h/PasteBerth/config/config.toml
 ```
 
-Installez ensuite l'unité dans le gestionnaire utilisateur :
+Then install the unit in the user manager:
 
 ```sh
 mkdir -p ~/.config/systemd/user
@@ -272,41 +271,41 @@ systemctl --user daemon-reload
 systemctl --user enable --now pasteberth.service
 ```
 
-Un refus de démarrage protège contre l'exposition accidentelle :
-**auth désactivée sans opt-in explicite = arrêt avec message explicite**
-(`allow_unauthenticated_local` ou `allow_unauthenticated_remote` selon le cas).
-Une écoute HTTP non-loopback exige également
-`allow_insecure_http_remote = true`; la configuration recommandée reste un
-backend loopback derrière un reverse proxy HTTPS.
+A startup refusal protects against accidental exposure:
+**authentication disabled without explicit opt-in = stop with an explicit
+message** (`allow_unauthenticated_local` or `allow_unauthenticated_remote`, as
+appropriate). A non-loopback HTTP listener also requires
+`allow_insecure_http_remote = true`; the recommended configuration remains a
+loopback backend behind an HTTPS reverse proxy.
 
-Pour que le service utilisateur survive à la dernière déconnexion et démarre
-au boot, activez le linger pour le compte concerné :
+For the user service to survive the last logout and start at boot, enable linger
+for the relevant account:
 
 ```sh
 loginctl enable-linger "$USER"
 ```
 
-Cette option maintient un gestionnaire systemd utilisateur actif même sans
-session interactive ; activez-la seulement si cette persistance est souhaitée.
+This option keeps a user systemd manager active even without an interactive
+session; enable it only if this persistence is desired.
 
 ## HTTPS & reverse proxy
 
-Pasteberth transporte mot de passe, sessions et chemins privés :
-**tout accès réseau non fiable doit passer par HTTPS.** Le reverse proxy reste
-recommandé, mais le serveur peut aussi terminer TLS directement :
+Pasteberth transports passwords, sessions, and private paths:
+**all untrusted network access must go through HTTPS.** A reverse proxy remains
+recommended, but the server can also terminate TLS directly:
 
 ```toml
 [tls]
 enabled = true
-certificate = "/chemin/absolu/cert.pem"
-private_key = "/chemin/absolu/key.pem"
+certificate = "/absolute/path/cert.pem"
+private_key = "/absolute/path/key.pem"
 ```
 
-Avec une écoute non-loopback, activez TLS ou utilisez un reverse proxy HTTPS.
-L'option `allow_insecure_http_remote = true` ne doit être utilisée que sur un
-réseau privé maîtrisé.
+With a non-loopback listener, enable TLS or use an HTTPS reverse proxy. The
+`allow_insecure_http_remote = true` option should only be used on a controlled
+private network.
 
-### Caddy (recommandé)
+### Caddy (recommended)
 
 ```caddy
 pasteberth.example.internal {
@@ -331,27 +330,26 @@ server {
 }
 ```
 
-Dans les deux cas : écoutez Pasteberth sur `127.0.0.1`, et laissez
-`trusted_proxies` contenir uniquement l'IP du proxy. Les en-têtes
-`X-Forwarded-Proto/For` provenant d'un pair non listé sont **ignorés**
-(un client Internet ne peut pas forcer un cookie `Secure` ou usurper
-une IP auprès du limiteur).
+In both cases: listen on `127.0.0.1` for Pasteberth, and let
+`trusted_proxies` contain only the proxy's IP. `X-Forwarded-Proto/For` headers
+from an unlisted peer are **ignored** (an Internet client cannot force a
+`Secure` cookie or spoof an IP with the rate limiter).
 
 ## API
 
-Same-origin uniquement (aucun CORS en V1 ; cookies de session). L'API est
-utile si le client graphique n'est pas le navigateur fourni ou si un script
-veut déposer une image validée dans une zone.
+Same-origin only (no CORS in V1; session cookies). The API is useful if the
+graphical client is not the supplied browser, or if a script wants to deposit a
+validated image in a zone.
 
-| Méthode | Chemin | Rôle |
+| Method | Path | Role |
 |---|---|---|
-| GET | `/api/health` | sonde (public) |
-| GET | `/api/zones` | zones + compteurs |
-| GET | `/api/zones/{id}/images` | historique, plus récent d'abord |
-| POST | `/api/zones/{id}/images` | upload (multipart champ `image`, ou corps brut `image/*` / `application/octet-stream`) |
-| GET | `/previews/{id}/{fichier}` | miniature (protégée) |
+| GET | `/api/health` | probe (public) |
+| GET | `/api/zones` | zones + counts |
+| GET | `/api/zones/{id}/images` | history, newest first |
+| POST | `/api/zones/{id}/images` | upload (multipart `image` field, or raw `image/*` / `application/octet-stream` body) |
+| GET | `/previews/{id}/{file}` | thumbnail (protected) |
 
-Exemple :
+Example:
 
 ```sh
 curl -b cookies.txt -F image=@capture.png \
@@ -365,75 +363,75 @@ curl -b cookies.txt -F image=@capture.png \
   "created_at": "2026-08-24T23:22:31.412000+00:00",
   "width": 1920, "height": 1080, "size": 9283, "format": "png",
   "preview_url": "/previews/default/2026-08-25_01-22-31_a81c42.png",
-  "reference": "@/chemin/du/depot/storage/default/2026-08-25_01-22-31_a81c42.png"
+  "reference": "@/path/to/repository/storage/default/2026-08-25_01-22-31_a81c42.png"
 }
 ```
 
-Formats : PNG, JPEG, WebP — déterminés par le **contenu** (magic bytes +
-structure), jamais par le MIME déclaré. Refus : vide, trop grand, format
-inconnu, conteneur incomplet ou image corrompue. Les noms sont générés côté serveur
-(`AAAA-MM-JJ_HH-MM-SS_<6 hex>.ext`, création `O_EXCL` : zéro écrasement).
-Un espace libre sous le seuil renvoie `507 storage_low`. Une erreur de
-rétention renvoie `503 retention_error` après la création de l'image ; le
-client doit donc recharger l'historique avant de retenter aveuglément.
+Formats: PNG, JPEG, WebP — determined by **content** (magic bytes + structure),
+never by the declared MIME type. Rejections: empty, too large, unknown format,
+incomplete container, or corrupted image. Names are generated server-side
+(`YYYY-MM-DD_HH-MM-SS_<6 hex>.ext`, creation with `O_EXCL`: no overwriting).
+Free space below the threshold returns `507 storage_low`. A retention error
+returns `503 retention_error` after the image is created; the client must
+therefore reload the history before blindly retrying.
 
-## Sécurité
+## Security
 
-- Mots de passe : scrypt salé (N=16384), comparaison temps constant,
-  fichier `passwd` 0600 à côté de la configuration et ignoré par Git ; temporisation + verrouillage progressif par IP
-  (honorant XFF seulement via proxy de confiance).
-- Les requêtes de login sont limitées à 16 KiB, les vérifications scrypt sont
-  globalement bornées et les uploads partagent un budget mémoire de 128 MiB ;
-  les uploads restent limités à 20 MiB par défaut et 50 MiB au maximum.
-- Sessions côté serveur, révocables (logout effectif), token 256 bits,
-  cookie `HttpOnly; SameSite=Lax` + `Secure` dès que le schéma effectif
-  est HTTPS.
-- CSRF : SameSite=Lax + toute requête non sûre avec `Origin`/`Referer`
-  doit correspondre à l'hôte servi (403 sinon). Pas d'`Access-Control-*`.
-- CSP stricte sans inline, `X-Frame-Options: DENY`, `nosniff`,
-  `Referrer-Policy: no-referrer`, `Cache-Control: no-store` sur l'UI/API.
-- Previews et API exigent la session ; un nom de fichier ne peut pas
-  traverser (`[A-Za-z0-9._-]` strict + appartenance à l'historique requis).
-- Seuls les fichiers dotés d'un sidecar Pasteberth peuvent être lus ou
-  supprimés ; vos fichiers personnels dans les répertoires cibles ne sont
-  jamais touchés.
-- Répertoires privés recommandés (`0700`), images/sidecars privés (`0600`), liens
-  symboliques refusés et réconciliation des temporaires après crash.
-- Validation structurelle complète des PNG/JPEG/WebP, budget de dimensions et
-  de pixels, et refus des conteneurs tronqués.
-- Rétention sous verrou par zone : ordre déterministe, uploads concurrents
-  sûrs (tests dédiés).
+- Passwords: salted scrypt (N=16384), constant-time comparison, `passwd` file
+  0600 next to the configuration and ignored by Git; delay + progressive
+  per-IP lockout (honoring XFF only through a trusted proxy).
+- Login requests are limited to 16 KiB, scrypt checks are globally bounded, and
+  uploads share a 128 MiB memory budget; uploads remain limited to 20 MiB by
+  default and 50 MiB maximum.
+- Server-side, revocable sessions (logout takes effect), 256-bit token,
+  `HttpOnly; SameSite=Lax` cookie + `Secure` as soon as the effective scheme
+  is HTTPS.
+- CSRF: SameSite=Lax + every unsafe request with `Origin`/`Referer` must match
+  the served host (403 otherwise). No `Access-Control-*`.
+- Strict CSP without inline content, `X-Frame-Options: DENY`, `nosniff`,
+  `Referrer-Policy: no-referrer`, `Cache-Control: no-store` on the UI/API.
+- Previews and API require the session; a filename cannot traverse (strict
+  `[A-Za-z0-9._-]` + history membership required).
+- Only files with a Pasteberth sidecar can be read or deleted; your personal
+  files in the target directories are never touched.
+- Private directories recommended (`0700`), private images/sidecars (`0600`),
+  symbolic links refused, and temporary files reconciled after a crash.
+- Complete structural validation of PNG/JPEG/WebP, dimensions and pixel budget,
+  and rejection of truncated containers.
+- Retention under a per-zone lock: deterministic ordering, safe concurrent
+  uploads (dedicated tests).
 
 ## Tests
 
 ```sh
 npm ci
-npm run test:all              # Python + navigateur en parallèle
-# ciblé : python3 -m unittest discover -s tests -v
-# ciblé : npm run test:e2e
+npm run test:all              # Python + browser in parallel
+# targeted: python3 -m unittest discover -s tests -v
+# targeted: npm run test:e2e
 ```
 
-La suite couvre : validation images (PNG/JPEG/WebP, corruption, spoofing),
-configuration & politique de démarrage, stockage/rétention/ownership,
-auth/sessions/anti-bruteforce, parser multipart, intégration HTTP complète
-(auth, CSRF/Origin, proxys, en-têtes, fuite de secret), concurrence
-(uploads parallèles même/multi zones, lecteurs pendant écritures),
-CLI (passwd, refus de configuration dangereuse), contrats frontend, et cinq
-scénarios navigateur Playwright sur un serveur Pasteberth réel : chargement et
-sélection clavier, collage sans zone, upload/aperçu, sélection dans l'index et
-glisser-déposer.
-Les tests navigateur utilisent Chromium par défaut ; `E2E_BROWSER=firefox` est
-disponible si le navigateur Playwright correspondant est installé.
+The suite covers: image validation (PNG/JPEG/WebP, corruption, spoofing),
+configuration & startup policy, storage/retention/ownership,
+auth/sessions/anti-brute-force, multipart parser, full HTTP integration
+(auth, CSRF/Origin, proxies, headers, secret leakage), concurrency
+(parallel uploads in the same/multiple zones, readers during writes),
+CLI (passwd, refusal of dangerous configuration), frontend contracts, and five
+Playwright browser scenarios on a real Pasteberth server: loading and keyboard
+selection, paste without a zone, upload/preview, selection in the index, and
+drag and drop.
+Browser tests use Chromium by default; `E2E_BROWSER=firefox` is available if the
+corresponding Playwright browser is installed.
 
 ## Limitations & V2
 
-- Destination unique `local` (relative au serveur). L'abstraction
-  `Destination` est prête pour une `SshDestination` (SFTP, credentials
-  restant côté serveur).
-- Pas d'extension navigateur : l'API est utilisable telle quelle, mais le
-  CORS dédié sera ajouté explicitement le moment venu.
-- Sessions en mémoire : un redémarrage déconnecte (volontaire, simple) ;
-  suppression manuelle d'une image hors rétention à prévoir en UI.
-- Authentification par mot de passe unique en V1 ; les permissions filesystem
-  peuvent toutefois organiser plusieurs zones ou utilisateurs.
-- TLS délégué au reverse proxy ou terminé directement par Pasteberth.
+- Single `local` destination (relative to the server). The `Destination`
+  abstraction is ready for an `SshDestination` (SFTP, with credentials remaining
+  on the server).
+- No browser extension: the API can be used as-is, but dedicated CORS will be
+  added explicitly when the time comes.
+- In-memory sessions: a restart disconnects users (deliberate, simple);
+  manual deletion of an image outside retention remains to be provided in the
+  UI.
+- Single-password authentication in V1; filesystem permissions can nevertheless
+  organize multiple zones or users.
+- TLS delegated to the reverse proxy or terminated directly by Pasteberth.

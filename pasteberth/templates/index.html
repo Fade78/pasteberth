@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="fr">
+<html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -17,9 +17,9 @@
     Pasteberth <span class="brand-version">v__PASTEBERTH_VERSION__</span>
   </h1>
   <div class="topbar-right">
-    <span id="status" class="status" role="status"><span class="dot"></span><span id="status-text">connexion…</span></span>
+    <span id="status" class="status" role="status"><span class="dot"></span><span id="status-text">connecting…</span></span>
     <form id="logout-form" action="/logout" method="post" hidden>
-      <button class="ghost-btn" type="submit">Déconnexion</button>
+      <button class="ghost-btn" type="submit">Log out</button>
     </form>
   </div>
 </header>
@@ -27,19 +27,20 @@
 <main id="grid" class="grid"></main>
 
 <footer class="help">
-  Raccourcis : <kbd>1</kbd>–<kbd>9</kbd> choisir une zone · <kbd>C</kbd> copier la référence sélectionnée · cliquer une miniature pour la sélectionner · glisser-déposer accepté directement sur une zone
+  Shortcuts: <kbd>1</kbd>–<kbd>9</kbd> select a zone · <kbd>C</kbd> copy the selected link · click a thumbnail to select it · drag and drop directly onto a zone
 </footer>
 
 <div id="toast" class="toast" role="status" hidden></div>
 
-<dialog id="pv" aria-label="Aperçu de l'image">
-  <img id="pv-img" alt="aperçu agrandi">
+<dialog id="pv" aria-label="Image preview">
+  <img id="pv-img" alt="enlarged preview">
   <div class="pv-bar">
     <code id="pv-ref" class="ref"></code>
     <div class="pv-actions">
-      <button type="button" id="pv-copy" class="copy-btn">Copier la référence</button>
-      <button type="button" id="pv-clear" class="clear-btn">Effacer</button>
-      <button type="button" id="pv-close" class="ghost-btn">Fermer</button>
+      <button type="button" id="pv-copy" class="copy-btn">Copy link</button>
+      <button type="button" id="pv-copy-image" class="copy-image-btn">Copy image</button>
+      <button type="button" id="pv-clear" class="clear-btn">Clear</button>
+      <button type="button" id="pv-close" class="ghost-btn">Close</button>
     </div>
   </div>
 </dialog>

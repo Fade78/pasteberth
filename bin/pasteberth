@@ -1,5 +1,5 @@
 #!/bin/sh
-# Exécutable portable : le dépôt est l'installation.
+# Portable executable: the repository is the installation.
 set -eu
 
 SCRIPT_PATH="$(readlink -f "$0")"

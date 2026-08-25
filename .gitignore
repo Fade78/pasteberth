@@ -5,7 +5,7 @@ __pycache__/
 build/
 dist/
 
-# Environnements / caches
+# Environments / caches
 .venv/
 venv/
 .pytest_cache/
@@ -15,18 +15,18 @@ node_modules/
 test-results/
 playwright-report/
 
-# Configuration privée et secrets (jamais versionnés)
+# Private configuration and secrets (never versioned)
 config.toml
 passwd
 *.passwd
 /storage/*
 !/storage/.gitignore
 
-# Données runtime
+# Runtime data
 data/
 *.log
 *.session
 
-# Travail local non versionné
+# Unversioned local work
 work/
 /captures/

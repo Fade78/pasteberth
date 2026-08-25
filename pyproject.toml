@@ -10,7 +10,7 @@ readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "MIT" }
 authors = [{ name = "Pasteberth contributors" }]
-# Aucune dépendance runtime : bibliothèque standard uniquement.
+# No runtime dependencies: standard library only.
 dependencies = []
 
 [project.scripts]

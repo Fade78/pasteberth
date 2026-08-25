@@ -13,7 +13,7 @@ async function resetServer(request) {
 async function openApp(page) {
   await page.goto("/", { waitUntil: "domcontentloaded" });
   await expect(page.locator(".zone")).toHaveCount(2);
-  await expect(page.locator("#status-text")).toHaveText("en ligne");
+  await expect(page.locator("#status-text")).toHaveText("online");
 }
 
 async function dispatchPaste(page) {
@@ -52,11 +52,11 @@ test("charge les zones et expose une sélection clavier accessible", async ({ pa
 
   const defaultZone = page.locator('[data-zone="default"]');
   const secondary = page.locator('[data-zone="secondary"]');
-  await expect(defaultZone.getByRole("button", { name: "Sélectionner la zone Default" }))
+  await expect(defaultZone.getByRole("button", { name: "Select zone Default" }))
     .toHaveAttribute("aria-pressed", "false");
 
   await page.locator("body").press("2");
-  await expect(secondary.getByRole("button", { name: "Sélectionner la zone Secondary" }))
+  await expect(secondary.getByRole("button", { name: "Select zone Secondary" }))
     .toHaveAttribute("aria-pressed", "true");
   await expect(secondary).toHaveClass(/active/);
   await expect(defaultZone).not.toHaveClass(/active/);
@@ -68,13 +68,13 @@ test("refuse un collage sans zone active", async ({ page }) => {
 
   await dispatchPaste(page);
 
-  await expect(page.locator("#toast")).toContainText("Choisissez d'abord une zone");
+  await expect(page.locator("#toast")).toContainText("Choose a zone first");
   await expect.poll(() => page.locator(".latest").count()).toBe(before);
 });
 
 test("colle une image et ouvre son aperçu au clavier", async ({ page }) => {
   await openApp(page);
-  await page.getByRole("button", { name: "Sélectionner la zone Default" }).click();
+  await page.getByRole("button", { name: "Select zone Default" }).click();
 
   await dispatchPaste(page);
 
@@ -90,24 +90,28 @@ test("colle une image et ouvre son aperçu au clavier", async ({ page }) => {
   await expect(defaultZone.locator(".history-index")).toBeVisible();
   await expect(defaultZone.locator(".thumb-wrap")).toHaveCount(1);
   await expect(defaultZone.locator(".thumb-wrap")).toHaveAttribute("aria-pressed", "true");
+  await defaultZone.getByRole("button", { name: "Copy link" }).click();
+  await expect(page.locator("#toast")).toContainText("Link copied");
+  await defaultZone.getByRole("button", { name: "Copy image to the clipboard" }).click();
+  await expect(page.locator("#toast")).toContainText("Image copied");
 
   await defaultZone.locator(".thumb-big").press("Enter");
   await expect(page.locator("#pv")).toBeVisible();
   await expect(page.locator("#pv-ref")).toHaveText(reference);
-  await page.getByRole("button", { name: "Fermer" }).click();
+  await page.getByRole("button", { name: "Close" }).click();
   await expect(page.locator("#pv")).not.toBeVisible();
 
-  await defaultZone.getByRole("button", { name: "Agrandir l'image" }).click();
+  await defaultZone.getByRole("button", { name: "Enlarge the image" }).click();
   await expect(page.locator("#pv")).toBeVisible();
   await page.locator("#pv-clear").click();
-  await expect(page.locator("#toast")).toContainText("Presse-papiers effacé");
-  await page.getByRole("button", { name: "Fermer" }).click();
+  await expect(page.locator("#toast")).toContainText("Clipboard cleared");
+  await page.getByRole("button", { name: "Close" }).click();
 });
 
 test("sélectionne une image depuis l'index", async ({ page }) => {
   await openApp(page);
   const defaultZone = page.locator('[data-zone="default"]');
-  await defaultZone.getByRole("button", { name: "Sélectionner la zone Default" }).click();
+  await defaultZone.getByRole("button", { name: "Select zone Default" }).click();
 
   await dispatchPaste(page);
   await expect(defaultZone.locator(".latest")).toBeVisible();
