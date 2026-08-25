@@ -9,6 +9,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
+from pasteberth import __version__
 from tests.helpers import (
     build_multipart,
     json_of,
@@ -124,6 +125,8 @@ class TestModeAnonymeLoopback(Base):
         status, headers, body = self.req("GET", "/")
         self.assertEqual(status, 200)
         self.assertIn(b"/static/app.js", body)
+        self.assertIn(f"v{__version__}".encode(), body)
+        self.assertNotIn(b"__PASTEBERTH_VERSION__", body)
         self.assertEqual(headers["cache-control"], "no-store")
 
     def test_flux_complet_anonyme(self):

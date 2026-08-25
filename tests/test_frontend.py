@@ -82,6 +82,11 @@ class TestContratsFrontend(unittest.TestCase):
         self.assertIn('className = "zoom-btn"', self.app_js)
         self.assertIn('id="pv-clear"', self.index_html)
 
+    def test_version_dans_le_branding(self):
+        self.assertIn("brand-version", self.index_html)
+        self.assertIn("__PASTEBERTH_VERSION__", self.index_html)
+        self.assertIn("brand-version", self.style_css)
+
     def test_raccourcis_clavier(self):
         self.assertIn('event.key === "c"', self.app_js)
         self.assertIn("/^[1-9]$/.test(event.key)", self.app_js)

@@ -27,6 +27,7 @@ from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler
 from pathlib import Path
 
+from pasteberth import __version__
 from pasteberth.auth import LoginRateLimiter, SessionStore, load_password_hash, verify_password
 from pasteberth.config import Config
 from pasteberth.multipart import MultipartError, extract_boundary, parse_multipart
@@ -513,6 +514,7 @@ def make_handler(cfg: Config, service: PasteService, sessions: SessionStore,
             except OSError:
                 self._error(500, "internal", "interface indisponible")
                 return
+            data = data.replace(b"__PASTEBERTH_VERSION__", __version__.encode("ascii"))
             self._finish(200, "text/html; charset=utf-8", data)
 
         def _redirect(self, location: str, status: int = 303) -> None:
