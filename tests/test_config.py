@@ -91,6 +91,20 @@ class TestParsing(unittest.TestCase):
         self.assertEqual(str(cfg.trusted_proxies[0]), "127.0.0.1/32")
         self.assertEqual(str(cfg.trusted_proxies[1]), "::1/128")
 
+    def test_fichier_passwd_configurable(self):
+        password_file = self.tmp / "secrets" / "passwd"
+        cfg = make_cfg(
+            self.tmp,
+            auth_enabled=True,
+            password_file=str(password_file),
+        )
+        self.assertEqual(cfg.auth.password_file, password_file)
+        self.assertEqual(cfg.password_file(), password_file)
+
+    def test_fichier_passwd_doit_etre_absolu(self):
+        with self.assertRaisesRegex(ConfigError, "password_file"):
+            make_cfg(self.tmp, password_file="secrets/passwd")
+
     def test_zones_chargees(self):
         zones = [
             {"id": "default", "label": "Default", "retain": 7, "color": "#304237",

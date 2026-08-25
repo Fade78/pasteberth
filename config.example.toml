@@ -4,7 +4,8 @@
 #   (ou $PASTEBERTH_CONFIG, ou --config PATH)
 #
 # Le mot de passe n'est JAMAIS écrit ici : `pasteberth passwd` le hash
-# (scrypt salé) dans un fichier « passwd » à côté de ce config.toml.
+# (scrypt salé) dans un fichier « passwd » séparé, défini ci-dessous ou par défaut
+# à côté de ce config.toml.
 
 listen_address = "127.0.0.1"      # non-loopback : reverse proxy HTTPS recommandé
 port = 8765
@@ -30,6 +31,7 @@ log_level = "INFO"                # DEBUG | INFO | WARNING | ERROR
 [auth]
 enabled = true                    # false seulement avec opt-in explicite ci-dessus
 session_ttl_hours = 72            # durée de vie des sessions (serveur)
+# password_file = "/chemin/absolu/vers/passwd"  # fichier régulier 0600
 
 # ---------------------------------------------------------------- zone par défaut
 # id : identifiant logique utilisé par l'API et l'UI ([a-z0-9_-])

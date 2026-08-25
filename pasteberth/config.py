@@ -85,6 +85,7 @@ def is_loopback_address(address: str) -> bool:
 class AuthConfig:
     enabled: bool = True
     session_ttl_hours: int = 72
+    password_file: Path | None = None
 
 
 @dataclass(frozen=True)
@@ -125,8 +126,8 @@ class Config:
     using_default_config: bool = False
 
     def password_file(self) -> Path:
-        """Emplacement du hash du mot de passe (à côté de la config, 0600)."""
-        return self.config_path.parent / "passwd"
+        """Emplacement du hash du mot de passe (0600, jamais un symlink)."""
+        return self.auth.password_file or self.config_path.parent / "passwd"
 
 
 def _expect_table(value: object, where: str) -> dict:
@@ -197,17 +198,34 @@ def _parse_auth(raw: object, warnings: list[str]) -> AuthConfig:
     if raw is None:
         return AuthConfig()
     table = _expect_table(raw, "[auth]")
-    _warn_unknown(table, {"enabled", "session_ttl_hours"}, "[auth]", warnings)
+    _warn_unknown(
+        table,
+        {"enabled", "session_ttl_hours", "password_file"},
+        "[auth]",
+        warnings,
+    )
     enabled = _get_bool(table, "enabled", "[auth]", default=True)
     ttl = table.get("session_ttl_hours", 72)
     if isinstance(ttl, bool) or not isinstance(ttl, int) or not (1 <= ttl <= 24 * 365):
         raise ConfigError("[auth]: 'session_ttl_hours' doit être un entier entre 1 et 8760")
+    password_file_raw = table.get("password_file")
+    password_file = None
+    if password_file_raw is not None:
+        if not isinstance(password_file_raw, str) or not password_file_raw.strip():
+            raise ConfigError("[auth]: 'password_file' doit être un chemin absolu")
+        password_file = Path(os.path.expanduser(password_file_raw))
+        if not password_file.is_absolute():
+            raise ConfigError("[auth]: 'password_file' doit être un chemin absolu")
     if enabled and "password_hash" in table:
         warnings.append(
             "[auth]: 'password_hash' dans config.toml est ignoré ; "
-            "`pasteberth passwd` écrit le hash dans le fichier 'passwd' à côté de la config"
+            "`pasteberth passwd` écrit le hash dans le fichier 'passwd' configuré"
         )
-    return AuthConfig(enabled=enabled, session_ttl_hours=ttl)
+    return AuthConfig(
+        enabled=enabled,
+        session_ttl_hours=ttl,
+        password_file=password_file,
+    )
 
 
 def _parse_tls(raw: object, warnings: list[str]) -> TLSConfig:

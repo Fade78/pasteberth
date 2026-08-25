@@ -176,6 +176,7 @@ enabled = false
 [auth]
 enabled = true
 session_ttl_hours = 72
+# password_file = "/chemin/absolu/vers/passwd"
 
 [[zones]]
 id = "default"

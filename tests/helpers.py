@@ -134,6 +134,7 @@ def write_config(
     tls_enabled: bool = False,
     tls_certificate: str | None = None,
     tls_private_key: str | None = None,
+    password_file: str | None = None,
     min_free_percent: float | None = None,
     extra: str = "",
     password: str | None = None,
@@ -180,6 +181,8 @@ def write_config(
     lines.append("")
     lines.append("[auth]")
     lines.append(f"enabled = {str(auth_enabled).lower()}")
+    if password_file is not None:
+        lines.append(f'password_file = "{password_file}"')
     lines.append("")
     for zone in zones:
         lines.append("[[zones]]")
@@ -198,7 +201,8 @@ def write_config(
     cfg_path = tmp / "config.toml"
     cfg_path.write_text(text, encoding="utf-8")
     if password is not None:
-        save_password_hash(tmp / "passwd", hash_password(password))
+        password_path = Path(password_file) if password_file else tmp / "passwd"
+        save_password_hash(password_path, hash_password(password))
     return cfg_path
 
 

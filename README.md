@@ -114,6 +114,7 @@ les zones et chemins souhaités.
 | `[tls] enabled` | `false` | termine TLS directement avec `certificate` et `private_key` |
 | `[auth] enabled` | `true` | protection par mot de passe |
 | `[auth] session_ttl_hours` | `72` | durée des sessions serveur |
+| `[auth] password_file` | à côté de `config.toml` | chemin absolu du hash `passwd` (fichier régulier 0600) |
 | `[[zones]] …` | `default` | `id`, `label`, `type=local`, `directory`, `retain`, `reference_prefix`, `color` (#RRGGBB), `create_directory`, `min_free_percent` |
 
 `directory` est un chemin **absolu vu par le serveur** — c'est là
@@ -138,7 +139,7 @@ nécessitent une extension explicite du budget.
 
 ```sh
 pasteberth passwd            # demande + confirmation, hash scrypt salé
-                             # écrit à côté de config.toml (0600)
+                             # écrit dans password_file ou à côté de config.toml (0600)
 ```
 
 Le mot de passe n'est jamais stocké en clair ni écrit dans config.toml ;

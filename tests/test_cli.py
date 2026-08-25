@@ -125,6 +125,20 @@ class TestPasswd(unittest.TestCase):
         self.assertTrue(verify_password("second-mot-de-passe", stored2))
         self.assertFalse(verify_password("premier-mot-de-passe", stored2))
 
+    def test_ecriture_hash_dans_un_chemin_externe_configure(self):
+        password_file = self.tmp / "secrets" / "passwd"
+        cfg_path = write_config(
+            self.tmp,
+            auth_enabled=True,
+            password_file=str(password_file),
+        )
+        self.stdin = "mot-de-passe-externe\nmot-de-passe-externe\n"
+        proc = self._passwd_cmd(cfg_path)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertTrue(password_file.is_file())
+        self.assertFalse((cfg_path.parent / "passwd").exists())
+        self.assertTrue(verify_password("mot-de-passe-externe", load_password_hash(password_file)))
+
     def test_secret_jamais_en_clair_dans_le_fichier(self):
         cfg_path = write_config(self.tmp)
         secret = "mot-en-clair-impossible-a-trouver"
