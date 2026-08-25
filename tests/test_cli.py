@@ -2,6 +2,7 @@
 démarrage, commande passwd."""
 import os
 import stat
+import socket
 import subprocess
 import sys
 import tempfile
@@ -175,6 +176,12 @@ class TestConfigurationDepot(unittest.TestCase):
         self.assertEqual(target.read_text(encoding="utf-8"), "sentinelle\n")
 
     def test_audit_mode_depot_sans_configuration(self):
+        port_busy = False
+        with socket.socket() as probe:
+            try:
+                probe.bind(("127.0.0.1", 8765))
+            except OSError:
+                port_busy = True
         proc = run_cli(
             ["audit"],
             cwd=self.tmp,
@@ -184,8 +191,10 @@ class TestConfigurationDepot(unittest.TestCase):
                 "XDG_CONFIG_HOME": str(self.tmp / "xdg"),
             },
         )
-        self.assertEqual(proc.returncode, 1)
+        self.assertEqual(proc.returncode, 2 if port_busy else 1)
         self.assertIn("stockage par défaut", proc.stdout)
+        if port_busy:
+            self.assertIn("bind impossible", proc.stdout)
 
     def test_audit_auth_sans_hash_echoue(self):
         cfg = write_config(self.tmp, auth_enabled=True)

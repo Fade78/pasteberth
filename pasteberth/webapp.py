@@ -265,9 +265,15 @@ def make_handler(cfg: Config, service: PasteService, sessions: SessionStore,
         def _origin_allowed(self) -> bool:
             """CSRF : si le navigateur fournit Origin/Referer, il doit correspondre."""
             origin = self.headers.get("Origin")
+            opaque_origin = bool(origin and origin.strip().lower() == "null")
+            if opaque_origin:
+                origin = None
             if not origin:
                 referer = self.headers.get("Referer")
                 if not referer:
+                    if opaque_origin:
+                        fetch_site = self.headers.get("Sec-Fetch-Site", "").lower()
+                        return fetch_site == "same-origin"
                     # Clients non-navigateurs (curl, scripts) : autorisés.
                     return True
                 parsed = urllib.parse.urlsplit(referer)

@@ -552,6 +552,45 @@ class TestOriginCSRF(Base):
         status, _, _ = self._post(None)
         self.assertEqual(status, 201)
 
+    def test_origin_null_avec_fetch_same_origin_acceptee(self):
+        body, ctype = build_multipart(data=make_png())
+        status, _, _ = self.req(
+            "POST",
+            "/api/zones/default/images",
+            body=body,
+            headers={
+                "Content-Type": ctype,
+                "Origin": "null",
+                "Sec-Fetch-Site": "same-origin",
+            },
+        )
+        self.assertEqual(status, 201)
+
+    def test_login_origin_null_avec_fetch_same_origin_acceptee(self):
+        status, _, _ = request(
+            self.server.port,
+            "POST",
+            "/login",
+            body=f"password={PASSWORD}".encode(),
+            headers={
+                "Content-Type": "application/x-www-form-urlencoded",
+                "Origin": "null",
+                "Sec-Fetch-Site": "same-origin",
+            },
+        )
+        self.assertEqual(status, 303)
+
+    def test_origin_null_sans_contexte_refusee(self):
+        body, ctype = build_multipart(data=make_png())
+        status, _, response = self.req(
+            "POST",
+            "/api/zones/default/images",
+            body=body,
+            headers={"Content-Type": ctype, "Origin": "null"},
+        )
+        self.assertEqual(status, 403)
+        self.assertEqual(json_of(response)["error"]["code"], "forbidden_origin")
+
     def test_referer_etranger_refuse(self):
         body, ctype = build_multipart(data=make_png())
         status, _, _ = self.req("POST", "/api/zones/default/images", body=body,
