@@ -30,20 +30,20 @@ log_level = "WARNING"
 enabled = false
 
 [[zones]]
-id = "pulse"
-label = "PULSE"
+id = "default"
+label = "Default"
 type = "local"
-directory = "{(root / 'pulse-images').as_posix()}"
+directory = "{(root / 'default-images').as_posix()}"
 retain = 5
 reference_prefix = "@"
 color = "#304237"
 min_free_percent = 0.0
 
 [[zones]]
-id = "lwp"
-label = "LWP"
+id = "secondary"
+label = "Secondary"
 type = "local"
-directory = "{(root / 'lwp-images').as_posix()}"
+directory = "{(root / 'secondary-images').as_posix()}"
 retain = 5
 reference_prefix = "@"
 color = "#26394a"

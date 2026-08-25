@@ -1,0 +1,9 @@
+#!/bin/sh
+# Exécutable portable : le dépôt est l'installation.
+set -eu
+
+SCRIPT_PATH="$(readlink -f "$0")"
+REPO_DIR="$(CDPATH= cd -- "$(dirname -- "$SCRIPT_PATH")/.." && pwd)"
+export PASTEBERTH_REPO_ROOT="$REPO_DIR"
+export PYTHONPATH="$REPO_DIR${PYTHONPATH:+:$PYTHONPATH}"
+exec python3 -m pasteberth "$@"

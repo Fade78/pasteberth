@@ -9,12 +9,12 @@ la zone du bon projet dans votre navigateur, et vous récupérez une référence
 filesystem prête à coller dans OpenCode :
 
 ```
-@/home/devint3/Depots/Pulse/.opencode-images/2026-08-25_01-22-31_a81c42.png
+@/chemin/du/depot/storage/default/2026-08-25_01-22-31_a81c42.png
 ```
 
 ```
 POSTE DE TRAVAIL                     MACHINE DU HARNESS
-navigateur ── HTTPS ──▶ Pasteberth ──▶ .opencode-images/projet/
+navigateur ── HTTPS ──▶ Pasteberth ──▶ storage/default/
    ▲                        │
    └──── Copy référence ◀───┘
                 │
@@ -61,26 +61,44 @@ celui que voit OpenCode, sur la machine où tourne Pasteberth.
 ## Installation
 
 Prérequis : **Python ≥ 3.11**, aucune dépendance tierce (bibliothèque
-standard uniquement). Aucun root nécessaire.
+standard uniquement). Le dépôt est directement l'installation ; aucun script
+d'installation ni root ne sont nécessaires.
 
 ```sh
-./install.sh        # symlink ~/.local/bin/pasteberth -> run.sh
-                    # + config exemple dans ~/.config/pasteberth/config.toml
-                    # + unité systemd --user copiée
+git clone https://glb.didierb.name/didier/pasteberth.git
+cd pasteberth
+./bin/pasteberth audit
+./bin/pasteberth --generate-config
+./bin/pasteberth passwd
+./bin/pasteberth
 ```
 
-Sans install.sh :
+Pour utiliser la commande depuis n'importe quel répertoire, ajoutez
+`bin/` au `PATH` ou utilisez directement `./bin/pasteberth`.
 
 ```sh
-~/.local/bin/pasteberth: ./run.sh serve   # ou python3 -m pasteberth serve
-cp config.example.toml ~/.config/pasteberth/config.toml
+export PATH="$PWD/bin:$PATH"
+pasteberth
 ```
 
 ## Configuration
 
-Fichier : `~/.config/pasteberth/config.toml`
-(surcharge : `--config PATH` ou `$PASTEBERTH_CONFIG`). Voir
+Après génération, le fichier local est `config.toml` à la racine du dépôt et
+reste ignoré par Git. Une configuration explicite peut aussi être fournie par
+`--config PATH` ou `$PASTEBERTH_CONFIG`. Une ancienne configuration XDG dans
+`~/.config/pasteberth/config.toml` reste reconnue. Voir
 [`config.example.toml`](config.example.toml) commenté.
+
+Sans `config.toml`, `pasteberth` démarre volontairement en mode minimal,
+uniquement sur loopback, avec le stockage `<depot>/storage/default` et sans
+authentification. Un avertissement est affiché à chaque démarrage. Le même
+avertissement apparaît si une configuration modifiée continue de cibler ce
+stockage par défaut. Ce mode sert au premier essai local, pas à une exposition
+via reverse proxy.
+
+`pasteberth --generate-config` génère une configuration sécurisée avec
+authentification activée. Modifiez ensuite manuellement `config.toml` selon
+les zones et chemins souhaités.
 
 | Clé | Défaut | Rôle |
 |---|---|---|
@@ -94,10 +112,15 @@ Fichier : `~/.config/pasteberth/config.toml`
 | `log_level` | `"INFO"` | DEBUG/INFO/WARNING/ERROR |
 | `[auth] enabled` | `true` | protection par mot de passe |
 | `[auth] session_ttl_hours` | `72` | durée des sessions serveur |
-| `[[zones]] …` | — | `id`, `label`, `type=local`, `directory`, `retain`, `reference_prefix`, `color` (#RRGGBB), `create_directory`, `min_free_percent` |
+| `[[zones]] …` | `default` | `id`, `label`, `type=local`, `directory`, `retain`, `reference_prefix`, `color` (#RRGGBB), `create_directory`, `min_free_percent` |
 
 `directory` est un chemin **absolu vu par le serveur** — c'est là
 qu'OpenCode lit les images, pas votre navigateur.
+
+Le stockage intégré par défaut est `<racine-du-dépôt>/storage/default`. Le
+répertoire `storage/` est ignoré par Git, mais il faut le sauvegarder séparément
+si les images ont de la valeur. Un chemin externe peut être indiqué
+manuellement dans `config.toml`.
 
 Les zones doivent être des répertoires cibles distincts et privés (`0700`). Chaque
 zone refuse un nouvel upload si l'espace libre prévu après écriture passerait
@@ -113,7 +136,7 @@ nécessitent une extension explicite du budget.
 
 ```sh
 pasteberth passwd            # demande + confirmation, hash scrypt salé
-                             # écrit dans ~/.config/pasteberth/passwd (0600)
+                             # écrit à côté de config.toml (0600)
 ```
 
 Le mot de passe n'est jamais stocké en clair ni écrit dans config.toml ;
@@ -126,12 +149,14 @@ Le serveur refuse de démarrer si l'authentification est activée sans fichier
 ## Lancement & service systemd
 
 ```sh
-pasteberth serve                          # premier plan
-systemctl --user enable --now pasteberth.service   # service permanent
-journalctl --user -u pasteberth -f        # logs
+pasteberth                         # premier plan, stockage par défaut si besoin
+pasteberth audit                   # vérification sans modification
+systemctl --user enable --now pasteberth.service   # optionnel
+journalctl --user -u pasteberth -f                 # logs
 ```
 
-L'unité fournie (`deploy/pasteberth.service`) ne nécessite aucun root.
+L'unité fournie (`deploy/pasteberth.service`) est optionnelle et ne nécessite
+aucun root. Adaptez son `ExecStart` au chemin réel du dépôt avant activation.
 Un refus de démarrage protège contre l'exposition accidentelle :
 **auth désactivée sans opt-in explicite = arrêt avec message explicite**
 (`allow_unauthenticated_local` ou `allow_unauthenticated_remote` selon le cas).
@@ -199,7 +224,7 @@ Exemple :
 
 ```sh
 curl -b cookies.txt -F image=@capture.png \
-     https://pasteberth.example.internal/api/zones/pulse/images
+     https://pasteberth.example.internal/api/zones/default/images
 ```
 
 ```json
@@ -208,8 +233,8 @@ curl -b cookies.txt -F image=@capture.png \
   "filename": "2026-08-25_01-22-31_a81c42.png",
   "created_at": "2026-08-24T23:22:31.412000+00:00",
   "width": 1920, "height": 1080, "size": 9283, "format": "png",
-  "preview_url": "/previews/pulse/2026-08-25_01-22-31_a81c42.png",
-  "reference": "@/home/devint3/Depots/Pulse/.opencode-images/2026-08-25_01-22-31_a81c42.png"
+  "preview_url": "/previews/default/2026-08-25_01-22-31_a81c42.png",
+  "reference": "@/chemin/du/depot/storage/default/2026-08-25_01-22-31_a81c42.png"
 }
 ```
 

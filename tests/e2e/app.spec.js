@@ -50,16 +50,16 @@ test.beforeEach(async ({ request }) => {
 test("charge les zones et expose une sélection clavier accessible", async ({ page }) => {
   await openApp(page);
 
-  const pulse = page.locator('[data-zone="pulse"]');
-  const lwp = page.locator('[data-zone="lwp"]');
-  await expect(pulse.getByRole("button", { name: "Sélectionner la zone PULSE" }))
+  const defaultZone = page.locator('[data-zone="default"]');
+  const secondary = page.locator('[data-zone="secondary"]');
+  await expect(defaultZone.getByRole("button", { name: "Sélectionner la zone Default" }))
     .toHaveAttribute("aria-pressed", "false");
 
   await page.locator("body").press("2");
-  await expect(lwp.getByRole("button", { name: "Sélectionner la zone LWP" }))
+  await expect(secondary.getByRole("button", { name: "Sélectionner la zone Secondary" }))
     .toHaveAttribute("aria-pressed", "true");
-  await expect(lwp).toHaveClass(/active/);
-  await expect(pulse).not.toHaveClass(/active/);
+  await expect(secondary).toHaveClass(/active/);
+  await expect(defaultZone).not.toHaveClass(/active/);
 });
 
 test("refuse un collage sans zone active", async ({ page }) => {
@@ -74,21 +74,21 @@ test("refuse un collage sans zone active", async ({ page }) => {
 
 test("colle une image et ouvre son aperçu au clavier", async ({ page }) => {
   await openApp(page);
-  await page.getByRole("button", { name: "Sélectionner la zone PULSE" }).click();
+  await page.getByRole("button", { name: "Sélectionner la zone Default" }).click();
 
   await dispatchPaste(page);
 
-  const pulse = page.locator('[data-zone="pulse"]');
-  await expect(pulse.locator(".latest")).toBeVisible();
-  await expect(pulse.locator(".fname")).toHaveText(/\.png$/);
-  const reference = await pulse.locator(".ref").textContent();
+  const defaultZone = page.locator('[data-zone="default"]');
+  await expect(defaultZone.locator(".latest")).toBeVisible();
+  await expect(defaultZone.locator(".fname")).toHaveText(/\.png$/);
+  const reference = await defaultZone.locator(".ref").textContent();
   expect(reference).toMatch(/^@.*\.png$/);
-  await expect(pulse.locator(".thumb-big")).toHaveAttribute(
+  await expect(defaultZone.locator(".thumb-big")).toHaveAttribute(
     "src",
-    /\/previews\/pulse\//,
+    /\/previews\/default\//,
   );
 
-  await pulse.locator(".thumb-big").press("Enter");
+  await defaultZone.locator(".thumb-big").press("Enter");
   await expect(page.locator("#pv")).toBeVisible();
   await expect(page.locator("#pv-ref")).toHaveText(reference);
   await page.getByRole("button", { name: "Fermer" }).click();
@@ -97,10 +97,10 @@ test("colle une image et ouvre son aperçu au clavier", async ({ page }) => {
 
 test("accepte le glisser-déposer sur une zone", async ({ page }) => {
   await openApp(page);
-  await dispatchDrop(page, '[data-zone="lwp"]');
+  await dispatchDrop(page, '[data-zone="secondary"]');
 
-  const lwp = page.locator('[data-zone="lwp"]');
-  await expect(lwp.locator(".latest")).toBeVisible();
-  await expect(lwp.locator(".fname")).toHaveText(/\.png$/);
-  await expect(lwp.locator(".zone-select")).toHaveAttribute("aria-pressed", "true");
+  const secondary = page.locator('[data-zone="secondary"]');
+  await expect(secondary.locator(".latest")).toBeVisible();
+  await expect(secondary.locator(".fname")).toHaveText(/\.png$/);
+  await expect(secondary.locator(".zone-select")).toHaveAttribute("aria-pressed", "true");
 });

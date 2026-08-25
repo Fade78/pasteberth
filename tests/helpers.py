@@ -136,7 +136,7 @@ def write_config(
         zones = [
             {"id": zid, "label": zid.upper(), "retain": retain,
              "directory": str(tmp / f"{zid}-images")}
-            for zid, retain in (("pulse", 3), ("lwp", 2))
+             for zid, retain in (("default", 3), ("secondary", 2))
         ]
     lines = [
         f'listen_address = "{listen_address}"',

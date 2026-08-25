@@ -1,7 +1,9 @@
 """Chargement et validation de la configuration TOML.
 
-Le fichier par défaut respecte XDG : ``~/.config/pasteberth/config.toml``.
-Un chemin explicite peut être fourni via ``--config`` ou ``$PASTEBERTH_CONFIG``.
+Le dépôt peut fonctionner sans fichier utilisateur : une configuration locale
+minimale est alors construite avec ``storage/default``. Un fichier ``config.toml``
+au dépôt, ``$PASTEBERTH_CONFIG`` ou ``--config`` la remplacent ; l'ancien chemin
+XDG reste accepté en dernier recours.
 """
 from __future__ import annotations
 
@@ -110,6 +112,7 @@ class Config:
     log_level: str
     config_path: Path
     warnings: list[str] = field(default_factory=list)
+    using_default_config: bool = False
 
     def password_file(self) -> Path:
         """Emplacement du hash du mot de passe (à côté de la config, 0600)."""
@@ -396,6 +399,78 @@ def default_config_path() -> Path:
     """Chemin XDG par défaut : $XDG_CONFIG_HOME/pasteberth/config.toml."""
     xdg = os.environ.get("XDG_CONFIG_HOME") or os.path.expanduser("~/.config")
     return Path(xdg) / "pasteberth" / "config.toml"
+
+
+def repository_root() -> Path:
+    """Racine du dépôt qui contient le code Pasteberth."""
+    configured = os.environ.get("PASTEBERTH_REPO_ROOT")
+    if configured:
+        return Path(configured).expanduser()
+    return Path(__file__).resolve().parent.parent
+
+
+def repository_config_path() -> Path:
+    return repository_root() / "config.toml"
+
+
+def default_storage_path() -> Path:
+    return repository_root() / "storage" / "default"
+
+
+def build_default_config() -> Config:
+    """Configuration minimale, locale et sans fichier utilisateur."""
+    return Config(
+        listen_address="127.0.0.1",
+        port=8765,
+        max_upload_bytes=DEFAULT_MAX_UPLOAD_BYTES,
+        max_image_pixels=MAX_PIXELS,
+        trusted_proxies=(
+            ipaddress.ip_network("127.0.0.1/32"),
+            ipaddress.ip_network("::1/128"),
+        ),
+        allow_unauthenticated_local=True,
+        allow_unauthenticated_remote=False,
+        auth=AuthConfig(enabled=False),
+        zones={
+            "default": ZoneConfig(
+                id="default",
+                label="Default",
+                directory=default_storage_path(),
+                retain=10,
+                reference_prefix="@",
+                color="#304237",
+            )
+        },
+        log_level="INFO",
+        config_path=repository_config_path(),
+        using_default_config=True,
+    )
+
+
+def find_config_path(explicit: str | None = None) -> Path | None:
+    """Trouve une configuration existante sans créer de fichier."""
+    if explicit:
+        return Path(explicit)
+    env = os.environ.get("PASTEBERTH_CONFIG")
+    if env:
+        return Path(env)
+    repo_path = repository_config_path()
+    if repo_path.is_file():
+        return repo_path
+    xdg_path = default_config_path()
+    if xdg_path.is_file():
+        return xdg_path
+    return None
+
+
+def config_path_for_generation(explicit: str | None = None) -> Path:
+    """Chemin cible de ``--generate-config`` (dépôt par défaut)."""
+    if explicit:
+        return Path(explicit)
+    env = os.environ.get("PASTEBERTH_CONFIG")
+    if env:
+        return Path(env)
+    return repository_config_path()
 
 
 def resolve_config_path(explicit: str | None = None) -> Path:

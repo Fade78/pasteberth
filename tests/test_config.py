@@ -6,8 +6,10 @@ from pathlib import Path
 
 from pasteberth.config import (
     ConfigError,
+    build_default_config,
     check_startup_policy,
     default_config_path,
+    default_storage_path,
     is_loopback_address,
     load_config,
     prepare_directories,
@@ -63,10 +65,10 @@ class TestParsing(unittest.TestCase):
         self.assertEqual(cfg.port, 8765)
         self.assertEqual(cfg.max_upload_bytes, 20 * 1024 * 1024)
         self.assertFalse(cfg.auth.enabled)
-        self.assertEqual(set(cfg.zones), {"pulse", "lwp"})
-        self.assertEqual(cfg.zones["pulse"].reference_prefix, "@")
-        self.assertTrue(cfg.zones["pulse"].create_directory)
-        self.assertEqual(cfg.zones["pulse"].min_free_percent, 2.0)
+        self.assertEqual(set(cfg.zones), {"default", "secondary"})
+        self.assertEqual(cfg.zones["default"].reference_prefix, "@")
+        self.assertTrue(cfg.zones["default"].create_directory)
+        self.assertEqual(cfg.zones["default"].min_free_percent, 2.0)
 
     def test_defauts_reels_auth_et_proxy(self):
         path = self.tmp / "minimal.toml"
@@ -84,15 +86,15 @@ class TestParsing(unittest.TestCase):
 
     def test_zones_chargees(self):
         zones = [
-            {"id": "pulse", "label": "Pulse", "retain": 7, "color": "#304237",
+            {"id": "default", "label": "Default", "retain": 7, "color": "#304237",
              "directory": str(self.tmp / "p")},
-            {"id": "lwp", "directory": str(self.tmp / "l")},
+            {"id": "secondary", "directory": str(self.tmp / "l")},
         ]
         cfg = make_cfg(self.tmp, zones=zones)
-        self.assertEqual(set(cfg.zones), {"pulse", "lwp"})
-        self.assertEqual(cfg.zones["pulse"].retain, 7)
-        self.assertEqual(cfg.zones["pulse"].color, "#304237")
-        self.assertEqual(cfg.zones["lwp"].label, "lwp")
+        self.assertEqual(set(cfg.zones), {"default", "secondary"})
+        self.assertEqual(cfg.zones["default"].retain, 7)
+        self.assertEqual(cfg.zones["default"].color, "#304237")
+        self.assertEqual(cfg.zones["secondary"].label, "secondary")
 
     def test_cle_inconnue_avertissement(self):
         cfg = load_config(
@@ -212,6 +214,14 @@ class TestChemins(unittest.TestCase):
                 del os.environ["PASTEBERTH_CONFIG"]
             else:
                 os.environ["PASTEBERTH_CONFIG"] = old
+
+    def test_configuration_integree_du_depot(self):
+        cfg = build_default_config()
+        self.assertTrue(cfg.using_default_config)
+        self.assertFalse(cfg.auth.enabled)
+        self.assertTrue(cfg.allow_unauthenticated_local)
+        self.assertEqual(set(cfg.zones), {"default"})
+        self.assertEqual(cfg.zones["default"].directory, default_storage_path())
 
 
 class TestRepertoires(unittest.TestCase):

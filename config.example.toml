@@ -1,6 +1,6 @@
 # Configuration exemple de Pasteberth.
 #
-# Emplacement réel attendu : ~/.config/pasteberth/config.toml
+# Le fichier local recommandé est config.toml à la racine du dépôt.
 #   (ou $PASTEBERTH_CONFIG, ou --config PATH)
 #
 # Le mot de passe n'est JAMAIS écrit ici : `pasteberth passwd` le hash
@@ -25,7 +25,7 @@ log_level = "INFO"                # DEBUG | INFO | WARNING | ERROR
 enabled = true                    # false seulement avec opt-in explicite ci-dessus
 session_ttl_hours = 72            # durée de vie des sessions (serveur)
 
-# ---------------------------------------------------------------- zones ----
+# ---------------------------------------------------------------- zone par défaut
 # id : identifiant logique utilisé par l'API et l'UI ([a-z0-9_-])
 # directory : chemin ABSOLU vu PAR LE SERVEUR (celui qu'utilise OpenCode)
 # retain    : nombre d'images conservées par zone (rétention circulaire)
@@ -35,41 +35,12 @@ session_ttl_hours = 72            # durée de vie des sessions (serveur)
 # min_free_percent : espace libre minimal du filesystem avant upload (défaut 2 %)
 
 [[zones]]
-id = "lwp"
-label = "LWP"
+id = "default"
+label = "Default"
 type = "local"
-directory = "/home/devint3/Depots/lightwebpres/.opencode-images"
+# Le générateur remplace ce chemin par <depot>/storage/default.
+directory = "/chemin/absolu/vers/pasteberth/storage/default"
 retain = 10
-reference_prefix = "@"
-color = "#26394a"
-min_free_percent = 2.0
-
-[[zones]]
-id = "lwp_gui"
-label = "LWP_GUI"
-type = "local"
-directory = "/home/devint3/Depots/lightwebpres-gui/.opencode-images"
-retain = 10
-reference_prefix = "@"
-color = "#3a3348"
-min_free_percent = 2.0
-
-[[zones]]
-id = "pulse"
-label = "Pulse"
-type = "local"
-directory = "/home/devint3/Depots/Pulse/.opencode-images"
-retain = 15
 reference_prefix = "@"
 color = "#304237"
-min_free_percent = 2.0
-
-[[zones]]
-id = "pulse_carri"
-label = "Pulse-carri"
-type = "local"
-directory = "/home/devint3/Depots/Pulse-carri/.opencode-images"
-retain = 5
-reference_prefix = "@"
-color = "#46323c"
 min_free_percent = 2.0

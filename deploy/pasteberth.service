@@ -5,9 +5,8 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-# %h = home de l'utilisateur ; unité prévue pour `systemctl --user`.
-# Adaptez le chemin si le wrapper est installé ailleurs.
-ExecStart=%h/.local/bin/pasteberth serve
+# Unité optionnelle : remplacez ce chemin par le chemin absolu de votre clone.
+ExecStart=/chemin/absolu/vers/pasteberth/bin/pasteberth
 Restart=on-failure
 RestartSec=2
 TimeoutStopSec=90

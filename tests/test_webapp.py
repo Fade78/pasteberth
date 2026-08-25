@@ -34,15 +34,15 @@ class Base(unittest.TestCase):
         self._tmp = tempfile.TemporaryDirectory()
         tmp = Path(self._tmp.name)
         self.zones_dirs = {
-            "pulse": tmp / "Pulse" / ".opencode-images",
-            "lwp": tmp / "LWP" / ".opencode-images",
+            "default": tmp / "default-images",
+            "secondary": tmp / "secondary-images",
         }
         zones = [
             {"id": zid, "label": zid.upper(), "retain": retain,
              "color": color, "directory": str(path)}
             for zid, path, retain, color in [
-                ("pulse", self.zones_dirs["pulse"], 3, "#304237"),
-                ("lwp", self.zones_dirs["lwp"], 2, "#26394a"),
+                ("default", self.zones_dirs["default"], 3, "#304237"),
+                ("secondary", self.zones_dirs["secondary"], 2, "#26394a"),
             ]
         ]
         cfg_path = write_config(
@@ -116,13 +116,13 @@ class TestModeAnonymeLoopback(Base):
     def test_flux_complet_anonyme(self):
         png = make_png(10, 5)
         body, ctype = build_multipart(data=png)
-        status, _, resp = self.req("POST", "/api/zones/pulse/images", body=body,
+        status, _, resp = self.req("POST", "/api/zones/default/images", body=body,
                                    headers={"Content-Type": ctype})
         self.assertEqual(status, 201)
         item = json_of(resp)
         ref = item["reference"]
         self.assertTrue(ref.startswith("@"))
-        self.assertEqual(ref[1:], str(self.zones_dirs["pulse"] / item["filename"]))
+        self.assertEqual(ref[1:], str(self.zones_dirs["default"] / item["filename"]))
         # preview
         status, headers, data = self.req("GET", item["preview_url"])
         self.assertEqual(status, 200)
@@ -149,13 +149,13 @@ class TestAuthentification(Base):
 
     def test_upload_401(self):
         body, ctype = build_multipart(data=make_png())
-        status, _, _ = self.req("POST", "/api/zones/pulse/images", body=body,
+        status, _, _ = self.req("POST", "/api/zones/default/images", body=body,
                                 headers={"Content-Type": ctype}, cookie=None)
         self.assertEqual(status, 401)
 
     def test_preview_401(self):
         body, ctype = build_multipart(data=make_png())
-        status, _, resp = self.req("POST", "/api/zones/pulse/images", body=body,
+        status, _, resp = self.req("POST", "/api/zones/default/images", body=body,
                                    headers={"Content-Type": ctype})
         self.assertEqual(status, 201)
         url = json_of(resp)["preview_url"]
@@ -246,7 +246,7 @@ class TestUploadsFormats(Base):
 
     def test_png(self):
         png = make_png(1920, 1080)
-        status, item = self._upload_raw("pulse", png, "image/png")
+        status, item = self._upload_raw("default", png, "image/png")
         self.assertEqual(status, 201)
         self.assertEqual((item["width"], item["height"]), (1920, 1080))
         self.assertEqual(item["format"], "png")
@@ -256,14 +256,14 @@ class TestUploadsFormats(Base):
 
     def test_jpeg(self):
         jpg = make_jpeg(800, 600)
-        status, item = self._upload_raw("pulse", jpg, "image/jpeg")
+        status, item = self._upload_raw("default", jpg, "image/jpeg")
         self.assertEqual(status, 201)
         self.assertEqual(item["format"], "jpeg")
         self.assertTrue(item["filename"].endswith(".jpg"))
 
     def test_webp(self):
         webp = make_webp_lossy(640, 480)
-        status, item = self._upload_raw("pulse", webp, "image/webp")
+        status, item = self._upload_raw("default", webp, "image/webp")
         self.assertEqual(status, 201)
         self.assertEqual(item["format"], "webp")
         self.assertTrue(item["filename"].endswith(".webp"))
@@ -272,7 +272,7 @@ class TestUploadsFormats(Base):
         # Le navigateur déclare image/png mais le contenu est JPEG : le contenu gagne.
         jpg = make_jpeg(50, 40)
         body, ctype = build_multipart(data=jpg, content_type="image/png")
-        status, _, resp = self.req("POST", "/api/zones/pulse/images", body=body,
+        status, _, resp = self.req("POST", "/api/zones/default/images", body=body,
                                    headers={"Content-Type": ctype})
         self.assertEqual(status, 201)
         item = json_of(resp)
@@ -281,7 +281,7 @@ class TestUploadsFormats(Base):
 
     def test_nom_client_ignore(self):
         body, ctype = build_multipart(filename="../../etc/passwd.png", data=make_png())
-        status, _, resp = self.req("POST", "/api/zones/pulse/images", body=body,
+        status, _, resp = self.req("POST", "/api/zones/default/images", body=body,
                                    headers={"Content-Type": ctype})
         self.assertEqual(status, 201)
         self.assertRegex(json_of(resp)["filename"], FILENAME_RE)
@@ -294,27 +294,27 @@ class TestRejetsUploads(Base):
 
     def test_texte_brut_refuse(self):
         status, err = None, None
-        status_code, _, body = self.req("POST", "/api/zones/pulse/images",
+        status_code, _, body = self.req("POST", "/api/zones/default/images",
                                         body=b"juste du texte",
                                         headers={"Content-Type": "text/plain"})
         self.assertEqual(status_code, 415)
 
     def test_corps_vide(self):
-        status_code, _, body = self.req("POST", "/api/zones/pulse/images",
+        status_code, _, body = self.req("POST", "/api/zones/default/images",
                                         body=b"", headers={"Content-Type": "application/octet-stream"})
         self.assertEqual(status_code, 400)
         self.assertEqual(json_of(body)["error"]["code"], "empty_upload")
 
     def test_multipart_champ_image_vide(self):
         body, ctype = build_multipart(data=b"")
-        status_code, _, resp = self.req("POST", "/api/zones/pulse/images",
+        status_code, _, resp = self.req("POST", "/api/zones/default/images",
                                         body=body, headers={"Content-Type": ctype})
         self.assertEqual(status_code, 400)
         self.assertEqual(json_of(resp)["error"]["code"], "empty_upload")
 
     def test_trop_gros(self):
         big = make_png(3, 3) + b"\x00" * (5 * 1024)  # > 4KB configuré
-        status_code, _, body = self.req("POST", "/api/zones/pulse/images",
+        status_code, _, body = self.req("POST", "/api/zones/default/images",
                                         body=big, headers={"Content-Type": "image/png"})
         self.assertEqual(status_code, 413)
         self.assertEqual(json_of(body)["error"]["code"], "too_large")
@@ -325,7 +325,7 @@ class TestRejetsUploads(Base):
 
         with socket.create_connection(("127.0.0.1", port), timeout=5) as sock:
             sock.sendall(
-                b"POST /api/zones/pulse/images HTTP/1.1\r\n"
+                b"POST /api/zones/default/images HTTP/1.1\r\n"
                 b"Host: localhost\r\n"
                 + f"Content-Length: {100 * 1024 * 1024}\r\n".encode()
                 + b"Content-Type: application/octet-stream\r\n\r\npartial"
@@ -335,14 +335,14 @@ class TestRejetsUploads(Base):
         self.assertTrue(response.startswith("HTTP/1.1 413"), response[:60])
 
     def test_gif_refuse(self):
-        status_code, _, body = self.req("POST", "/api/zones/pulse/images",
+        status_code, _, body = self.req("POST", "/api/zones/default/images",
                                         body=b"GIF89a" + b"\x00" * 30,
                                         headers={"Content-Type": "image/gif"})
         self.assertEqual(status_code, 415)
 
     def test_png_tronque_refuse(self):
         truncated = make_png(8, 8)[:14]
-        status_code, _, body = self.req("POST", "/api/zones/pulse/images",
+        status_code, _, body = self.req("POST", "/api/zones/default/images",
                                         body=truncated, headers={"Content-Type": "image/png"})
         self.assertEqual(status_code, 400)
         self.assertEqual(json_of(body)["error"]["code"], "invalid_image")
@@ -352,7 +352,7 @@ class TestRejetsUploads(Base):
         with mock.patch("pasteberth.storage.os.statvfs", return_value=usage):
             status_code, _, body = self.req(
                 "POST",
-                "/api/zones/pulse/images",
+                "/api/zones/default/images",
                 body=make_png(),
                 headers={"Content-Type": "image/png"},
             )
@@ -366,7 +366,7 @@ class TestZonesEtPreviews(Base):
     def setUp(self):
         super().setUp()
         body, ctype = build_multipart(data=make_png())
-        status, _, resp = self.req("POST", "/api/zones/pulse/images", body=body,
+        status, _, resp = self.req("POST", "/api/zones/default/images", body=body,
                                    headers={"Content-Type": ctype})
         self.item = json_of(resp)
 
@@ -378,20 +378,20 @@ class TestZonesEtPreviews(Base):
         self.assertEqual(status_code, 404)
 
     def test_zone_traversal(self):
-        for bad in ["..%2Fetc", "..", "pulse%2f..%2flwp", "PULSE"]:
+        for bad in ["..%2Fetc", "..", "default%2f..%2fsecondary", "DEFAULT"]:
             status_code, _, _ = self.req("GET", f"/api/zones/{bad}/images")
             self.assertEqual(status_code, 404, bad)
 
     def test_preview_inexistante(self):
-        status_code, _, _ = self.req("GET", "/previews/pulse/2026-01-01_00-00-00_000000.png")
+        status_code, _, _ = self.req("GET", "/previews/default/2026-01-01_00-00-00_000000.png")
         self.assertEqual(status_code, 404)
 
     def test_preview_traversal(self):
         attempts = [
-            "/previews/pulse/../../etc/passwd",
-            "/previews/pulse/%2e%2e/%2e%2e/etc/passwd",
-            "/previews/pulse/..%2f..%2fconfig.toml",
-            f"/previews/pulse/{self.item['filename']}%00.png",
+            "/previews/default/../../etc/passwd",
+            "/previews/default/%2e%2e/%2e%2e/etc/passwd",
+            "/previews/default/..%2f..%2fconfig.toml",
+            f"/previews/default/{self.item['filename']}%00.png",
             "/previews/../pasteberth/__init__.py",
         ]
         for path in attempts:
@@ -400,8 +400,8 @@ class TestZonesEtPreviews(Base):
             self.assertIn(status_code, (400, 404), path)
 
     def test_preview_autre_zone_interdite_logique(self):
-        # le fichier existe dans pulse, pas dans lwp
-        status_code, _, _ = self.req("GET", f"/previews/lwp/{self.item['filename']}")
+        # le fichier existe dans default, pas dans secondary
+        status_code, _, _ = self.req("GET", f"/previews/secondary/{self.item['filename']}")
         self.assertEqual(status_code, 404)
 
 
@@ -412,69 +412,69 @@ class TestHistoriqueOrdre(Base):
         refs = []
         for i in range(3):
             body, ctype = build_multipart(data=make_png(i + 2, 4))
-            status, _, resp = self.req("POST", "/api/zones/pulse/images", body=body,
+            status, _, resp = self.req("POST", "/api/zones/default/images", body=body,
                                        headers={"Content-Type": ctype})
             self.assertEqual(status, 201)
             refs.append(json_of(resp)["reference"])
-        status, _, resp = self.req("GET", "/api/zones/pulse/images")
+        status, _, resp = self.req("GET", "/api/zones/default/images")
         listed = json_of(resp)["images"]
         self.assertEqual([i["reference"] for i in listed], list(reversed(refs)))
 
     def test_reference_opencode_exacte(self):
         body, ctype = build_multipart(data=make_png())
-        _, _, resp = self.req("POST", "/api/zones/pulse/images", body=body,
+        _, _, resp = self.req("POST", "/api/zones/default/images", body=body,
                               headers={"Content-Type": ctype})
         item = json_of(resp)
         path = Path(item["reference"][1:])
         # la référence = préfixe + chemin absolu exact du fichier écrit sur disque
         self.assertEqual(item["reference"], "@" + str(path))
         self.assertTrue(path.is_file())
-        self.assertEqual(path.parent.resolve(), self.zones_dirs["pulse"].resolve())
+        self.assertEqual(path.parent.resolve(), self.zones_dirs["default"].resolve())
 
 
 class TestRetentionAPI(Base):
     """(#12)(#13)(#19)(#20) rétention par API et indépendance des zones."""
 
-    def test_depassement_retain_pulse3(self):
+    def test_depassement_retain_default3(self):
         saved = []
         for i in range(5):
             body, ctype = build_multipart(data=make_png(i + 2, 2))
-            _, _, resp = self.req("POST", "/api/zones/pulse/images", body=body,
+            _, _, resp = self.req("POST", "/api/zones/default/images", body=body,
                                   headers={"Content-Type": ctype})
             saved.append(json_of(resp))
-        status, _, resp = self.req("GET", "/api/zones/pulse/images")
+        status, _, resp = self.req("GET", "/api/zones/default/images")
         images = json_of(resp)["images"]
         self.assertEqual(len(images), 3)
         survivors = {i["filename"] for i in images}
         expected = {i["filename"] for i in saved[-3:]}
         self.assertEqual(survivors, expected)
         for name in {i["filename"] for i in saved[:2]}:
-            self.assertFalse((self.zones_dirs["pulse"] / name).exists())
+            self.assertFalse((self.zones_dirs["default"] / name).exists())
 
     def test_independance_zones(self):
-        # lwp retain=2, pulse retain=3 : les flux ne se mélangent jamais.
+        # secondary retain=2, default retain=3 : les flux ne se mélangent jamais.
         for i in range(5):
-            zone = ["pulse", "lwp"][i % 2]
+            zone = ["default", "secondary"][i % 2]
             body, ctype = build_multipart(data=make_png(3, 3))
             self.req("POST", f"/api/zones/{zone}/images", body=body,
                      headers={"Content-Type": ctype})
         counts = {}
-        for zone in ("pulse", "lwp"):
+        for zone in ("default", "secondary"):
             _, _, resp = self.req("GET", f"/api/zones/{zone}/images")
             counts[zone] = len(json_of(resp)["images"])
-        self.assertEqual(counts, {"pulse": 3, "lwp": 2})
+        self.assertEqual(counts, {"default": 3, "secondary": 2})
 
     def test_compteur_zones_endpoint(self):
         body, ctype = build_multipart(data=make_png())
-        self.req("POST", "/api/zones/pulse/images", body=body, headers={"Content-Type": ctype})
+        self.req("POST", "/api/zones/default/images", body=body, headers={"Content-Type": ctype})
         _, _, resp = self.req("GET", "/api/zones")
         overview = json_of(resp)
         self.assertFalse(overview["auth_enabled"]) if not self.auth else None
         by_id = {z["id"]: z for z in overview["zones"]}
-        self.assertEqual(by_id["pulse"]["count"], 1)
-        self.assertEqual(by_id["lwp"]["count"], 0)
-        self.assertEqual(by_id["pulse"]["color"], "#304237")
-        self.assertNotEqual(by_id["pulse"]["color"], by_id["lwp"]["color"])
+        self.assertEqual(by_id["default"]["count"], 1)
+        self.assertEqual(by_id["secondary"]["count"], 0)
+        self.assertEqual(by_id["default"]["color"], "#304237")
+        self.assertNotEqual(by_id["default"]["color"], by_id["secondary"]["color"])
 
 
 class TestPersistenceRestart(Base):
@@ -482,7 +482,7 @@ class TestPersistenceRestart(Base):
 
     def test_redemarrage_conserve_historique(self):
         refs = []
-        for zone in ("pulse", "lwp"):
+        for zone in ("default", "secondary"):
             body, ctype = build_multipart(data=make_png(4, 4))
             _, _, resp = self.req("POST", f"/api/zones/{zone}/images", body=body,
                                   headers={"Content-Type": ctype})
@@ -506,7 +506,7 @@ class TestOriginCSRF(Base):
         headers = {"Content-Type": ctype}
         if origin_header:
             headers["Origin"] = origin_header
-        return self.req("POST", "/api/zones/pulse/images", body=body, headers=headers)
+        return self.req("POST", "/api/zones/default/images", body=body, headers=headers)
 
     def test_origin_etrangere_refusee(self):
         status, _, body = self._post("https://evil.example.com")
@@ -523,7 +523,7 @@ class TestOriginCSRF(Base):
 
     def test_referer_etranger_refuse(self):
         body, ctype = build_multipart(data=make_png())
-        status, _, _ = self.req("POST", "/api/zones/pulse/images", body=body,
+        status, _, _ = self.req("POST", "/api/zones/default/images", body=body,
                                 headers={"Content-Type": ctype,
                                          "Referer": "https://evil.example/page"})
         self.assertEqual(status, 403)
@@ -568,8 +568,8 @@ class TestProxysConfiance(Base):
         self.server.stop()
         cfg_path = write_config(
             self.tmp,
-            zones=[{"id": "pulse", "directory": str(self.zones_dirs["pulse"])},
-                   {"id": "lwp", "directory": str(self.zones_dirs["lwp"])}],
+            zones=[{"id": "default", "directory": str(self.zones_dirs["default"])},
+                   {"id": "secondary", "directory": str(self.zones_dirs["secondary"])}],
             auth_enabled=True, password=PASSWORD,
             trusted_proxies="[]",
         )

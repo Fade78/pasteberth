@@ -15,13 +15,19 @@ from tests.helpers import REPO_ROOT, write_config
 ENV = {**os.environ, "PYTHONPATH": str(REPO_ROOT)}
 
 
-def run_cli(args, *, cwd=None, input_text=None):
+def run_cli(args, *, cwd=None, input_text=None, env=None):
+    process_env = dict(ENV)
+    for key, value in (env or {}).items():
+        if value is None:
+            process_env.pop(key, None)
+        else:
+            process_env[key] = value
     return subprocess.run(
         [sys.executable, "-m", "pasteberth", *args],
         capture_output=True,
         text=True,
         input=input_text,
-        env=ENV,
+        env=process_env,
         timeout=60,
         cwd=cwd or str(REPO_ROOT),
     )
@@ -86,13 +92,13 @@ class TestPasswd(unittest.TestCase):
 
     def test_mot_de_passe_court_refuse(self):
         self.stdin = "court\ncourt\n"
-        proc = self._passwd_cmd()
+        proc = self._passwd_cmd(write_config(self.tmp))
         self.assertEqual(proc.returncode, 1)
         self.assertIn("8 caractères", proc.stderr)
 
     def test_confirmation_differe(self):
         self.stdin = "un-long-mot-de-passe-1\nautre-long-mot-de-passe\n"
-        proc = self._passwd_cmd()
+        proc = self._passwd_cmd(write_config(self.tmp))
         self.assertEqual(proc.returncode, 1)
         self.assertIn("diffèrent", proc.stderr)
 
@@ -127,6 +133,49 @@ class TestPasswd(unittest.TestCase):
         self.assertNotIn(secret, content)
         self.assertTrue(content.startswith("scrypt$"))
 
+
+class TestConfigurationDepot(unittest.TestCase):
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.tmp = Path(self._tmp.name)
+        self.addCleanup(self._tmp.cleanup)
+
+    def test_generation_configuration_locale(self):
+        target = self.tmp / "config.toml"
+        proc = run_cli(["--generate-config", "--config", str(target)])
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertTrue(target.is_file())
+        self.assertEqual(stat.S_IMODE(target.stat().st_mode), 0o600)
+        content = target.read_text(encoding="utf-8")
+        self.assertIn('id = "default"', content)
+        self.assertIn("storage/default", content)
+        self.assertIn("configuration générée", proc.stdout)
+
+    def test_generation_necrase_pas_par_defaut(self):
+        target = self.tmp / "config.toml"
+        target.write_text("sentinelle\n", encoding="utf-8")
+        proc = run_cli(["--generate-config", "--config", str(target)])
+        self.assertEqual(proc.returncode, 2)
+        self.assertEqual(target.read_text(encoding="utf-8"), "sentinelle\n")
+
+    def test_audit_mode_depot_sans_configuration(self):
+        proc = run_cli(
+            ["audit"],
+            cwd=self.tmp,
+            env={
+                "PASTEBERTH_REPO_ROOT": str(self.tmp),
+                "PASTEBERTH_CONFIG": None,
+                "XDG_CONFIG_HOME": str(self.tmp / "xdg"),
+            },
+        )
+        self.assertEqual(proc.returncode, 1)
+        self.assertIn("stockage par défaut", proc.stdout)
+
+    def test_audit_auth_sans_hash_echoue(self):
+        cfg = write_config(self.tmp, auth_enabled=True)
+        proc = run_cli(["audit", "--config", str(cfg)])
+        self.assertEqual(proc.returncode, 2)
+        self.assertIn("hash scrypt absent ou invalide", proc.stdout)
 
 if __name__ == "__main__":
     unittest.main()

@@ -19,6 +19,8 @@ playwright-report/
 config.toml
 passwd
 *.passwd
+/storage/*
+!/storage/.gitignore
 
 # Données runtime
 data/
