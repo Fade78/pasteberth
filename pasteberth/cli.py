@@ -36,6 +36,7 @@ from pasteberth.config import (
     config_path_for_generation,
     default_storage_path,
     find_config_path,
+    is_loopback_address,
     load_config,
     prepare_directories,
     validate_directory_identities,
@@ -298,6 +299,19 @@ def _audit_tls(cfg) -> str | None:
     return None
 
 
+def _network_warning(cfg) -> str | None:
+    if is_loopback_address(cfg.listen_address):
+        return None
+    if cfg.tls.enabled:
+        if not cfg.auth.enabled:
+            return "écoute réseau TLS directe détectée avec authentification désactivée"
+        return None
+    return (
+        "écoute réseau HTTP non chiffrée malgré l'opt-in ; "
+        "préférez [tls] ou un reverse proxy HTTPS"
+    )
+
+
 def _cmd_audit(args: argparse.Namespace) -> int:
     config_path = find_config_path(_config_arg(args))
     errors: list[str] = []
@@ -345,10 +359,9 @@ def _cmd_audit(args: argparse.Namespace) -> int:
     except ConfigError as exc:
         errors.append(str(exc))
 
-    if not cfg.listen_address in ("127.0.0.1", "::1", "localhost"):
-        warnings.append(
-            "écoute réseau détectée : HTTPS via reverse proxy et authentification sont requis"
-        )
+    network_warning = _network_warning(cfg)
+    if network_warning:
+        warnings.append(network_warning)
     listener_error = _audit_listener(cfg)
     if listener_error:
         errors.append(listener_error)

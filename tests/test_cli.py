@@ -9,6 +9,8 @@ import unittest
 from pathlib import Path
 
 from pasteberth.auth import load_password_hash, verify_password
+from pasteberth.cli import _network_warning
+from pasteberth.config import load_config
 
 from tests.helpers import REPO_ROOT, write_config
 
@@ -212,6 +214,20 @@ class TestConfigurationDepot(unittest.TestCase):
         proc = run_cli(["audit", "--config", str(cfg)])
         self.assertEqual(proc.returncode, 2)
         self.assertIn("configuration TLS invalide", proc.stdout)
+
+    def test_audit_tls_ne_demande_pas_de_reverse_proxy(self):
+        cfg = load_config(
+            write_config(
+                self.tmp,
+                listen_address="0.0.0.0",
+                auth_enabled=True,
+                password="mot-de-passe-test-123",
+                tls_enabled=True,
+                tls_certificate="/tmp/cert.pem",
+                tls_private_key="/tmp/key.pem",
+            )
+        )
+        self.assertIsNone(_network_warning(cfg))
 
 if __name__ == "__main__":
     unittest.main()
