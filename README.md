@@ -1,62 +1,104 @@
 # Pasteberth
 
-**Pont entre le presse-papiers graphique d'un poste de travail et le
-filesystem d'une machine distante où travaille un harness CLI/TUI
-(OpenCode et similaires).**
+**Le pont entre un presse-papiers graphique et un harness CLI/TUI qui ne sait
+pas recevoir facilement des images.**
 
-Vous faites une capture d'écran sur votre poste, vous collez (Ctrl+V) dans
+Pasteberth est pensé avant tout pour les harness qui travaillent dans un
+terminal — OpenCode et similaires. Ces outils savent très bien lire un fichier
+sur leur machine, mais ils n'ont pas toujours accès au presse-papiers graphique
+du poste de travail, ni à une fonction pratique pour recevoir une capture.
+
+Pasteberth garde donc le transfert volontairement simple : le navigateur reçoit
+l'image, le serveur l'écrit sur le filesystem de la machine du harness, puis
+retourne le chemin exact à coller dans le terminal.
+
+Vous faites une capture d'écran sur votre poste, vous la collez (Ctrl+V) dans
 la zone du bon projet dans votre navigateur, et vous récupérez une référence
-filesystem prête à coller dans OpenCode :
+filesystem prête à coller dans le harness :
 
 ```
-@/chemin/du/depot/storage/default/2026-08-25_01-22-31_a81c42.png
+@/home/user/PasteBerth/captures/2026-08-25_22-58-10_7ad5d9.png
 ```
 
 ```
-POSTE DE TRAVAIL                     MACHINE DU HARNESS
-navigateur ── HTTPS ──▶ Pasteberth ──▶ storage/default/
-   ▲                        │
-   └──── Copy référence ◀───┘
-                │
-                ▼
-          terminal / OpenCode
+POSTE DE TRAVAIL                         MACHINE DU HARNESS
+capture ──▶ navigateur ── HTTPS ──▶ Pasteberth ──▶ captures/<zone>/
+                  ▲                         │
+                  └──── référence copiée ◀──┘
+                                               │
+                                               ▼
+                                      terminal / harness CLI-TUI
 ```
 
-Le navigateur n'a **jamais** besoin d'accéder au chemin retourné : il est
-celui que voit OpenCode, sur la machine où tourne Pasteberth.
+Le navigateur n'a **jamais** besoin d'accéder au chemin retourné. Ce chemin est
+celui que voit le harness, sur la machine où tourne Pasteberth.
+
+La version actuelle est `1.0.1`.
 
 ---
 
 ## Sommaire
 
-1. [Fonctionnement](#fonctionnement)
-2. [Installation](#installation)
-3. [Configuration](#configuration)
-4. [Mot de passe](#mot-de-passe)
-5. [Lancement & service systemd](#lancement--service-systemd)
-6. [HTTPS & reverse proxy](#https--reverse-proxy)
-7. [API](#api)
-8. [Sécurité](#sécurité)
-9. [Tests](#tests)
-10. [Limitations & V2](#limitations--v2)
+1. [Cas d'usage](#cas-dusage)
+2. [Fonctionnement](#fonctionnement)
+3. [Installation](#installation)
+4. [Configuration](#configuration)
+5. [Mot de passe](#mot-de-passe)
+6. [Lancement & service systemd](#lancement--service-systemd)
+7. [HTTPS & reverse proxy](#https--reverse-proxy)
+8. [API](#api)
+9. [Sécurité](#sécurité)
+10. [Tests](#tests)
+11. [Limitations & V2](#limitations--v2)
 
 ---
 
+## Cas d'usage
+
+Pasteberth est utile quand les deux côtés du travail ne sont pas le même
+environnement :
+
+- la capture est faite dans un environnement graphique, éventuellement sur un
+  autre poste ;
+- le harness travaille dans un terminal ou une session distante ;
+- le harness peut lire le filesystem de sa machine, mais ne peut pas recevoir
+  directement une image depuis le presse-papiers graphique ;
+- vous voulez conserver quelques captures par projet sans créer un service de
+  partage d'images généraliste.
+
+Pasteberth n'est pas un stockage public, un CDN ou un outil de synchronisation
+entre utilisateurs. C'est un sas local et ciblé entre une interface graphique
+et un processus de terminal.
+
 ## Fonctionnement
 
-- **Zones** : la page affiche une carte par projet configuré (couleur,
-  label, historique propre). On clique une zone pour la rendre active,
-  puis Ctrl+V envoie l'image du clipboard vers cette zone.
-  Glisser-déposer directement sur une carte fonctionne aussi.
-- **Rétention circulaire par zone** (`retain = N`) : au-delà de N images,
-  les plus anciennes sont supprimées — uniquement des fichiers créés par
-  Pasteberth dans un répertoire privé (preuve de paternité par sidecar JSON).
-- **Référence exacte** : le serveur construit et retourne la référence ;
-  le frontend la copie telle quelle (`navigator.clipboard.writeText`,
-  repli `execCommand`), sans jamais reconstruire le chemin côté client.
-- **Page permanente** : prévue pour rester ouverte des heures ; pas de
-  Blob URL accumulée (miniatures servies par le serveur), re-rendu par
-  zone, resynchronisation légère toutes les 45 s + au retour sur l'onglet.
+- **Une zone par projet** : chaque zone a un identifiant, un label, une couleur,
+  un répertoire et une rétention indépendants. Cliquez une zone pour la rendre
+  active, puis utilisez Ctrl+V ou le glisser-déposer.
+- **Panneau de l'image sélectionnée** : après un upload, la nouvelle image est
+  sélectionnée en haut avec son nom, sa référence et les actions `Copier`,
+  `Effacer` et `Zoom`.
+- **Index des images** : les miniatures du bas forment l'historique complet de
+  la zone, plus récent en premier. Cliquez une miniature pour la sélectionner
+  dans le panneau supérieur ; la miniature sélectionnée est signalée.
+- **Presse-papiers** : après un upload, Pasteberth tente de copier la référence
+  exacte dans le presse-papiers. Le bouton `Effacer` remplace son contenu par
+  un texte vide, dans la limite des permissions Clipboard du navigateur.
+- **Références exactes** : le serveur construit et retourne le chemin ; le
+  frontend le copie tel quel, sans jamais le reconstruire côté client. Le
+  préfixe et le suffixe sont configurables, par exemple pour obtenir
+  `` `/chemin/image.png` ``.
+- **Rétention circulaire par zone** (`retain = N`) : au-delà de N images, les
+  plus anciennes sont supprimées — uniquement des fichiers créés par
+  Pasteberth avec leur sidecar JSON.
+- **Page permanente** : prévue pour rester ouverte des heures ; les miniatures
+  viennent du serveur, aucune Blob URL ne s'accumule, et l'historique est
+  resynchronisé toutes les 45 secondes ainsi qu'au retour sur l'onglet.
+
+Pour que le sélecteur `@` d'OpenCode trouve directement les images, placez la
+zone dans le workspace ouvert par OpenCode ou ouvrez un workspace qui contient
+à la fois le projet et le répertoire de captures. Sinon, le chemin reste valide
+pour une lecture explicite par le harness.
 
 ## Installation
 
@@ -67,11 +109,19 @@ d'installation ni root ne sont nécessaires.
 ```sh
 git clone https://glb.didierb.name/didier/pasteberth.git
 cd pasteberth
-./bin/pasteberth audit
 ./bin/pasteberth --generate-config
 ./bin/pasteberth passwd
 ./bin/pasteberth
 ```
+
+Avant le premier démarrage, vérifiez l'environnement :
+
+```sh
+./bin/pasteberth audit --config config.toml
+```
+
+Un audit qui ne signale que des avertissements retourne `1` ; les erreurs de
+configuration retournent `2`.
 
 Pour utiliser la commande depuis n'importe quel répertoire, ajoutez
 `bin/` au `PATH` ou utilisez directement `./bin/pasteberth`.
@@ -98,7 +148,7 @@ via reverse proxy.
 
 `pasteberth --generate-config` génère une configuration sécurisée avec
 authentification activée. Modifiez ensuite manuellement `config.toml` selon
-les zones et chemins souhaités.
+les zones et chemins souhaités. Le fichier reste ignoré par Git.
 
 | Clé | Défaut | Rôle |
 |---|---|---|
@@ -125,6 +175,41 @@ Pour copier une référence entourée de backquotes, par exemple `` `/chemin/ima
 ```toml
 reference_prefix = "`"
 reference_suffix = "`"
+```
+
+Pour trois projets, répétez `[[zones]]` ; chaque bloc décrit une entrée de la
+liste `zones` :
+
+```toml
+[[zones]]
+id = "lightwebpres"
+label = "LightWebPres"
+type = "local"
+directory = "/home/user/PasteBerth/captures/lightwebpres"
+retain = 10
+reference_prefix = ""
+reference_suffix = ""
+color = "#304237"
+
+[[zones]]
+id = "lightwebpres-gui"
+label = "LightWebPres-GUI"
+type = "local"
+directory = "/home/user/PasteBerth/captures/lightwebpres-gui"
+retain = 10
+reference_prefix = ""
+reference_suffix = ""
+color = "#9e3451"
+
+[[zones]]
+id = "pasteberth"
+label = "PasteBerth"
+type = "local"
+directory = "/home/user/PasteBerth/captures/pasteberth"
+retain = 10
+reference_prefix = ""
+reference_suffix = ""
+color = "#394252"
 ```
 
 Le stockage intégré par défaut est `<racine-du-dépôt>/storage/default`. Le
@@ -168,7 +253,25 @@ journalctl --user -u pasteberth -f                 # logs
 ```
 
 L'unité fournie (`deploy/pasteberth.service`) est optionnelle et ne nécessite
-aucun root. Adaptez son `ExecStart` au chemin réel du dépôt avant activation.
+aucun root. Adaptez son `WorkingDirectory`, son `ExecStart` et son chemin de
+configuration au dépôt réel avant activation. Exemple si le dépôt est dans
+`/home/devint3/PasteBerth` et la configuration dans `config/` :
+
+```ini
+[Service]
+WorkingDirectory=%h/PasteBerth
+ExecStart=%h/PasteBerth/bin/pasteberth --config %h/PasteBerth/config/config.toml
+```
+
+Installez ensuite l'unité dans le gestionnaire utilisateur :
+
+```sh
+mkdir -p ~/.config/systemd/user
+cp deploy/pasteberth.service ~/.config/systemd/user/pasteberth.service
+systemctl --user daemon-reload
+systemctl --user enable --now pasteberth.service
+```
+
 Un refus de démarrage protège contre l'exposition accidentelle :
 **auth désactivée sans opt-in explicite = arrêt avec message explicite**
 (`allow_unauthenticated_local` ou `allow_unauthenticated_remote` selon le cas).
@@ -236,7 +339,9 @@ une IP auprès du limiteur).
 
 ## API
 
-Same-origin uniquement (aucun CORS en V1 ; cookies de session).
+Same-origin uniquement (aucun CORS en V1 ; cookies de session). L'API est
+utile si le client graphique n'est pas le navigateur fourni ou si un script
+veut déposer une image validée dans une zone.
 
 | Méthode | Chemin | Rôle |
 |---|---|---|
@@ -313,9 +418,10 @@ configuration & politique de démarrage, stockage/rétention/ownership,
 auth/sessions/anti-bruteforce, parser multipart, intégration HTTP complète
 (auth, CSRF/Origin, proxys, en-têtes, fuite de secret), concurrence
 (uploads parallèles même/multi zones, lecteurs pendant écritures),
-CLI (passwd, refus de configuration dangereuse), contrats frontend, et quatre
+CLI (passwd, refus de configuration dangereuse), contrats frontend, et cinq
 scénarios navigateur Playwright sur un serveur Pasteberth réel : chargement et
-sélection clavier, collage sans zone, upload/aperçu et glisser-déposer.
+sélection clavier, collage sans zone, upload/aperçu, sélection dans l'index et
+glisser-déposer.
 Les tests navigateur utilisent Chromium par défaut ; `E2E_BROWSER=firefox` est
 disponible si le navigateur Playwright correspondant est installé.
 
@@ -328,4 +434,6 @@ disponible si le navigateur Playwright correspondant est installé.
   CORS dédié sera ajouté explicitement le moment venu.
 - Sessions en mémoire : un redémarrage déconnecte (volontaire, simple) ;
   suppression manuelle d'une image hors rétention à prévoir en UI.
-- Mono-utilisateur par conception ; TLS délégué au reverse proxy.
+- Authentification par mot de passe unique en V1 ; les permissions filesystem
+  peuvent toutefois organiser plusieurs zones ou utilisateurs.
+- TLS délégué au reverse proxy ou terminé directement par Pasteberth.
