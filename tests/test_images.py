@@ -58,7 +58,8 @@ class TestWebp(unittest.TestCase):
 
     def test_truncated_payload_tolerated_for_header(self):
         data = make_webp_vp8l(50, 40)
-        info = inspect_image(data[:-2])
+        # coupe l'octet de padding, garde signature + 4 octets de dimensions
+        info = inspect_image(data[:-1])
         self.assertEqual((info.width, info.height), (50, 40))
 
 

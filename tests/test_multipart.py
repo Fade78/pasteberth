@@ -23,9 +23,10 @@ class TestParsing(unittest.TestCase):
         body, ctype = build_multipart(data=data)
         fields = parse_multipart(body, extract_boundary(ctype))
         self.assertIn("image", fields)
-        filename, content = fields["image"]
+        filename, part_ctype, content = fields["image"]
         self.assertEqual(content, data)
         self.assertEqual(filename, "clipboard.png")
+        self.assertEqual(part_ctype, "image/png")
 
     def test_plusieurs_champs_binaire_preserve(self):
         binary = bytes(range(256)) + b"\r\n--fake\r\n" + b"\x00"
@@ -36,8 +37,8 @@ class TestParsing(unittest.TestCase):
             b"--B--\r\n"
         )
         fields = parse_multipart(body, "B")
-        self.assertEqual(fields["note"], (None, b"hello"))
-        self.assertEqual(fields["image"][1], binary)
+        self.assertEqual(fields["note"], (None, None, b"hello"))
+        self.assertEqual(fields["image"][2], binary)
 
     def test_filename_echappe(self):
         body = (
@@ -65,7 +66,7 @@ class TestParsing(unittest.TestCase):
         # Un client interrompu peut couper avant le marqueur final.
         body = b'--B\r\nContent-Disposition: form-data; name="image"\r\n\r\nPARTIAL'
         fields = parse_multipart(body, "B")
-        self.assertEqual(fields["image"][1], b"PARTIAL")
+        self.assertEqual(fields["image"][2], b"PARTIAL")
 
     def test_corps_vide_rejete(self):
         with self.assertRaises(MultipartError):

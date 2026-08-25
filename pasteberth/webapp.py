@@ -316,6 +316,10 @@ def make_handler(cfg: Config, service: PasteService, sessions: SessionStore,
                     self.close_connection = True
 
         do_POST = do_GET
+        do_PUT = do_GET
+        do_DELETE = do_GET
+        do_PATCH = do_GET
+        do_OPTIONS = do_GET
 
         def log_message(self, fmt: str, *args) -> None:  # neutralise le logger par défaut
             log.debug("peer %s " + fmt, self.address_string(), *args)
@@ -429,8 +433,8 @@ def make_handler(cfg: Config, service: PasteService, sessions: SessionStore,
                 except MultipartError:
                     password = ""
                 else:
-                    _, password = next(iter(fields.values()))
-                    password = (password or b"").decode("utf-8", "replace")
+                    _, _, raw = next(iter(fields.values()))
+                    password = (raw or b"").decode("utf-8", "replace")
             elif "application/json" in ctype:
                 try:
                     password = str(json.loads(body.decode("utf-8")).get("password", ""))
@@ -531,15 +535,15 @@ def make_handler(cfg: Config, service: PasteService, sessions: SessionStore,
                         self._error(400, "invalid_request", f"multipart invalide : {exc}")
                         return
                     if "image" in fields:
-                        filename_client, data = fields["image"]
+                        filename_client, part_ctype, data = fields["image"]
                     elif len(fields) == 1:
-                        filename_client, data = next(iter(fields.values()))
+                        filename_client, part_ctype, data = next(iter(fields.values()))
                     else:
                         self._error(400, "invalid_request",
                                     "champ 'image' attendu (multipart)")
                         return
                     del filename_client  # jamais utilisé pour nommer un fichier
-                    declared = ctype
+                    declared = part_ctype or "application/octet-stream"
                 elif ctype.startswith("image/") or ctype in ("application/octet-stream", ""):
                     data = body
                     declared = ctype or "application/octet-stream"

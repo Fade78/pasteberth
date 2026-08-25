@@ -61,8 +61,9 @@ class TestParsing(unittest.TestCase):
         self.assertEqual(cfg.port, 8765)
         self.assertEqual(cfg.max_upload_bytes, 20 * 1024 * 1024)
         self.assertFalse(cfg.auth.enabled)
-        self.assertEqual(cfg.zones["z0"].reference_prefix, "@")
-        self.assertTrue(cfg.zones["z0"].create_directory)
+        self.assertEqual(set(cfg.zones), {"pulse", "lwp"})
+        self.assertEqual(cfg.zones["pulse"].reference_prefix, "@")
+        self.assertTrue(cfg.zones["pulse"].create_directory)
 
     def test_zones_chargees(self):
         zones = [

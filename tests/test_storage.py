@@ -20,7 +20,7 @@ class Base(unittest.TestCase):
         self.addCleanup(self._tmp.cleanup)
 
     def save(self, n=1):
-        return [self.dest.save(make_png(2, 2), INFO()) for _ in range(n)]
+        return [self.dest.save(make_png(2, 2), INFO(2, 2)) for _ in range(n)]
 
 
 class TestSauvegarde(Base):
@@ -39,11 +39,15 @@ class TestSauvegarde(Base):
         self.assertEqual(len(names), 20)
 
     def test_collision_forcee_resolue(self):
+        import itertools
+
+        suffixes = itertools.cycle(["cafe42", "abcd42"])
         saved = []
-        with mock.patch("pasteberth.storage.secrets.token_hex", return_value="cafe42"):
+        with mock.patch("pasteberth.storage.secrets.token_hex",
+                        lambda n: next(suffixes)):
             saved.append(self.dest.save(make_png(), INFO()).filename)
+            # même seconde + premier suffixe déjà pris -> régénération
             saved.append(self.dest.save(make_png(), INFO()).filename)
-        # Le second save a détecté la collision et régénéré un suffixe.
         self.assertNotEqual(saved[0], saved[1])
         self.assertEqual(len(list(self.dir.glob("*.png"))), 2)
 
@@ -138,9 +142,10 @@ class TestRepertoires(unittest.TestCase):
 
     def test_sans_creation_refuse(self):
         target = self.tmp / "absent"
-        dest = LocalDestination(target, create_directory=False)
+        # Échec immédiat : la destination refuse un répertoire inexistant
+        # quand la création n'est pas autorisée.
         with self.assertRaises(DestinationError):
-            dest.save(make_png(), INFO(1, 1))
+            LocalDestination(target, create_directory=False)
 
     def test_reference_path_absolu(self):
         dest = LocalDestination(self.tmp / "r", create_directory=True)
@@ -150,10 +155,10 @@ class TestRepertoires(unittest.TestCase):
         self.assertEqual(Path(ref), self.tmp / "r" / stored.filename)
 
     def test_valid_filename(self):
-        self.assertTrue(valid_filename("2026-08-25_01-22-31_a81c.png"))
+        self.assertTrue(valid_filename("2026-08-25_01-22-31_a81c42.png"))
         self.assertFalse(valid_filename("../../etc/passwd"))
         self.assertFalse(valid_filename("random.png"))
-        self.assertFalse(valid_filename("2026-08-25_01-22-31_a81c.gif"))
+        self.assertFalse(valid_filename("2026-08-25_01-22-31_a81c42.gif"))
 
 
 if __name__ == "__main__":

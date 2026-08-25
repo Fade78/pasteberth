@@ -97,7 +97,7 @@ def _parse_jpeg(data: bytes) -> ImageInfo:
 
 
 def _parse_webp(data: bytes) -> ImageInfo:
-    if len(data) < 30 or data[0:4] != b"RIFF" or data[8:12] != b"WEBP":
+    if len(data) < 20 or data[0:4] != b"RIFF" or data[8:12] != b"WEBP":
         raise InvalidImageError("invalid_image", "signature WebP absente")
     pos = 12
     end = len(data)

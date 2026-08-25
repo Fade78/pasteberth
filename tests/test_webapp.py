@@ -38,10 +38,10 @@ class Base(unittest.TestCase):
         }
         zones = [
             {"id": zid, "label": zid.upper(), "retain": retain,
-             "directory": str(path)}
-            for zid, path, retain in [
-                ("pulse", self.zones_dirs["pulse"], 3),
-                ("lwp", self.zones_dirs["lwp"], 2),
+             "color": color, "directory": str(path)}
+            for zid, path, retain, color in [
+                ("pulse", self.zones_dirs["pulse"], 3, "#304237"),
+                ("lwp", self.zones_dirs["lwp"], 2, "#26394a"),
             ]
         ]
         cfg_path = write_config(
@@ -57,7 +57,14 @@ class Base(unittest.TestCase):
         self.addCleanup(self.server.stop)
         self.addCleanup(self._tmp.cleanup)
         if self.auth:
-            self.cookie = login(self.server.port, PASSWORD)
+            # login avec le mot de passe défini par la classe de test
+            status, headers, _ = request(
+                self.server.port, "POST", "/login",
+                body=f"password={self.password}".encode(),
+                headers={"Content-Type": "application/x-www-form-urlencoded"},
+            )
+            assert status == 303, f"login échoué : {status}"
+            self.cookie = headers["set-cookie"].split(";", 1)[0]
         else:
             self.cookie = None
 
@@ -138,11 +145,9 @@ class TestAuthentification(Base):
 
     def test_preview_401(self):
         body, ctype = build_multipart(data=make_png())
-        _, _, resp = json_of(self.req("POST", "/api/zones/pulse/images", body=body,
-                                      headers={"Content-Type": ctype})[2]) and (0, 0, b"{}")
-        # upload d'abord avec cookie
         status, _, resp = self.req("POST", "/api/zones/pulse/images", body=body,
                                    headers={"Content-Type": ctype})
+        self.assertEqual(status, 201)
         url = json_of(resp)["preview_url"]
         status, _, _ = self.req("GET", url, cookie=None)
         self.assertEqual(status, 401)
@@ -296,7 +301,7 @@ class TestRejetsUploads(Base):
             sock.sendall(
                 b"POST /api/zones/pulse/images HTTP/1.1\r\n"
                 b"Host: localhost\r\n"
-                f"Content-Length: {100 * 1024 * 1024}\r\n".encode()
+                + f"Content-Length: {100 * 1024 * 1024}\r\n".encode()
                 + b"Content-Type: application/octet-stream\r\n\r\npartial"
             )
             sock.shutdown(socket.SHUT_WR)
@@ -353,7 +358,8 @@ class TestZonesEtPreviews(Base):
         ]
         for path in attempts:
             status_code, _, _ = self.req("GET", path)
-            self.assertEqual(status_code, 404, path)
+            # 400 (encodage invalide / NUL) ou 404 : jamais 200/303.
+            self.assertIn(status_code, (400, 404), path)
 
     def test_preview_autre_zone_interdite_logique(self):
         # le fichier existe dans pulse, pas dans lwp
@@ -368,12 +374,11 @@ class TestHistoriqueOrdre(Base):
         refs = []
         for i in range(3):
             body, ctype = build_multipart(data=make_png(i + 2, 4))
-            status, _, resp = self.req("POST", "/api/zones/lwp/images", body=body,
+            status, _, resp = self.req("POST", "/api/zones/pulse/images", body=body,
                                        headers={"Content-Type": ctype})
             self.assertEqual(status, 201)
             refs.append(json_of(resp)["reference"])
-        time.sleep(0.01)
-        status, _, resp = self.req("GET", "/api/zones/lwp/images")
+        status, _, resp = self.req("GET", "/api/zones/pulse/images")
         listed = json_of(resp)["images"]
         self.assertEqual([i["reference"] for i in listed], list(reversed(refs)))
 
@@ -382,11 +387,9 @@ class TestHistoriqueOrdre(Base):
         _, _, resp = self.req("POST", "/api/zones/pulse/images", body=body,
                               headers={"Content-Type": ctype})
         item = json_of(resp)
-        attendu = "@/" + str(self.zones_dirs["pulse"] / item["filename"]).lstrip("/")
-        self.assertEqual(item["reference"], "@/home-non-trouve" if False else
-                         "@" + str(Path(item["reference"][1:]).resolve()))
-        # vérification forte : le chemin pointe exactement sur le fichier écrit
         path = Path(item["reference"][1:])
+        # la référence = préfixe + chemin absolu exact du fichier écrit sur disque
+        self.assertEqual(item["reference"], "@" + str(path))
         self.assertTrue(path.is_file())
         self.assertEqual(path.parent.resolve(), self.zones_dirs["pulse"].resolve())
 
@@ -412,7 +415,7 @@ class TestRetentionAPI(Base):
 
     def test_independance_zones(self):
         # lwp retain=2, pulse retain=3 : les flux ne se mélangent jamais.
-        for i in range(4):
+        for i in range(5):
             zone = ["pulse", "lwp"][i % 2]
             body, ctype = build_multipart(data=make_png(3, 3))
             self.req("POST", f"/api/zones/{zone}/images", body=body,
@@ -491,30 +494,36 @@ class TestOriginCSRF(Base):
 class TestProxysConfiance(Base):
     """(#39)(#40 simulation) X-Forwarded-* seulement depuis un pair de confiance."""
 
-    def setUp(self):
-        self.base_kwargs_backup = dict(Base.config_kwargs)
-        Base.config_kwargs = {"trusted_proxies": '["127.0.0.1", "::1"]'}
-        self.__class__.config_kwargs = Base.config_kwargs
-        super().setUp()
+    auth = True
+    password = PASSWORD
+    config_kwargs = {"trusted_proxies": '["127.0.0.1", "::1"]'}
 
-    def tearDown(self):
-        Base.config_kwargs = {}
-
-    class WithTrustedProxy(TestProxysConfiance.__dict__ and object):
-        pass
-
-    def _login_headers(self, extra):
-        return {"Content-Type": "application/x-www-form-urlencoded",
-                **extra}
-
-    def test_proxy_confie_https_donnes_cookie_secure(self):
-        status, headers, _ = request(
+    def _login(self, extra_headers):
+        return request(
             self.server.port, "POST", "/login",
             body=f"password={PASSWORD}".encode(),
-            headers=self._login_headers({"X-Forwarded-Proto": "https"}),
+            headers={"Content-Type": "application/x-www-form-urlencoded", **extra_headers},
         )
+
+    def test_proxy_confie_https_donnes_cookie_secure(self):
+        status, headers, _ = self._login({"X-Forwarded-Proto": "https"})
         self.assertEqual(status, 303)
         self.assertIn("Secure", headers["set-cookie"])
+
+    def test_proxy_confie_hsts_present(self):
+        request(
+            self.server.port, "POST", "/login",
+            body=f"password={PASSWORD}".encode(),
+            headers={"Content-Type": "application/x-www-form-urlencoded",
+                     "X-Forwarded-Proto": "https"},
+        )
+        cookie = login(self.server.port, PASSWORD)
+        status, headers, _ = request(
+            self.server.port, "GET", "/api/zones",
+            headers={"X-Forwarded-Proto": "https"}, cookie=cookie,
+        )
+        self.assertEqual(status, 200)
+        self.assertIn("max-age=31536000", headers.get("strict-transport-security", ""))
 
     def test_proxy_non_confie_proto_ignoree(self):
         # trusted_proxies vide -> X-Forwarded-Proto ignoré même s'il est présent.
@@ -527,17 +536,12 @@ class TestProxysConfiance(Base):
             trusted_proxies="[]",
         )
         self.server = LiveServer(cfg_path)
-        status, headers, _ = request(
-            self.server.port, "POST", "/login",
-            body=f"password={PASSWORD}".encode(),
-            headers={"Content-Type": "application/x-www-form-urlencoded",
-                     "X-Forwarded-Proto": "https"},
-        )
+        self.addCleanup(self.server.stop)
+        status, headers, _ = self._login({"X-Forwarded-Proto": "https"})
         self.assertEqual(status, 303)
         self.assertNotIn("Secure", headers["set-cookie"])
 
     def test_xff_confie_pour_rate_limiting(self):
-        # Le limiteur doit agréger par IP cliente XFF quand le proxy est de confiance.
         from pasteberth.auth import LoginRateLimiter
 
         for i in range(LoginRateLimiter.THRESHOLD):

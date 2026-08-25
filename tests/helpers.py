@@ -117,32 +117,32 @@ def build_multipart(
 # ---------------------------------------------------------------- config
 
 
-DEFAULT_ZONES = [
-    {"id": "pulse", "label": "Pulse", "retain": 3, "color": "#304237"},
-    {"id": "lwp", "label": "LWP", "retain": 2, "color": "#26394a"},
-]
-
-
 def write_config(
     tmp: Path,
     zones: list[dict] | None = None,
     *,
     auth_enabled: bool = False,
     listen_address: str = "127.0.0.1",
-    port: int = 0,
+    port: int | None = None,
     max_upload_size: str = "20MB",
     trusted_proxies: str = '["127.0.0.1", "::1"]',
     allow_unauthenticated_remote: bool | None = None,
     extra: str = "",
     password: str | None = None,
 ) -> Path:
-    zones = zones if zones is not None else DEFAULT_ZONES
+    if zones is None:
+        zones = [
+            {"id": zid, "label": zid.upper(), "retain": retain,
+             "directory": str(tmp / f"{zid}-images")}
+            for zid, retain in (("pulse", 3), ("lwp", 2))
+        ]
     lines = [
         f'listen_address = "{listen_address}"',
-        f"port = {port}",
-        f'max_upload_size = "{max_upload_size}"',
-        f"trusted_proxies = {trusted_proxies}",
     ]
+    if port is not None:
+        lines.append(f"port = {port}")
+    lines.append(f'max_upload_size = "{max_upload_size}"')
+    lines.append(f"trusted_proxies = {trusted_proxies}")
     if allow_unauthenticated_remote is not None:
         lines.append(f"allow_unauthenticated_remote = {str(allow_unauthenticated_remote).lower()}")
     lines.append('log_level = "WARNING"')
@@ -154,7 +154,7 @@ def write_config(
         lines.append("[[zones]]")
         lines.append(f'id = "{zone["id"]}"')
         lines.append(f'label = "{zone.get("label", zone["id"])}"')
-        lines.append('type = "local"')
+        lines.append(f'type = "{zone.get("type", "local")}"')
         lines.append(f'directory = "{zone["directory"]}"')
         lines.append(f'retain = {zone.get("retain", 3)}')
         lines.append('reference_prefix = "@"')

@@ -38,11 +38,11 @@ def _unescape(value: str) -> str:
     return re.sub(r"\\(.)", r"\1", value)
 
 
-def parse_multipart(body: bytes, boundary: str) -> dict[str, tuple[str | None, bytes]]:
-    """Retourne {nom du champ: (filename_client|None, contenu)}."""
+def parse_multipart(body: bytes, boundary: str) -> dict[str, tuple[str | None, str | None, bytes]]:
+    """Retourne {nom du champ: (filename_client|None, content_type|None, contenu)}."""
     delimiter = b"--" + boundary.encode("utf-8")
     segments = body.split(delimiter)
-    fields: dict[str, tuple[str | None, bytes]] = {}
+    fields: dict[str, tuple[str | None, str | None, bytes]] = {}
     # segments[0] = préambule ; dernier segment = épilogue après "--".
     for segment in segments[1:]:
         if segment.startswith(b"--"):
@@ -70,10 +70,13 @@ def parse_multipart(body: bytes, boundary: str) -> dict[str, tuple[str | None, b
             content = content[:-1]
 
         disposition = ""
+        part_ctype: str | None = None
         for line in header_blob.splitlines():
-            if _DISPOSITION_RE.match(line):
+            lower = line.lower()
+            if not disposition and lower.startswith("content-disposition:"):
                 disposition = line
-                break
+            elif lower.startswith("content-type:"):
+                part_ctype = line.split(":", 1)[1].strip() or None
         name_match = _PARAM_RE["name"].search(disposition)
         if not name_match:
             continue
@@ -82,7 +85,7 @@ def parse_multipart(body: bytes, boundary: str) -> dict[str, tuple[str | None, b
             raise MultipartError("nom de champ invalide")
         file_match = _PARAM_RE["filename"].search(disposition)
         filename = _unescape(file_match.group(1)) if file_match else None
-        fields[name] = (filename, content)
+        fields[name] = (filename, part_ctype, content)
     if not fields:
         raise MultipartError("aucun champ dans le corps multipart")
     return fields
