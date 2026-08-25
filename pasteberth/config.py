@@ -16,6 +16,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from pasteberth.images import HARD_MAX_PIXELS, MAX_PIXELS
+from pasteberth.paths import first_symlink_component
 
 try:
     import tomllib
@@ -87,6 +88,13 @@ class AuthConfig:
 
 
 @dataclass(frozen=True)
+class TLSConfig:
+    enabled: bool = False
+    certificate: Path | None = None
+    private_key: Path | None = None
+
+
+@dataclass(frozen=True)
 class ZoneConfig:
     id: str
     label: str
@@ -107,7 +115,9 @@ class Config:
     trusted_proxies: tuple[ipaddress.IPv4Network | ipaddress.IPv6Network, ...]
     allow_unauthenticated_local: bool
     allow_unauthenticated_remote: bool
+    allow_insecure_http_remote: bool
     auth: AuthConfig
+    tls: TLSConfig
     zones: dict[str, ZoneConfig]
     log_level: str
     config_path: Path
@@ -198,6 +208,27 @@ def _parse_auth(raw: object, warnings: list[str]) -> AuthConfig:
             "`pasteberth passwd` écrit le hash dans le fichier 'passwd' à côté de la config"
         )
     return AuthConfig(enabled=enabled, session_ttl_hours=ttl)
+
+
+def _parse_tls(raw: object, warnings: list[str]) -> TLSConfig:
+    if raw is None:
+        return TLSConfig()
+    table = _expect_table(raw, "[tls]")
+    _warn_unknown(table, {"enabled", "certificate", "private_key"}, "[tls]", warnings)
+    enabled = _get_bool(table, "enabled", "[tls]", default=False)
+    certificate_raw = table.get("certificate")
+    private_key_raw = table.get("private_key")
+    if not enabled:
+        return TLSConfig(enabled=False)
+    if not isinstance(certificate_raw, str) or not certificate_raw.strip():
+        raise ConfigError("[tls]: 'certificate' doit être un chemin absolu")
+    if not isinstance(private_key_raw, str) or not private_key_raw.strip():
+        raise ConfigError("[tls]: 'private_key' doit être un chemin absolu")
+    certificate = Path(os.path.expanduser(certificate_raw))
+    private_key = Path(os.path.expanduser(private_key_raw))
+    if not certificate.is_absolute() or not private_key.is_absolute():
+        raise ConfigError("[tls]: 'certificate' et 'private_key' doivent être absolus")
+    return TLSConfig(enabled=True, certificate=certificate, private_key=private_key)
 
 
 def _parse_zone(raw_zone: object, index: int, warnings: list[str]) -> ZoneConfig:
@@ -296,7 +327,8 @@ def load_config(path: Path) -> Config:
         data,
         {"listen_address", "port", "max_upload_size", "trusted_proxies",
          "max_image_pixels",
-         "allow_unauthenticated_local", "allow_unauthenticated_remote", "auth",
+         "allow_unauthenticated_local", "allow_unauthenticated_remote",
+         "allow_insecure_http_remote", "auth", "tls",
          "zones", "log_level"},
         "config",
         warnings,
@@ -332,7 +364,11 @@ def load_config(path: Path) -> Config:
     allow_unauth_remote = _get_bool(
         data, "allow_unauthenticated_remote", "config", default=False
     )
+    allow_insecure_http_remote = _get_bool(
+        data, "allow_insecure_http_remote", "config", default=False
+    )
     auth = _parse_auth(data.get("auth"), warnings)
+    tls = _parse_tls(data.get("tls"), warnings)
 
     log_level = _get_str(data, "log_level", "config", default="INFO").upper()
     if log_level not in _LOG_LEVELS:
@@ -356,7 +392,9 @@ def load_config(path: Path) -> Config:
         trusted_proxies=trusted_proxies,
         allow_unauthenticated_local=allow_unauth_local,
         allow_unauthenticated_remote=allow_unauth_remote,
+        allow_insecure_http_remote=allow_insecure_http_remote,
         auth=auth,
+        tls=tls,
         zones=zones,
         log_level=log_level,
         config_path=path,
@@ -367,8 +405,15 @@ def load_config(path: Path) -> Config:
 
 
 def check_startup_policy(cfg: Config) -> None:
-    """Refuse les configurations anonymes sans opt-in explicite."""
+    """Refuse les expositions distantes non chiffrées ou anonymes."""
     loopback_only = is_loopback_address(cfg.listen_address)
+    if not loopback_only and not cfg.tls.enabled and not cfg.allow_insecure_http_remote:
+        raise ConfigError(
+            f"refus de démarrer : écoute HTTP non chiffrée sur '{cfg.listen_address}' "
+            "(non-loopback) ; activez [tls] ou utilisez un reverse proxy HTTPS.\n"
+            "Pour forcer une écoute HTTP sur un réseau privé, ajoutez explicitement :\n"
+            "  allow_insecure_http_remote = true"
+        )
     if cfg.auth.enabled:
         return
     if loopback_only and cfg.allow_unauthenticated_local:
@@ -430,7 +475,9 @@ def build_default_config() -> Config:
         ),
         allow_unauthenticated_local=True,
         allow_unauthenticated_remote=False,
+        allow_insecure_http_remote=False,
         auth=AuthConfig(enabled=False),
+        tls=TLSConfig(),
         zones={
             "default": ZoneConfig(
                 id="default",
@@ -486,10 +533,10 @@ def prepare_directories(cfg: Config) -> None:
     """Crée/vérifie les répertoires des zones au démarrage (échec rapide)."""
     seen: dict[tuple[int, int], str] = {}
     for zone in cfg.zones.values():
-        if zone.directory.is_symlink():
+        symlink = first_symlink_component(zone.directory)
+        if symlink is not None:
             raise ConfigError(
-                f"zone '{zone.id}': le répertoire ne doit pas être un lien symbolique : "
-                f"{zone.directory}"
+                f"zone '{zone.id}': le chemin contient un lien symbolique : {symlink}"
             )
         if zone.directory.exists():
             if not zone.directory.is_dir():
@@ -522,6 +569,36 @@ def prepare_directories(cfg: Config) -> None:
             identity = (zone.directory.stat().st_dev, zone.directory.stat().st_ino)
         except ConfigError:
             raise
+        except OSError as exc:
+            raise ConfigError(
+                f"zone '{zone.id}': impossible d'inspecter {zone.directory} ({exc})"
+            ) from exc
+        previous = seen.get(identity)
+        if previous is not None:
+            raise ConfigError(
+                f"zones '{previous}' et '{zone.id}' ciblent le même répertoire "
+                f"({zone.directory})"
+            )
+        seen[identity] = zone.id
+
+
+def validate_directory_identities(cfg: Config) -> None:
+    """Vérifie les collisions de répertoires sans créer les destinations."""
+    seen: dict[tuple[int, int], str] = {}
+    configured: dict[Path, str] = {}
+    for zone in cfg.zones.values():
+        normalized = Path(os.path.normpath(str(zone.directory)))
+        previous_path = configured.get(normalized)
+        if previous_path is not None:
+            raise ConfigError(
+                f"zones '{previous_path}' et '{zone.id}' ciblent le même répertoire "
+                f"({zone.directory})"
+            )
+        configured[normalized] = zone.id
+        if not zone.directory.exists() or not zone.directory.is_dir():
+            continue
+        try:
+            identity = (zone.directory.stat().st_dev, zone.directory.stat().st_ino)
         except OSError as exc:
             raise ConfigError(
                 f"zone '{zone.id}': impossible d'inspecter {zone.directory} ({exc})"

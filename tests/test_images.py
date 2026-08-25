@@ -56,6 +56,10 @@ class TestWebp(unittest.TestCase):
         info = inspect_image(make_webp_vp8x(3000, 2000))
         self.assertEqual((info.fmt, info.width, info.height), ("webp", 3000, 2000))
 
+    def test_extended_sans_payload_rejete(self):
+        with self.assertRaises(InvalidImageError):
+            inspect_image(make_webp_vp8x(300, 200, with_payload=False))
+
     def test_budget_pixels(self):
         with self.assertRaises(InvalidImageError):
             inspect_image(make_webp_vp8x(6000, 5000))

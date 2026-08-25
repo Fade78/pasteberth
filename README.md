@@ -102,14 +102,16 @@ les zones et chemins souhaités.
 
 | Clé | Défaut | Rôle |
 |---|---|---|
-| `listen_address` | `"127.0.0.1"` | écoute ; non-loopback exige l'auth |
+| `listen_address` | `"127.0.0.1"` | écoute ; non-loopback exige HTTPS explicite |
 | `port` | `8765` | port TCP |
 | `max_upload_size` | `"20MiB"` | plafond par upload (20 MiB par défaut, 50 MiB maximum) |
 | `max_image_pixels` | `25000000` | budget de décodage (25 MP par défaut, 50 MP maximum) |
 | `trusted_proxies` | loopback | seuls ces pairs peuvent poser `X-Forwarded-*` |
 | `allow_unauthenticated_local` | `false` | opt-in explicite pour le mode anonyme loopback/proxy |
 | `allow_unauthenticated_remote` | `false` | déverrouillage explicite (déconseillé) |
+| `allow_insecure_http_remote` | `false` | opt-in séparé pour HTTP non-loopback (réseau privé uniquement) |
 | `log_level` | `"INFO"` | DEBUG/INFO/WARNING/ERROR |
+| `[tls] enabled` | `false` | termine TLS directement avec `certificate` et `private_key` |
 | `[auth] enabled` | `true` | protection par mot de passe |
 | `[auth] session_ttl_hours` | `72` | durée des sessions serveur |
 | `[[zones]] …` | `default` | `id`, `label`, `type=local`, `directory`, `retain`, `reference_prefix`, `color` (#RRGGBB), `create_directory`, `min_free_percent` |
@@ -142,7 +144,7 @@ pasteberth passwd            # demande + confirmation, hash scrypt salé
 Le mot de passe n'est jamais stocké en clair ni écrit dans config.toml ;
 le hash est vérifié avec `hashlib.scrypt` + comparaison en temps constant.
 Un changement est effectif immédiatement (rechargé à chaque tentative),
-sans redémarrer le service.
+sans redémarrer le service, et invalide les sessions existantes.
 Le serveur refuse de démarrer si l'authentification est activée sans fichier
 `passwd` lisible et valide.
 
@@ -160,6 +162,9 @@ aucun root. Adaptez son `ExecStart` au chemin réel du dépôt avant activation.
 Un refus de démarrage protège contre l'exposition accidentelle :
 **auth désactivée sans opt-in explicite = arrêt avec message explicite**
 (`allow_unauthenticated_local` ou `allow_unauthenticated_remote` selon le cas).
+Une écoute HTTP non-loopback exige également
+`allow_insecure_http_remote = true`; la configuration recommandée reste un
+backend loopback derrière un reverse proxy HTTPS.
 
 Pour que le service utilisateur survive à la dernière déconnexion et démarre
 au boot, activez le linger pour le compte concerné :
@@ -174,8 +179,19 @@ session interactive ; activez-la seulement si cette persistance est souhaitée.
 ## HTTPS & reverse proxy
 
 Pasteberth transporte mot de passe, sessions et chemins privés :
-**tout accès réseau non fiable doit passer par HTTPS.** En V1 le service
-ne fait pas TLS lui-même ; placez-le derrière un reverse proxy.
+**tout accès réseau non fiable doit passer par HTTPS.** Le reverse proxy reste
+recommandé, mais le serveur peut aussi terminer TLS directement :
+
+```toml
+[tls]
+enabled = true
+certificate = "/chemin/absolu/cert.pem"
+private_key = "/chemin/absolu/key.pem"
+```
+
+Avec une écoute non-loopback, activez TLS ou utilisez un reverse proxy HTTPS.
+L'option `allow_insecure_http_remote = true` ne doit être utilisée que sur un
+réseau privé maîtrisé.
 
 ### Caddy (recommandé)
 
@@ -249,10 +265,11 @@ client doit donc recharger l'historique avant de retenter aveuglément.
 ## Sécurité
 
 - Mots de passe : scrypt salé (N=16384), comparaison temps constant,
-  fichier 0600 hors dépôt ; temporisation + verrouillage progressif par IP
+  fichier `passwd` 0600 à côté de la configuration et ignoré par Git ; temporisation + verrouillage progressif par IP
   (honorant XFF seulement via proxy de confiance).
-- Les requêtes de login sont limitées à 16 KiB et les requêtes simultanées sont
-  bornées ; les uploads sont limités à 20 MiB par défaut et 50 MiB au maximum.
+- Les requêtes de login sont limitées à 16 KiB, les vérifications scrypt sont
+  globalement bornées et les uploads partagent un budget mémoire de 128 MiB ;
+  les uploads restent limités à 20 MiB par défaut et 50 MiB au maximum.
 - Sessions côté serveur, révocables (logout effectif), token 256 bits,
   cookie `HttpOnly; SameSite=Lax` + `Secure` dès que le schéma effectif
   est HTTPS.

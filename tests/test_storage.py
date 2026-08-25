@@ -177,6 +177,14 @@ class TestRepertoires(unittest.TestCase):
         with self.assertRaises(DestinationError):
             LocalDestination(target, create_directory=False)
 
+    def test_lien_symbolique_parent_refuse(self):
+        outside = self.tmp / "outside"
+        outside.mkdir(mode=0o700)
+        link = self.tmp / "link"
+        link.symlink_to(outside, target_is_directory=True)
+        with self.assertRaisesRegex(DestinationError, "symbolique"):
+            LocalDestination(link / "images")
+
     def test_reference_path_absolu(self):
         dest = LocalDestination(self.tmp / "r", create_directory=True)
         stored = dest.save(make_png(), INFO(1, 1))

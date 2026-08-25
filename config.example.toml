@@ -6,7 +6,7 @@
 # Le mot de passe n'est JAMAIS écrit ici : `pasteberth passwd` le hash
 # (scrypt salé) dans un fichier « passwd » à côté de ce config.toml.
 
-listen_address = "127.0.0.1"      # "0.0.0.0" pour exposer au réseau (auth exigée)
+listen_address = "127.0.0.1"      # non-loopback : reverse proxy HTTPS recommandé
 port = 8765
 max_upload_size = "20MiB"         # 20 MiB par upload ; plafond absolu 50 MiB
 max_image_pixels = 25000000        # 25 MP par défaut ; plafond absolu 50 MP
@@ -18,6 +18,12 @@ trusted_proxies = ["127.0.0.1", "::1"]
 # Refus explicite du démarrage non-loopback sans auth, sauf si vous forcez :
 allow_unauthenticated_local = false  # même derrière un reverse proxy
 allow_unauthenticated_remote = false
+allow_insecure_http_remote = false   # true uniquement sur un réseau privé maîtrisé
+
+[tls]
+enabled = false
+# certificate = "/chemin/absolu/cert.pem"
+# private_key = "/chemin/absolu/key.pem"
 
 log_level = "INFO"                # DEBUG | INFO | WARNING | ERROR
 

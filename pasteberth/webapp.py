@@ -19,6 +19,8 @@ import json
 import logging
 import re
 import socket
+import ssl
+import threading
 import time
 import urllib.parse
 from http.cookies import SimpleCookie
@@ -78,15 +80,128 @@ class BodyTooLarge(Exception):
     pass
 
 
+class BodyMemoryUnavailable(Exception):
+    pass
+
+
+class HeaderTooLarge(Exception):
+    pass
+
+
+class HeaderBudgetReader:
+    """Compteur de bytes lu pendant la phase d'en-têtes HTTP."""
+
+    def __init__(self, raw, max_bytes: int):
+        self._raw = raw
+        self._max_bytes = max_bytes
+        self._read_bytes = 0
+        self._enabled = True
+
+    def _count(self, data: bytes) -> bytes:
+        if self._enabled:
+            self._read_bytes += len(data)
+            if self._read_bytes > self._max_bytes:
+                raise HeaderTooLarge()
+        return data
+
+    def readline(self, *args, **kwargs):
+        return self._count(self._raw.readline(*args, **kwargs))
+
+    def read(self, *args, **kwargs):
+        return self._count(self._raw.read(*args, **kwargs))
+
+    def disable(self) -> None:
+        self._enabled = False
+
+    def reset(self) -> None:
+        self._read_bytes = 0
+        self._enabled = True
+
+    def __getattr__(self, name):
+        return getattr(self._raw, name)
+
+
+class BodyMemoryBudget:
+    """Budget non bloquant pour les copies temporaires des uploads."""
+
+    def __init__(self, max_bytes: int):
+        self.max_bytes = max_bytes
+        self._used = 0
+        self._lock = threading.Lock()
+
+    def reserve(self, body_bytes: int) -> int | None:
+        # Le corps brut et une copie extraite par multipart peuvent coexister.
+        charge = body_bytes * 2 + 64 * 1024
+        if charge > self.max_bytes:
+            return None
+        with self._lock:
+            if self._used + charge > self.max_bytes:
+                return None
+            self._used += charge
+        return charge
+
+    def release(self, charge: int) -> None:
+        if not charge:
+            return
+        with self._lock:
+            self._used = max(0, self._used - charge)
+
+
+_UPLOAD_MEMORY_BUDGET = 128 * 1024 * 1024
+_MAX_HEADER_BYTES = 64 * 1024
+
+
 def make_handler(cfg: Config, service: PasteService, sessions: SessionStore,
                  limiter: LoginRateLimiter) -> type[BaseHTTPRequestHandler]:
     """Construit la classe de handler avec les dépendances injectées."""
+    upload_memory = BodyMemoryBudget(_UPLOAD_MEMORY_BUDGET)
 
     class PasteberthHandler(BaseHTTPRequestHandler):
         server_version = "Pasteberth"
         sys_version = ""
         protocol_version = "HTTP/1.1"
         timeout = 60
+
+        def _expire_request(self) -> None:
+            self.close_connection = True
+            try:
+                self.connection.shutdown(socket.SHUT_RDWR)
+            except OSError:
+                pass
+
+        def handle_one_request(self) -> None:
+            # Le timeout socket est réinitialisé par les lectures ; ce timer
+            # impose une vraie durée maximale à la requête entière.
+            self.rfile.reset()
+            timer = threading.Timer(self.timeout, self._expire_request)
+            timer.daemon = True
+            timer.start()
+            try:
+                super().handle_one_request()
+            except HeaderTooLarge:
+                self.close_connection = True
+                try:
+                    self.send_error(431, "en-têtes HTTP trop volumineux")
+                except OSError:
+                    pass
+            except (OSError, TimeoutError):
+                self.close_connection = True
+            finally:
+                timer.cancel()
+
+        def setup(self) -> None:
+            super().setup()
+            self.rfile = HeaderBudgetReader(self.rfile, _MAX_HEADER_BYTES)
+
+        def parse_request(self) -> bool:
+            try:
+                return super().parse_request()
+            except HeaderTooLarge:
+                self.close_connection = True
+                self.send_error(431, "en-têtes HTTP trop volumineux")
+                return False
+            finally:
+                self.rfile.disable()
 
         # ---------------------------------------------------- contexte réseau
 
@@ -118,6 +233,8 @@ def make_handler(cfg: Config, service: PasteService, sessions: SessionStore,
             return self._peer_ip()
 
         def _scheme(self) -> str:
+            if isinstance(self.connection, ssl.SSLSocket):
+                return "https"
             if self._trusted_peer():
                 proto = self.headers.get("X-Forwarded-Proto", "")
                 if proto.split(",")[0].strip().lower() == "https":
@@ -236,7 +353,8 @@ def make_handler(cfg: Config, service: PasteService, sessions: SessionStore,
             self._finish(status, "application/json; charset=utf-8", body, **kwargs)
 
         def _error(self, status: int, code: str, message: str, **kwargs) -> None:
-            if self.path.startswith("/api/") or self.path.startswith("/previews/"):
+            request_path = getattr(self, "_route_path", self.path)
+            if request_path.startswith("/api/") or request_path.startswith("/previews/"):
                 self._json(status, {"error": {"code": code, "message": message}}, **kwargs)
             else:
                 body = (
@@ -248,13 +366,18 @@ def make_handler(cfg: Config, service: PasteService, sessions: SessionStore,
 
         # ------------------------------------------------------------- lecture
 
-        def _read_body(self, max_bytes: int | None = None) -> bytes:
+        def _read_body(
+            self,
+            max_bytes: int | None = None,
+            *,
+            memory_budget: BodyMemoryBudget | None = None,
+        ) -> tuple[bytes, int]:
             if "chunked" in (self.headers.get("Transfer-Encoding") or "").lower():
                 self.close_connection = True
-                raise BodyTooLarge()  # traité comme 411 côté appelant
+                raise BodyTooLarge()  # le protocole chunked n'est pas supporté en V1
             length_raw = self.headers.get("Content-Length")
             if length_raw is None:
-                return b""
+                return b"", 0
             try:
                 length = int(length_raw)
             except ValueError:
@@ -265,15 +388,24 @@ def make_handler(cfg: Config, service: PasteService, sessions: SessionStore,
             if length > limit:
                 self.close_connection = True
                 raise BodyTooLarge()
+            reservation = memory_budget.reserve(length) if memory_budget else 0
+            if memory_budget and reservation is None:
+                self.close_connection = True
+                raise BodyMemoryUnavailable()
             chunks: list[bytes] = []
             remaining = length
-            while remaining > 0:
-                chunk = self.rfile.read(min(remaining, 65536))
-                if not chunk:
-                    raise ClientAbort()
-                chunks.append(chunk)
-                remaining -= len(chunk)
-            return b"".join(chunks)
+            try:
+                while remaining > 0:
+                    chunk = self.rfile.read(min(remaining, 65536))
+                    if not chunk:
+                        raise ClientAbort()
+                    chunks.append(chunk)
+                    remaining -= len(chunk)
+                return b"".join(chunks), reservation or 0
+            except BaseException:
+                if memory_budget:
+                    memory_budget.release(reservation or 0)
+                raise
 
         # --------------------------------------------------------- dispatch
 
@@ -284,6 +416,7 @@ def make_handler(cfg: Config, service: PasteService, sessions: SessionStore,
             except (UnicodeDecodeError, ValueError):
                 self._error(400, "invalid_request", "encodage de chemin invalide")
                 return
+            self._route_path = path
             if "\x00" in path or "\\" in path:
                 self._error(400, "invalid_request", "requête invalide")
                 return
@@ -427,7 +560,7 @@ def make_handler(cfg: Config, service: PasteService, sessions: SessionStore,
                 )
                 return
             try:
-                body = self._read_body(16 * 1024)
+                body, _ = self._read_body(16 * 1024)
             except BodyTooLarge:
                 self.close_connection = True
                 self._error(413, "too_large", "corps de login trop grand")
@@ -529,17 +662,27 @@ def make_handler(cfg: Config, service: PasteService, sessions: SessionStore,
         def _h_zone_upload(self, zid: str) -> None:
             if not self._require_auth_api():
                 return
+            reservation = 0
             try:
-                body = self._read_body()
+                body, reservation = self._read_body(memory_budget=upload_memory)
             except BodyTooLarge:
                 self.close_connection = True
                 self._error(413, "too_large", "corps trop grand")
                 return
+            except BodyMemoryUnavailable:
+                self.close_connection = True
+                self._error(
+                    503,
+                    "upload_busy",
+                    "trop de données d'upload sont actuellement en mémoire",
+                    extra_headers=[("Retry-After", "1")],
+                )
+                return
             except ClientAbort:
                 raise
-            ctype_raw = self.headers.get("Content-Type") or ""
-            ctype = ctype_raw.split(";")[0].strip().lower()
             try:
+                ctype_raw = self.headers.get("Content-Type") or ""
+                ctype = ctype_raw.split(";")[0].strip().lower()
                 if ctype == "multipart/form-data":
                     boundary = extract_boundary(ctype_raw)
                     if not boundary:
@@ -571,6 +714,8 @@ def make_handler(cfg: Config, service: PasteService, sessions: SessionStore,
             except ServiceError as exc:
                 self._error(exc.status, exc.code, str(exc))
                 return
+            finally:
+                upload_memory.release(reservation)
             self._json(201, item)
 
         def _h_preview(self, zid: str, filename: str) -> None:

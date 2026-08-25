@@ -13,6 +13,7 @@ import getpass
 import logging
 import os
 import shutil
+import ssl
 import stat
 import sys
 import tempfile
@@ -37,8 +38,10 @@ from pasteberth.config import (
     find_config_path,
     load_config,
     prepare_directories,
+    validate_directory_identities,
     repository_root,
 )
+from pasteberth.paths import first_symlink_component
 from pasteberth.service import PasteService
 
 
@@ -72,6 +75,18 @@ def _cmd_serve(args: argparse.Namespace) -> int:
                 file=sys.stderr,
             )
             return 2
+    tls_context = None
+    if cfg.tls.enabled:
+        from pasteberth.server import create_tls_context
+
+        try:
+            tls_context = create_tls_context(cfg.tls.certificate, cfg.tls.private_key)
+        except (OSError, ssl.SSLError, ValueError) as exc:
+            print(
+                f"pasteberth : erreur TLS\n  certificat ou clé illisible : {exc}",
+                file=sys.stderr,
+            )
+            return 2
     _setup_logging(args.log_level or cfg.log_level)
     uses_default_storage = any(
         zone.directory == default_storage_path() for zone in cfg.zones.values()
@@ -101,15 +116,19 @@ def _cmd_serve(args: argparse.Namespace) -> int:
         return 2
 
     service = PasteService(cfg)
-    sessions = SessionStore(cfg.auth.session_ttl_hours * 3600)
+    sessions = SessionStore(
+        cfg.auth.session_ttl_hours * 3600,
+        password_file=cfg.password_file() if cfg.auth.enabled else None,
+    )
     limiter = LoginRateLimiter()
     handler = _build_handler(cfg, service, sessions, limiter)
 
     from pasteberth.server import serve_forever
 
     log.info(
-        "Pasteberth %s démarre sur http://%s:%d (%d zone(s), auth=%s)",
+        "Pasteberth %s démarre sur %s://%s:%d (%d zone(s), auth=%s)",
         __version__,
+        "https" if cfg.tls.enabled else "http",
         cfg.listen_address,
         cfg.port,
         len(cfg.zones),
@@ -120,7 +139,7 @@ def _cmd_serve(args: argparse.Namespace) -> int:
             "écoute locale uniquement : prévoir un reverse proxy HTTPS pour un accès réseau"
         )
     try:
-        serve_forever(handler, cfg.listen_address, cfg.port)
+        serve_forever(handler, cfg.listen_address, cfg.port, tls_context=tls_context)
     except OSError as exc:
         log.error("impossible d'écouter sur %s:%d : %s", cfg.listen_address, cfg.port, exc)
         return 1
@@ -144,7 +163,14 @@ max_image_pixels = 25000000
 trusted_proxies = ["127.0.0.1", "::1"]
 allow_unauthenticated_local = false
 allow_unauthenticated_remote = false
+# HTTP non-loopback est refusé par défaut ; utilisez un reverse proxy HTTPS.
+allow_insecure_http_remote = false
 log_level = "INFO"
+
+[tls]
+enabled = false
+# certificate = "/chemin/absolu/cert.pem"
+# private_key = "/chemin/absolu/key.pem"
 
 [auth]
 enabled = true
@@ -202,8 +228,9 @@ def _audit_zone(cfg, zone) -> tuple[list[str], list[str]]:
     errors: list[str] = []
     warnings: list[str] = []
     path = zone.directory
-    if path.is_symlink():
-        errors.append(f"zone {zone.id}: lien symbolique refusé : {path}")
+    symlink = first_symlink_component(path)
+    if symlink is not None:
+        errors.append(f"zone {zone.id}: lien symbolique refusé : {symlink}")
         return errors, warnings
     if not path.exists():
         if zone.create_directory:
@@ -233,6 +260,42 @@ def _audit_zone(cfg, zone) -> tuple[list[str], list[str]]:
     except OSError as exc:
         warnings.append(f"zone {zone.id}: espace libre non mesurable ({exc})")
     return errors, warnings
+
+
+def _audit_listener(cfg) -> str | None:
+    if cfg.port < 1024 and getattr(os, "geteuid", lambda: 1)() != 0:
+        return f"port privilégié inaccessible sans root : {cfg.port}"
+    try:
+        addresses = socket.getaddrinfo(
+            cfg.listen_address,
+            cfg.port,
+            type=socket.SOCK_STREAM,
+        )
+    except OSError as exc:
+        return f"adresse d'écoute invalide : {exc}"
+    if not addresses:
+        return f"adresse d'écoute introuvable : {cfg.listen_address}"
+
+    family, socktype, protocol, _, sockaddr = addresses[0]
+    try:
+        with socket.socket(family, socktype, protocol) as sock:
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            sock.bind(sockaddr)
+    except OSError as exc:
+        return f"bind impossible sur {cfg.listen_address}:{cfg.port} ({exc})"
+    return None
+
+
+def _audit_tls(cfg) -> str | None:
+    if not cfg.tls.enabled:
+        return None
+    from pasteberth.server import create_tls_context
+
+    try:
+        create_tls_context(cfg.tls.certificate, cfg.tls.private_key)
+    except (OSError, ssl.SSLError, ValueError) as exc:
+        return f"configuration TLS invalide : {exc}"
+    return None
 
 
 def _cmd_audit(args: argparse.Namespace) -> int:
@@ -277,17 +340,21 @@ def _cmd_audit(args: argparse.Namespace) -> int:
         zone_errors, zone_warnings = _audit_zone(cfg, zone)
         errors.extend(zone_errors)
         warnings.extend(zone_warnings)
+    try:
+        validate_directory_identities(cfg)
+    except ConfigError as exc:
+        errors.append(str(exc))
 
     if not cfg.listen_address in ("127.0.0.1", "::1", "localhost"):
         warnings.append(
             "écoute réseau détectée : HTTPS via reverse proxy et authentification sont requis"
         )
-    try:
-        addresses = socket.getaddrinfo(cfg.listen_address, cfg.port, type=socket.SOCK_STREAM)
-        if not addresses:
-            errors.append(f"adresse d'écoute introuvable : {cfg.listen_address}")
-    except OSError as exc:
-        errors.append(f"adresse d'écoute invalide : {exc}")
+    listener_error = _audit_listener(cfg)
+    if listener_error:
+        errors.append(listener_error)
+    tls_error = _audit_tls(cfg)
+    if tls_error:
+        errors.append(tls_error)
 
     for message in warnings:
         print(f"AVERTISSEMENT : {message}")

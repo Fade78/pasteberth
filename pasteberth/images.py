@@ -163,6 +163,7 @@ def _parse_webp(data: bytes, max_pixels: int) -> ImageInfo:
     pos = 12
     end = len(data)
     dimensions: tuple[int, int] | None = None
+    saw_image_payload = False
     while pos < end:
         if pos + 8 > end:
             raise InvalidImageError("invalid_image", "chunk WebP tronqué")
@@ -173,25 +174,38 @@ def _parse_webp(data: bytes, max_pixels: int) -> ImageInfo:
         padded_end = chunk_end + (size & 1)
         if chunk_end > end or padded_end > end:
             raise InvalidImageError("invalid_image", "chunk WebP tronqué")
-        if dimensions is None and fourcc == b"VP8X" and size >= 10:
-            w = int.from_bytes(data[body + 4:body + 7], "little") + 1
-            h = int.from_bytes(data[body + 7:body + 10], "little") + 1
-            dimensions = (w, h)
-        elif dimensions is None and fourcc == b"VP8 " and size >= 10:
+        if fourcc == b"VP8X":
+            if size < 10:
+                raise InvalidImageError("invalid_image", "chunk VP8X WebP tronqué")
+            if dimensions is None:
+                w = int.from_bytes(data[body + 4:body + 7], "little") + 1
+                h = int.from_bytes(data[body + 7:body + 10], "little") + 1
+                dimensions = (w, h)
+        elif fourcc == b"VP8 ":
+            if size < 10:
+                raise InvalidImageError("invalid_image", "chunk VP8 WebP tronqué")
             if data[body + 3:body + 6] != b"\x9d\x01\x2a":
                 raise InvalidImageError("invalid_image", "code de synchronisation VP8 invalide")
-            w, h = struct.unpack("<HH", data[body + 6:body + 10])
-            dimensions = (w & 0x3FFF, h & 0x3FFF)
-        elif dimensions is None and fourcc == b"VP8L" and size >= 5:
+            saw_image_payload = True
+            if dimensions is None:
+                w, h = struct.unpack("<HH", data[body + 6:body + 10])
+                dimensions = (w & 0x3FFF, h & 0x3FFF)
+        elif fourcc == b"VP8L":
+            if size < 5:
+                raise InvalidImageError("invalid_image", "chunk VP8L WebP tronqué")
             if data[body] != 0x2F:
                 raise InvalidImageError("invalid_image", "signature VP8L invalide")
-            bits = struct.unpack("<I", data[body + 1:body + 5])[0]
-            w = (bits & 0x3FFF) + 1
-            h = ((bits >> 14) & 0x3FFF) + 1
-            dimensions = (w, h)
+            saw_image_payload = True
+            if dimensions is None:
+                bits = struct.unpack("<I", data[body + 1:body + 5])[0]
+                w = (bits & 0x3FFF) + 1
+                h = ((bits >> 14) & 0x3FFF) + 1
+                dimensions = (w, h)
         pos = padded_end
     if dimensions is None:
         raise InvalidImageError("invalid_image", "chunk de dimension WebP introuvable")
+    if not saw_image_payload:
+        raise InvalidImageError("invalid_image", "payload image WebP introuvable")
     return _check_dims(*dimensions, "webp", max_pixels)
 
 

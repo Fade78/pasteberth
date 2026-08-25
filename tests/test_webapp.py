@@ -20,6 +20,7 @@ from tests.helpers import (
     write_config,
     LiveServer,
 )
+from pasteberth.webapp import BodyMemoryBudget
 
 PASSWORD = "mot-de-passe-de-test-123"
 FILENAME_RE = re.compile(r"^\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}_[0-9a-f]{6}\.(png|jpg|webp)$")
@@ -78,6 +79,16 @@ class Base(unittest.TestCase):
             headers=headers,
             cookie=self.cookie if cookie == "default" else cookie,
         )
+
+
+class TestBudgetMemoire(unittest.TestCase):
+    def test_reservation_et_liberation(self):
+        budget = BodyMemoryBudget(200_000)
+        first = budget.reserve(60_000)
+        self.assertIsNotNone(first)
+        self.assertIsNone(budget.reserve(60_000))
+        budget.release(first)
+        self.assertIsNotNone(budget.reserve(60_000))
 
 
 class TestPublic(Base):
@@ -334,6 +345,20 @@ class TestRejetsUploads(Base):
             response = sock.recv(4096).decode("latin-1")
         self.assertTrue(response.startswith("HTTP/1.1 413"), response[:60])
 
+    def test_total_en_tetes_trop_grand(self):
+        import socket
+
+        port = self.server.port
+        with socket.create_connection(("127.0.0.1", port), timeout=5) as sock:
+            sock.sendall(
+                b"GET /api/health HTTP/1.1\r\n"
+                + b"Host: localhost\r\n"
+                + b"X-First: " + b"a" * 33_000 + b"\r\n"
+                + b"X-Second: " + b"b" * 33_000 + b"\r\n\r\n"
+            )
+            response = sock.recv(4096).decode("latin-1")
+        self.assertTrue(response.startswith("HTTP/1.1 431"), response[:60])
+
     def test_gif_refuse(self):
         status_code, _, body = self.req("POST", "/api/zones/default/images",
                                         body=b"GIF89a" + b"\x00" * 30,
@@ -376,6 +401,12 @@ class TestZonesEtPreviews(Base):
         status_code, _, body = self.req("POST", "/api/zones/inconnue/images",
                                         body=make_png(), headers={"Content-Type": "image/png"})
         self.assertEqual(status_code, 404)
+
+    def test_erreur_api_avec_chemin_encode_reste_json(self):
+        status_code, headers, body = self.req("GET", "/%61pi/zones/inconnue/images")
+        self.assertEqual(status_code, 404)
+        self.assertTrue(headers["content-type"].startswith("application/json"))
+        self.assertEqual(json_of(body)["error"]["code"], "unknown_zone")
 
     def test_zone_traversal(self):
         for bad in ["..%2Fetc", "..", "default%2f..%2fsecondary", "DEFAULT"]:

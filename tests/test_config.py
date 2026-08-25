@@ -16,6 +16,7 @@ from pasteberth.config import (
     parse_size,
     resolve_config_path,
 )
+from pasteberth.server import address_family_for
 from tests.helpers import write_config
 
 
@@ -45,6 +46,12 @@ class TestLoopback(unittest.TestCase):
         self.assertFalse(is_loopback_address("0.0.0.0"))
         self.assertFalse(is_loopback_address("::"))
         self.assertFalse(is_loopback_address("192.168.1.10"))
+
+    def test_famille_ipv6_du_serveur(self):
+        import socket
+
+        self.assertEqual(address_family_for("::1"), socket.AF_INET6)
+        self.assertEqual(address_family_for("127.0.0.1"), socket.AF_INET)
 
 
 class TestParsing(unittest.TestCase):
@@ -183,8 +190,33 @@ class TestPolitiqueSecurite(unittest.TestCase):
             )
 
     def test_accepte_remote_avec_auth(self):
-        cfg = make_cfg(self.tmp, listen_address="0.0.0.0", auth_enabled=True)
+        cfg = make_cfg(
+            self.tmp,
+            listen_address="0.0.0.0",
+            auth_enabled=True,
+            allow_insecure_http_remote=True,
+        )
         check_startup_policy(cfg)
+
+    def test_refuse_remote_http_sans_optin(self):
+        with self.assertRaisesRegex(ConfigError, "HTTP"):
+            make_cfg(self.tmp, listen_address="0.0.0.0", auth_enabled=True)
+
+    def test_accepte_remote_avec_tls(self):
+        cfg = make_cfg(
+            self.tmp,
+            listen_address="0.0.0.0",
+            auth_enabled=True,
+            tls_enabled=True,
+            tls_certificate="/tmp/pasteberth-cert.pem",
+            tls_private_key="/tmp/pasteberth-key.pem",
+        )
+        self.assertTrue(cfg.tls.enabled)
+        check_startup_policy(cfg)
+
+    def test_tls_active_exige_certificat_et_cle(self):
+        with self.assertRaisesRegex(ConfigError, "certificate"):
+            make_cfg(self.tmp, tls_enabled=True)
 
     def test_override_explicite(self):
         cfg = make_cfg(
@@ -192,6 +224,7 @@ class TestPolitiqueSecurite(unittest.TestCase):
             listen_address="0.0.0.0",
             auth_enabled=False,
             allow_unauthenticated_remote=True,
+            allow_insecure_http_remote=True,
         )
         check_startup_policy(cfg)
 
@@ -252,6 +285,17 @@ class TestRepertoires(unittest.TestCase):
             write_config(self.tmp, zones=[{"id": "x", "directory": str(target)}])
         )
         with self.assertRaises(ConfigError):
+            prepare_directories(cfg)
+
+    def test_lien_symbolique_parent_refuse(self):
+        target = self.tmp / "outside"
+        target.mkdir(mode=0o700)
+        link = self.tmp / "link"
+        link.symlink_to(target, target_is_directory=True)
+        cfg = load_config(
+            write_config(self.tmp, zones=[{"id": "x", "directory": str(link / "images")}])
+        )
+        with self.assertRaisesRegex(ConfigError, "lien symbolique"):
             prepare_directories(cfg)
 
 

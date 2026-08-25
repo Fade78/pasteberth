@@ -116,7 +116,6 @@ def load_password_hash(path: Path) -> str | None:
 
 def save_password_hash(path: Path, password_hash: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    os.chmod(path.parent, 0o700)
     fd, tmp_name = tempfile.mkstemp(dir=path.parent, prefix=".passwd-", suffix=".tmp")
     try:
         os.fchmod(fd, 0o600)
@@ -145,24 +144,39 @@ def save_password_hash(path: Path, password_hash: str) -> None:
 class SessionStore:
     """Sessions en mémoire : token -> expiration (monotonic)."""
 
-    def __init__(self, ttl_seconds: int):
+    def __init__(self, ttl_seconds: int, password_file: Path | None = None):
         self.ttl = ttl_seconds
-        self._sessions: dict[str, float] = {}
+        self._password_file = password_file
+        self._sessions: dict[str, tuple[float, tuple[int, int, int] | None]] = {}
         self._lock = threading.Lock()
+
+    def _password_epoch(self) -> tuple[int, int, int] | None:
+        if self._password_file is None:
+            return None
+        try:
+            stat_result = self._password_file.stat()
+        except OSError:
+            return None
+        return (stat_result.st_ino, stat_result.st_mtime_ns, stat_result.st_ctime_ns)
 
     def create(self) -> str:
         token = secrets.token_urlsafe(32)
         with self._lock:
             self._purge_locked()
-            self._sessions[token] = time.monotonic() + self.ttl
+            self._sessions[token] = (time.monotonic() + self.ttl, self._password_epoch())
         return token
 
     def validate(self, token: str | None) -> bool:
         if not token or len(token) > 128:
             return False
+        password_epoch = self._password_epoch()
         with self._lock:
-            expiry = self._sessions.get(token)
-            if expiry is None:
+            session = self._sessions.get(token)
+            if session is None:
+                return False
+            expiry, session_epoch = session
+            if session_epoch != password_epoch:
+                del self._sessions[token]
                 return False
             if expiry < time.monotonic():
                 del self._sessions[token]
@@ -177,7 +191,7 @@ class SessionStore:
 
     def _purge_locked(self) -> None:
         now = time.monotonic()
-        expired = [t for t, exp in self._sessions.items() if exp < now]
+        expired = [t for t, (exp, _) in self._sessions.items() if exp < now]
         for t in expired:
             del self._sessions[t]
 
@@ -197,14 +211,38 @@ class LoginRateLimiter:
     THRESHOLD = 5
     BASE_DELAY = 30.0
     MAX_DELAY = 900.0
+    MAX_CONCURRENT_CHECKS = 4
+    MAX_TRACKED_IPS = 4096
 
     _FORGET_AFTER = 3600.0  # sans échec pendant 1h, on oublie l'historique
 
-    def __init__(self) -> None:
+    def __init__(self, max_concurrent_checks: int | None = None) -> None:
         # ip -> [échecs consécutifs, verrouillé jusqu'à, dernier événement,
         #        tentatives coûteuses en cours]
         self._state: dict[str, list[float]] = {}
         self._lock = threading.Lock()
+        checks = (
+            self.MAX_CONCURRENT_CHECKS
+            if max_concurrent_checks is None
+            else max_concurrent_checks
+        )
+        if checks < 1:
+            raise ValueError("max_concurrent_checks doit être positif")
+        self._expensive_slots = threading.BoundedSemaphore(checks)
+
+    def _make_room_locked(self, ip: str) -> bool:
+        if ip in self._state or len(self._state) < self.MAX_TRACKED_IPS:
+            return True
+        idle = [
+            (entry[2], candidate)
+            for candidate, entry in self._state.items()
+            if entry[3] == 0
+        ]
+        if not idle:
+            return False
+        _, oldest = min(idle)
+        del self._state[oldest]
+        return True
 
     def _prune_locked(self, now: float) -> None:
         stale = [
@@ -227,18 +265,30 @@ class LoginRateLimiter:
                     return retry
                 if entry[3] >= 1:
                     return 1.0
-                entry[3] += 1
-                entry[2] = now
+            if not self._expensive_slots.acquire(blocking=False):
+                return 1.0
+            if not self._make_room_locked(ip):
+                self._expensive_slots.release()
+                return 1.0
+            if entry is None:
+                self._state[ip] = [0.0, 0.0, now, 1.0]
                 return 0.0
-            self._state[ip] = [0.0, 0.0, now, 1.0]
+            entry[3] += 1
+            entry[2] = now
             return 0.0
 
     def release(self, ip: str) -> None:
+        release_slot = False
         with self._lock:
             entry = self._state.get(ip)
-            if entry:
+            if entry and entry[3] >= 1:
                 entry[3] = max(0.0, entry[3] - 1.0)
                 entry[2] = time.monotonic()
+                release_slot = True
+                if entry[3] == 0 and entry[0] == 0 and entry[1] <= entry[2]:
+                    self._state.pop(ip, None)
+        if release_slot:
+            self._expensive_slots.release()
 
     def retry_after(self, ip: str) -> float:
         with self._lock:
@@ -254,6 +304,8 @@ class LoginRateLimiter:
             now = time.monotonic()
             self._prune_locked(now)
             entry = self._state.get(ip)
+            if entry is None and not self._make_room_locked(ip):
+                return
             fails = int(entry[0]) + 1 if entry else 1
             delay = 0.0
             if fails >= self.THRESHOLD:
@@ -266,7 +318,14 @@ class LoginRateLimiter:
 
     def register_success(self, ip: str) -> None:
         with self._lock:
-            self._state.pop(ip, None)
+            entry = self._state.get(ip)
+            if entry is None:
+                return
+            entry[0] = 0.0
+            entry[1] = 0.0
+            entry[2] = time.monotonic()
+            if entry[3] == 0:
+                self._state.pop(ip, None)
 
     def prune(self) -> None:
         """Oublie les IPs sans activité récente (appelé périodiquement)."""

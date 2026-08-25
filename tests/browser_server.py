@@ -83,7 +83,10 @@ def main() -> None:
         cfg = load_config(_write_config(root))
         prepare_directories(cfg)
         service = PasteService(cfg)
-        sessions = SessionStore(cfg.auth.session_ttl_hours * 3600)
+        sessions = SessionStore(
+            cfg.auth.session_ttl_hours * 3600,
+            password_file=cfg.password_file() if cfg.auth.enabled else None,
+        )
         limiter = LoginRateLimiter()
         base_handler = make_handler(cfg, service, sessions, limiter)
         server = PasteberthServer((cfg.listen_address, cfg.port), _test_handler(base_handler, service))

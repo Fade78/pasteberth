@@ -87,11 +87,13 @@ def make_webp_lossy(width: int = 8, height: int = 6) -> bytes:
     return b"RIFF" + struct.pack("<I", riff_size) + b"WEBP" + chunk
 
 
-def make_webp_vp8x(width: int = 300, height: int = 200) -> bytes:
+def make_webp_vp8x(width: int = 300, height: int = 200, with_payload: bool = True) -> bytes:
     payload = bytes([0x10, 0, 0, 0])  # flag alpha + octets réservés
     payload += (width - 1).to_bytes(3, "little") + (height - 1).to_bytes(3, "little")
-    chunk = b"VP8X" + struct.pack("<I", len(payload)) + payload
-    return b"RIFF" + struct.pack("<I", 4 + len(chunk)) + b"WEBP" + chunk
+    chunks = b"VP8X" + struct.pack("<I", len(payload)) + payload
+    if with_payload:
+        chunks += make_webp_lossy(width, height)[12:]
+    return b"RIFF" + struct.pack("<I", 4 + len(chunks)) + b"WEBP" + chunks
 
 
 # ------------------------------------------------------------- multipart
@@ -128,6 +130,10 @@ def write_config(
     trusted_proxies: str | None = '["127.0.0.1", "::1"]',
     allow_unauthenticated_local: bool | None = True,
     allow_unauthenticated_remote: bool | None = None,
+    allow_insecure_http_remote: bool | None = None,
+    tls_enabled: bool = False,
+    tls_certificate: str | None = None,
+    tls_private_key: str | None = None,
     min_free_percent: float | None = None,
     extra: str = "",
     password: str | None = None,
@@ -154,6 +160,22 @@ def write_config(
         )
     if allow_unauthenticated_remote is not None:
         lines.append(f"allow_unauthenticated_remote = {str(allow_unauthenticated_remote).lower()}")
+    if allow_insecure_http_remote is not None:
+        lines.append(
+            f"allow_insecure_http_remote = {str(allow_insecure_http_remote).lower()}"
+        )
+    if tls_enabled or tls_certificate is not None or tls_private_key is not None:
+        lines.extend(
+            [
+                "",
+                "[tls]",
+                f"enabled = {str(tls_enabled).lower()}",
+            ]
+        )
+        if tls_certificate is not None:
+            lines.append(f'certificate = "{tls_certificate}"')
+        if tls_private_key is not None:
+            lines.append(f'private_key = "{tls_private_key}"')
     lines.append('log_level = "WARNING"')
     lines.append("")
     lines.append("[auth]")
@@ -187,7 +209,10 @@ class LiveServer:
         self.cfg = load_config(cfg_path)
         prepare_directories(self.cfg)
         self.service = PasteService(self.cfg)
-        self.sessions = SessionStore(self.cfg.auth.session_ttl_hours * 3600)
+        self.sessions = SessionStore(
+            self.cfg.auth.session_ttl_hours * 3600,
+            password_file=self.cfg.password_file() if self.cfg.auth.enabled else None,
+        )
         self.limiter = LoginRateLimiter()
         handler = make_handler(self.cfg, self.service, self.sessions, self.limiter)
         self.httpd = PasteberthServer(("127.0.0.1", 0), handler)
@@ -210,7 +235,10 @@ class LiveServer:
         fresh.cfg = _lc(self.cfg.config_path)
         prepare_directories(fresh.cfg)
         fresh.service = PasteService(fresh.cfg)
-        fresh.sessions = _SS(fresh.cfg.auth.session_ttl_hours * 3600)
+        fresh.sessions = _SS(
+            fresh.cfg.auth.session_ttl_hours * 3600,
+            password_file=fresh.cfg.password_file() if fresh.cfg.auth.enabled else None,
+        )
         fresh.limiter = _LR()
         handler = make_handler(fresh.cfg, fresh.service, fresh.sessions, fresh.limiter)
         fresh.httpd = PasteberthServer(("127.0.0.1", 0), handler)

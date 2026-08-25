@@ -52,6 +52,14 @@ class TestHash(unittest.TestCase):
             save_password_hash(path, hash_password("nouveau mot de passe long"))
             self.assertEqual(path.stat().st_mode & 0o777, 0o600)
 
+    def test_ecriture_ne_chmodde_pas_le_repertoire_parent(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            parent = Path(tmp) / "repository"
+            parent.mkdir(mode=0o755)
+            parent.chmod(0o755)
+            save_password_hash(parent / "passwd", hash_password(PASSWORD))
+            self.assertEqual(parent.stat().st_mode & 0o777, 0o755)
+
     def test_validation_structurelle_sans_scrypt(self):
         stored = hash_password(PASSWORD)
         self.assertTrue(valid_password_hash(stored))
@@ -82,6 +90,16 @@ class TestSessions(unittest.TestCase):
         t1, t2 = store.create(), store.create()
         store.revoke(t1)
         self.assertTrue(store.validate(t2))
+
+    def test_changement_mot_de_passe_invalide_les_sessions(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            passwd = Path(tmp) / "passwd"
+            save_password_hash(passwd, hash_password(PASSWORD))
+            store = SessionStore(ttl_seconds=60, password_file=passwd)
+            token = store.create()
+            self.assertTrue(store.validate(token))
+            save_password_hash(passwd, hash_password("nouveau mot de passe long"))
+            self.assertFalse(store.validate(token))
 
 
 class TestRateLimiter(unittest.TestCase):
@@ -121,6 +139,21 @@ class TestRateLimiter(unittest.TestCase):
         limiter.release(ip)
         limiter.register_failure(ip)
         self.assertEqual(limiter.acquire(ip), 0.0)
+
+    def test_plafond_global_des_verifications_couteuses(self):
+        limiter = LoginRateLimiter(max_concurrent_checks=1)
+        self.assertEqual(limiter.acquire("10.0.0.1"), 0.0)
+        self.assertGreater(limiter.acquire("10.0.0.2"), 0.0)
+        limiter.release("10.0.0.1")
+        self.assertEqual(limiter.acquire("10.0.0.2"), 0.0)
+        limiter.release("10.0.0.2")
+
+    def test_nombre_ips_suivi_borne(self):
+        limiter = LoginRateLimiter()
+        limiter.MAX_TRACKED_IPS = 2
+        for ip in ("10.0.0.1", "10.0.0.2", "10.0.0.3"):
+            limiter.register_failure(ip)
+        self.assertLessEqual(len(limiter._state), 2)
 
 
 if __name__ == "__main__":

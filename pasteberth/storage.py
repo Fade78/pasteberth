@@ -28,6 +28,7 @@ from pasteberth.images import (
     ImageInfo,
     extension_for,
 )
+from pasteberth.paths import first_symlink_component
 
 log = logging.getLogger("pasteberth.storage")
 
@@ -121,11 +122,13 @@ class LocalDestination(Destination):
         self.directory = Path(directory)
         self.create_directory = create_directory
         self._ensure_dir()
-        self.reconcile()
+        with self.operation_lock(exclusive=True):
+            self.reconcile()
 
     def _ensure_dir(self) -> None:
-        if self.directory.is_symlink():
-            raise DestinationError(f"répertoire zone symbolique refusé : {self.directory}")
+        symlink = first_symlink_component(self.directory)
+        if symlink is not None:
+            raise DestinationError(f"chemin zone symbolique refusé : {symlink}")
         if self.directory.is_dir():
             mode = stat.S_IMODE(self.directory.stat().st_mode)
             if mode & 0o077:

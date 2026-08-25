@@ -7,8 +7,12 @@ indépendantes entre elles.
 """
 from __future__ import annotations
 
+import fcntl
 import logging
+import os
 import threading
+from contextlib import contextmanager
+from pathlib import Path
 
 from pasteberth.config import Config, ZoneConfig
 from pasteberth.images import (
@@ -28,6 +32,41 @@ from pasteberth.storage import (
 )
 
 log = logging.getLogger("pasteberth.service")
+
+
+class _DeviceSpaceLock:
+    """Verrou par filesystem partagé entre threads et processus locaux."""
+
+    def __init__(self, device_id: int):
+        uid = getattr(os, "getuid", lambda: 0)()
+        runtime_root = os.environ.get("XDG_RUNTIME_DIR")
+        base = Path(runtime_root) if runtime_root else Path.home() / ".cache"
+        lock_root = base / "pasteberth"
+        lock_root.mkdir(parents=True, exist_ok=True, mode=0o700)
+        os.chmod(lock_root, 0o700)
+        self.path = lock_root / f"space-{uid}-{device_id}.lock"
+        self._thread_lock = threading.Lock()
+
+    @contextmanager
+    def locked(self):
+        with self._thread_lock:
+            fd = os.open(
+                self.path,
+                os.O_RDWR | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0),
+                0o600,
+            )
+            try:
+                uid = getattr(os, "getuid", lambda: 0)()
+                if os.fstat(fd).st_uid != uid:
+                    raise PermissionError(f"verrou filesystem non détenu par l'utilisateur : {self.path}")
+                os.fchmod(fd, 0o600)
+                fcntl.flock(fd, fcntl.LOCK_EX)
+                yield
+            finally:
+                try:
+                    fcntl.flock(fd, fcntl.LOCK_UN)
+                finally:
+                    os.close(fd)
 
 
 class ServiceError(Exception):
@@ -58,7 +97,7 @@ class PasteService:
         self._zone_cfg: dict[str, ZoneConfig] = {}
         self._destinations: dict[str, LocalDestination] = {}
         self._locks: dict[str, threading.RLock] = {}
-        self._space_locks: dict[int, threading.Lock] = {}
+        self._space_locks: dict[int, _DeviceSpaceLock] = {}
         for zid, zone in cfg.zones.items():
             self._zone_cfg[zid] = zone
             self._destinations[zid] = LocalDestination(
@@ -66,7 +105,7 @@ class PasteService:
             )
             self._locks[zid] = threading.RLock()
             device = self._destinations[zid].device_id
-            self._space_locks.setdefault(device, threading.Lock())
+            self._space_locks.setdefault(device, _DeviceSpaceLock(device))
 
     # ---------------------------------------------------------------- zones
 
@@ -125,7 +164,11 @@ class PasteService:
             device = dest.device_id
         except DestinationError as exc:
             raise ServiceError("destination_error", str(exc)) from exc
-        with self._locks[zid], dest.operation_lock(exclusive=True), self._space_locks[device]:
+        with (
+            self._locks[zid],
+            dest.operation_lock(exclusive=True),
+            self._space_locks[device].locked(),
+        ):
             try:
                 dest.ensure_space(len(data), zone.min_free_percent)
                 stored = dest.save(data, info)

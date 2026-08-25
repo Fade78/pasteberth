@@ -5,8 +5,9 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-# Unité optionnelle : remplacez ce chemin par le chemin absolu de votre clone.
-ExecStart=/chemin/absolu/vers/pasteberth/bin/pasteberth
+# Chemin par défaut du clone documenté ; adaptez-le si le dépôt est ailleurs.
+WorkingDirectory=%h/Depots/pasteberth
+ExecStart=%h/Depots/pasteberth/bin/pasteberth
 Restart=on-failure
 RestartSec=2
 TimeoutStopSec=90

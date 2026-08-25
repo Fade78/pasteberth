@@ -177,5 +177,41 @@ class TestConfigurationDepot(unittest.TestCase):
         self.assertEqual(proc.returncode, 2)
         self.assertIn("hash scrypt absent ou invalide", proc.stdout)
 
+    def test_audit_zones_partageant_un_repertoire_echoue(self):
+        shared = self.tmp / "shared"
+        cfg = write_config(
+            self.tmp,
+            zones=[
+                {"id": "a", "directory": str(shared)},
+                {"id": "b", "directory": str(shared)},
+            ],
+        )
+        proc = run_cli(["audit", "--config", str(cfg)])
+        self.assertEqual(proc.returncode, 2)
+        self.assertIn("même répertoire", proc.stdout)
+
+    def test_audit_verifie_le_bind(self):
+        import socket
+
+        with socket.socket() as occupied:
+            occupied.bind(("127.0.0.1", 0))
+            occupied.listen()
+            port = occupied.getsockname()[1]
+            cfg = write_config(self.tmp, port=port)
+            proc = run_cli(["audit", "--config", str(cfg)])
+        self.assertEqual(proc.returncode, 2)
+        self.assertIn("bind impossible", proc.stdout)
+
+    def test_audit_verifie_le_certificat_tls(self):
+        cfg = write_config(
+            self.tmp,
+            tls_enabled=True,
+            tls_certificate=str(self.tmp / "cert.pem"),
+            tls_private_key=str(self.tmp / "key.pem"),
+        )
+        proc = run_cli(["audit", "--config", str(cfg)])
+        self.assertEqual(proc.returncode, 2)
+        self.assertIn("configuration TLS invalide", proc.stdout)
+
 if __name__ == "__main__":
     unittest.main()
