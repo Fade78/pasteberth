@@ -41,6 +41,7 @@ session_ttl_hours = 72            # durée de vie des sessions (serveur)
 # color     : fond de la zone (#RRGGBB) ; meilleur contraste texte calculé auto
 # create_directory : créer le répertoire s'il manque (défaut true)
 # min_free_percent : espace libre minimal du filesystem avant upload (défaut 2 %)
+# Le mode 0700 est recommandé pour le répertoire ; un mode partagé est averti par audit.
 
 [[zones]]
 id = "default"

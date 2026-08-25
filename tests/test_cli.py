@@ -196,6 +196,23 @@ class TestConfigurationDepot(unittest.TestCase):
         if port_busy:
             self.assertIn("bind impossible", proc.stdout)
 
+    def test_audit_permissions_zone_avertit_sans_echouer(self):
+        target = self.tmp / "open"
+        target.mkdir(mode=0o755)
+        os.chmod(target, 0o755)
+        with socket.socket() as probe:
+            probe.bind(("127.0.0.1", 0))
+            port = probe.getsockname()[1]
+        cfg = write_config(
+            self.tmp,
+            port=port,
+            zones=[{"id": "open", "directory": str(target)}],
+        )
+        proc = run_cli(["audit", "--config", str(cfg)])
+        self.assertEqual(proc.returncode, 1)
+        self.assertIn("permissions non privées", proc.stdout)
+        self.assertIn("Audit prêt avec", proc.stdout)
+
     def test_audit_auth_sans_hash_echoue(self):
         cfg = write_config(self.tmp, auth_enabled=True)
         proc = run_cli(["audit", "--config", str(cfg)])

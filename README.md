@@ -125,8 +125,10 @@ répertoire `storage/` est ignoré par Git, mais il faut le sauvegarder séparé
 si les images ont de la valeur. Un chemin externe peut être indiqué
 manuellement dans `config.toml`.
 
-Les zones doivent être des répertoires cibles distincts et privés (`0700`). Chaque
-zone refuse un nouvel upload si l'espace libre prévu après écriture passerait
+Les zones doivent être des répertoires cibles distincts et accessibles en écriture.
+Le mode privé `0700` est recommandé ; un mode plus ouvert produit un avertissement
+à l'audit mais n'empêche pas le démarrage, ce qui permet un partage contrôlé entre
+plusieurs utilisateurs. Chaque zone refuse un nouvel upload si l'espace libre prévu après écriture passerait
 sous `min_free_percent` (défaut `2.0`). La mesure porte sur le filesystem du
 répertoire, pas sur le seul dossier ; plusieurs zones peuvent donc partager un
 filesystem, mais elles partagent alors aussi sa réserve d'espace.
@@ -283,7 +285,7 @@ client doit donc recharger l'historique avant de retenter aveuglément.
 - Seuls les fichiers dotés d'un sidecar Pasteberth peuvent être lus ou
   supprimés ; vos fichiers personnels dans les répertoires cibles ne sont
   jamais touchés.
-- Répertoires privés (`0700`), images/sidecars privés (`0600`), liens
+- Répertoires privés recommandés (`0700`), images/sidecars privés (`0600`), liens
   symboliques refusés et réconciliation des temporaires après crash.
 - Validation structurelle complète des PNG/JPEG/WebP, budget de dimensions et
   de pixels, et refus des conteneurs tronqués.

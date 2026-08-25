@@ -170,6 +170,13 @@ class TestRepertoires(unittest.TestCase):
         self.assertTrue(target.is_dir())
         self.assertEqual(stat.S_IMODE(target.stat().st_mode), 0o700)
 
+    def test_repertoire_existant_non_prive_accepte(self):
+        target = self.tmp / "open"
+        target.mkdir(mode=0o755)
+        os.chmod(target, 0o755)
+        dest = LocalDestination(target)
+        self.assertTrue(dest.save(make_png(), INFO(1, 1)).filename)
+
     def test_sans_creation_refuse(self):
         target = self.tmp / "absent"
         # Échec immédiat : la destination refuse un répertoire inexistant

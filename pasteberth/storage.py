@@ -130,12 +130,6 @@ class LocalDestination(Destination):
         if symlink is not None:
             raise DestinationError(f"chemin zone symbolique refusé : {symlink}")
         if self.directory.is_dir():
-            mode = stat.S_IMODE(self.directory.stat().st_mode)
-            if mode & 0o077:
-                raise DestinationError(
-                    f"permissions trop ouvertes sur {self.directory} ({oct(mode)}), "
-                    "utilisez chmod 700"
-                )
             return
         if self.create_directory:
             try:

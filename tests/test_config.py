@@ -2,6 +2,7 @@
 import tempfile
 import unittest
 import os
+import stat
 from pathlib import Path
 
 from pasteberth.config import (
@@ -291,15 +292,15 @@ class TestRepertoires(unittest.TestCase):
         with self.assertRaises(ConfigError):
             prepare_directories(cfg)
 
-    def test_repertoire_permissions_trop_ouvertes(self):
+    def test_repertoire_permissions_non_privees_avertissent(self):
         target = self.tmp / "open"
         target.mkdir(mode=0o755)
         os.chmod(target, 0o755)
         cfg = load_config(
             write_config(self.tmp, zones=[{"id": "x", "directory": str(target)}])
         )
-        with self.assertRaises(ConfigError):
-            prepare_directories(cfg)
+        prepare_directories(cfg)
+        self.assertEqual(stat.S_IMODE(target.stat().st_mode), 0o755)
 
     def test_lien_symbolique_parent_refuse(self):
         target = self.tmp / "outside"

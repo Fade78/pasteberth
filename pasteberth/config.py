@@ -8,15 +8,18 @@ XDG reste accepté en dernier recours.
 from __future__ import annotations
 
 import ipaddress
+import logging
 import os
 import re
 import socket
-import stat
 from dataclasses import dataclass, field
 from pathlib import Path
 
 from pasteberth.images import HARD_MAX_PIXELS, MAX_PIXELS
 from pasteberth.paths import first_symlink_component
+
+
+log = logging.getLogger("pasteberth.config")
 
 try:
     import tomllib
@@ -578,15 +581,16 @@ def prepare_directories(cfg: Config) -> None:
                 f"{zone.directory}"
             )
         try:
-            mode = stat.S_IMODE(zone.directory.stat().st_mode)
+            mode = zone.directory.stat().st_mode & 0o777
             if mode & 0o077:
-                raise ConfigError(
-                    f"zone '{zone.id}': permissions trop ouvertes sur {zone.directory} "
-                    f"({oct(mode)}), utilisez chmod 700"
+                log.warning(
+                    "zone '%s': permissions non privées sur %s (%s) ; "
+                    "0700 est recommandé",
+                    zone.id,
+                    zone.directory,
+                    oct(mode),
                 )
             identity = (zone.directory.stat().st_dev, zone.directory.stat().st_ino)
-        except ConfigError:
-            raise
         except OSError as exc:
             raise ConfigError(
                 f"zone '{zone.id}': impossible d'inspecter {zone.directory} ({exc})"

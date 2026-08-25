@@ -246,7 +246,10 @@ def _audit_zone(cfg, zone) -> tuple[list[str], list[str]]:
     try:
         mode = stat.S_IMODE(path.stat().st_mode)
         if mode & 0o077:
-            errors.append(f"zone {zone.id}: permissions trop ouvertes ({oct(mode)}) : {path}")
+            warnings.append(
+                f"zone {zone.id}: permissions non privées ({oct(mode)}) : {path} "
+                "(0700 recommandé)"
+            )
     except OSError as exc:
         errors.append(f"zone {zone.id}: inspection impossible ({exc})")
     if not os.access(path, os.W_OK | os.X_OK):
