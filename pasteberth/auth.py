@@ -11,7 +11,9 @@ from __future__ import annotations
 import base64
 import hashlib
 import hmac
+import os
 import secrets
+import tempfile
 import threading
 import time
 from pathlib import Path
@@ -57,14 +59,19 @@ def verify_password(password: str, stored: str | None) -> bool:
     if algo != "scrypt":
         return False
     try:
+        n_value, r_value, p_value = int(n), int(r), int(p)
+        if (n_value, r_value, p_value) != (SCRYPT_N, SCRYPT_R, SCRYPT_P):
+            return False
         salt = base64.b64decode(salt_b64, validate=True)
         expected = base64.b64decode(hash_b64, validate=True)
+        if len(salt) != 16 or len(expected) != _DKLEN:
+            return False
         candidate = hashlib.scrypt(
             password.encode("utf-8"),
             salt=salt,
-            n=int(n),
-            r=int(r),
-            p=int(p),
+            n=n_value,
+            r=r_value,
+            p=p_value,
             dklen=len(expected),
             maxmem=_MAXMEM,
         )
@@ -73,10 +80,32 @@ def verify_password(password: str, stored: str | None) -> bool:
     return hmac.compare_digest(candidate, expected)
 
 
+def valid_password_hash(stored: str | None) -> bool:
+    """Vérifie la structure du hash sans exécuter scrypt."""
+    if not stored:
+        return False
+    try:
+        algo, n, r, p, salt_b64, hash_b64 = stored.strip().split("$")
+        if algo != "scrypt":
+            return False
+        if (int(n), int(r), int(p)) != (SCRYPT_N, SCRYPT_R, SCRYPT_P):
+            return False
+        salt = base64.b64decode(salt_b64, validate=True)
+        digest = base64.b64decode(hash_b64, validate=True)
+    except (ValueError, TypeError):
+        return False
+    return len(salt) == 16 and len(digest) == _DKLEN
+
+
 def load_password_hash(path: Path) -> str | None:
     """Lit le fichier ``passwd`` (première ligne). Rechargé à chaque essai :
     un changement via `pasteberth passwd` est effectif sans redémarrage."""
     try:
+        stat_result = path.lstat()
+        if not stat_result or not path.is_file() or path.is_symlink():
+            raise RuntimeError(f"fichier passwd non régulier : {path}")
+        if stat_result.st_mode & 0o077:
+            raise RuntimeError(f"permissions trop ouvertes sur {path} (0600 requis)")
         raw = path.read_text(encoding="utf-8").strip()
     except FileNotFoundError:
         return None
@@ -86,12 +115,28 @@ def load_password_hash(path: Path) -> str | None:
 
 
 def save_password_hash(path: Path, password_hash: str) -> None:
-    import os
-
     path.parent.mkdir(parents=True, exist_ok=True)
-    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-    with os.fdopen(fd, "w", encoding="utf-8") as fh:
-        fh.write(password_hash + "\n")
+    os.chmod(path.parent, 0o700)
+    fd, tmp_name = tempfile.mkstemp(dir=path.parent, prefix=".passwd-", suffix=".tmp")
+    try:
+        os.fchmod(fd, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(password_hash + "\n")
+            fh.flush()
+            os.fsync(fh.fileno())
+        os.replace(tmp_name, path)
+        os.chmod(path, 0o600)
+        dir_fd = os.open(path.parent, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+        try:
+            os.fsync(dir_fd)
+        finally:
+            os.close(dir_fd)
+    except BaseException:
+        try:
+            os.unlink(tmp_name)
+        except OSError:
+            pass
+        raise
 
 
 # ----------------------------------------------------------------- sessions
@@ -156,19 +201,58 @@ class LoginRateLimiter:
     _FORGET_AFTER = 3600.0  # sans échec pendant 1h, on oublie l'historique
 
     def __init__(self) -> None:
-        # ip -> [échecs consécutifs, verrouillé jusqu'à, dernier événement]
+        # ip -> [échecs consécutifs, verrouillé jusqu'à, dernier événement,
+        #        tentatives coûteuses en cours]
         self._state: dict[str, list[float]] = {}
         self._lock = threading.Lock()
 
+    def _prune_locked(self, now: float) -> None:
+        stale = [
+            ip
+            for ip, (_, until, last, in_flight) in self._state.items()
+            if not in_flight and until < now and now - last > self._FORGET_AFTER
+        ]
+        for ip in stale:
+            del self._state[ip]
+
+    def acquire(self, ip: str) -> float:
+        """Réserve atomiquement au plus une vérification scrypt par IP."""
+        now = time.monotonic()
+        with self._lock:
+            self._prune_locked(now)
+            entry = self._state.get(ip)
+            if entry:
+                retry = max(0.0, entry[1] - now)
+                if retry > 0:
+                    return retry
+                if entry[3] >= 1:
+                    return 1.0
+                entry[3] += 1
+                entry[2] = now
+                return 0.0
+            self._state[ip] = [0.0, 0.0, now, 1.0]
+            return 0.0
+
+    def release(self, ip: str) -> None:
+        with self._lock:
+            entry = self._state.get(ip)
+            if entry:
+                entry[3] = max(0.0, entry[3] - 1.0)
+                entry[2] = time.monotonic()
+
     def retry_after(self, ip: str) -> float:
         with self._lock:
+            now = time.monotonic()
+            self._prune_locked(now)
             entry = self._state.get(ip)
             if not entry:
                 return 0.0
-            return max(0.0, entry[1] - time.monotonic())
+            return max(0.0, entry[1] - now)
 
     def register_failure(self, ip: str) -> None:
         with self._lock:
+            now = time.monotonic()
+            self._prune_locked(now)
             entry = self._state.get(ip)
             fails = int(entry[0]) + 1 if entry else 1
             delay = 0.0
@@ -176,8 +260,9 @@ class LoginRateLimiter:
                 delay = min(
                     self.BASE_DELAY * (2 ** (fails - self.THRESHOLD)), self.MAX_DELAY
                 )
-            until = time.monotonic() + delay if delay else 0.0
-            self._state[ip] = [float(fails), until, time.monotonic()]
+            until = now + delay if delay else 0.0
+            in_flight = entry[3] if entry else 0.0
+            self._state[ip] = [float(fails), until, now, in_flight]
 
     def register_success(self, ip: str) -> None:
         with self._lock:
@@ -187,10 +272,4 @@ class LoginRateLimiter:
         """Oublie les IPs sans activité récente (appelé périodiquement)."""
         now = time.monotonic()
         with self._lock:
-            stale = [
-                ip
-                for ip, (_, until, last) in self._state.items()
-                if until < now and now - last > self._FORGET_AFTER
-            ]
-            for ip in stale:
-                del self._state[ip]
+            self._prune_locked(now)

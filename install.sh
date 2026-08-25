@@ -27,8 +27,22 @@ fi
 
 UNIT_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user"
 mkdir -p "$UNIT_DIR"
-cp "$REPO_DIR/deploy/pasteberth.service" "$UNIT_DIR/pasteberth.service"
-systemctl --user daemon-reload 2>/dev/null || true
+UNIT_PATH="$UNIT_DIR/pasteberth.service"
+if [ ! -e "$UNIT_PATH" ]; then
+  cp "$REPO_DIR/deploy/pasteberth.service" "$UNIT_PATH"
+elif cmp -s "$REPO_DIR/deploy/pasteberth.service" "$UNIT_PATH"; then
+  :
+else
+  cp "$REPO_DIR/deploy/pasteberth.service" "$UNIT_PATH.pasteberth-new"
+  echo "note : unité existante conservée ; nouvelle version dans $UNIT_PATH.pasteberth-new"
+fi
+if command -v systemctl >/dev/null 2>&1; then
+  if ! systemctl --user daemon-reload; then
+    echo "note : daemon-reload systemd utilisateur impossible ; rechargez-le manuellement." >&2
+  fi
+else
+  echo "note : systemctl absent ; unité copiée mais non rechargée." >&2
+fi
 
 cat <<EOF
 

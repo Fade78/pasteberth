@@ -9,8 +9,11 @@ import ipaddress
 import os
 import re
 import socket
+import stat
 from dataclasses import dataclass, field
 from pathlib import Path
+
+from pasteberth.images import HARD_MAX_PIXELS, MAX_PIXELS
 
 try:
     import tomllib
@@ -25,6 +28,10 @@ class ConfigError(Exception):
 _ZONE_ID_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
 _COLOR_RE = re.compile(r"^#[0-9a-fA-F]{6}$")
 _LOG_LEVELS = {"DEBUG", "INFO", "WARNING", "ERROR"}
+
+DEFAULT_MAX_UPLOAD_BYTES = 20 * 1024**2
+MAX_UPLOAD_BYTES = 50 * 1024**2
+DEFAULT_MIN_FREE_PERCENT = 2.0
 
 _SIZE_UNITS = {
     "": 1,
@@ -73,7 +80,7 @@ def is_loopback_address(address: str) -> bool:
 
 @dataclass(frozen=True)
 class AuthConfig:
-    enabled: bool = False
+    enabled: bool = True
     session_ttl_hours: int = 72
 
 
@@ -86,6 +93,7 @@ class ZoneConfig:
     reference_prefix: str = "@"
     color: str = "#243447"
     create_directory: bool = True
+    min_free_percent: float = DEFAULT_MIN_FREE_PERCENT
 
 
 @dataclass(frozen=True)
@@ -93,7 +101,9 @@ class Config:
     listen_address: str
     port: int
     max_upload_bytes: int
+    max_image_pixels: int
     trusted_proxies: tuple[ipaddress.IPv4Network | ipaddress.IPv6Network, ...]
+    allow_unauthenticated_local: bool
     allow_unauthenticated_remote: bool
     auth: AuthConfig
     zones: dict[str, ZoneConfig]
@@ -133,6 +143,38 @@ def _get_bool(table: dict, key: str, where: str, default: bool) -> bool:
     return value
 
 
+def _get_percent(table: dict, key: str, where: str, default: float) -> float:
+    if key not in table:
+        return default
+    value = table[key]
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ConfigError(f"{where}: '{key}' doit être un nombre entre 0 et 99,99")
+    value = float(value)
+    if not (0.0 <= value < 100.0):
+        raise ConfigError(f"{where}: '{key}' doit être un nombre entre 0 et 99,99")
+    return value
+
+
+def _relative_luminance(color: str) -> float:
+    channels = []
+    for offset in (1, 3, 5):
+        value = int(color[offset:offset + 2], 16) / 255.0
+        channels.append(
+            value / 12.92 if value <= 0.04045
+            else ((value + 0.055) / 1.055) ** 2.4
+        )
+    return 0.2126 * channels[0] + 0.7152 * channels[1] + 0.0722 * channels[2]
+
+
+def _best_contrast(color: str) -> float:
+    background = _relative_luminance(color)
+    candidates = (_relative_luminance("#12161b"), _relative_luminance("#f3f6fa"))
+    return max(
+        (max(background, foreground) + 0.05) / (min(background, foreground) + 0.05)
+        for foreground in candidates
+    )
+
+
 def _warn_unknown(table: dict, known: set[str], where: str, warnings: list[str]) -> None:
     for key in sorted(set(table) - known):
         warnings.append(f"{where}: clé inconnue '{key}' ignorée")
@@ -143,7 +185,7 @@ def _parse_auth(raw: object, warnings: list[str]) -> AuthConfig:
         return AuthConfig()
     table = _expect_table(raw, "[auth]")
     _warn_unknown(table, {"enabled", "session_ttl_hours"}, "[auth]", warnings)
-    enabled = _get_bool(table, "enabled", "[auth]", default=False)
+    enabled = _get_bool(table, "enabled", "[auth]", default=True)
     ttl = table.get("session_ttl_hours", 72)
     if isinstance(ttl, bool) or not isinstance(ttl, int) or not (1 <= ttl <= 24 * 365):
         raise ConfigError("[auth]: 'session_ttl_hours' doit être un entier entre 1 et 8760")
@@ -161,7 +203,7 @@ def _parse_zone(raw_zone: object, index: int, warnings: list[str]) -> ZoneConfig
     _warn_unknown(
         table,
         {"id", "label", "type", "directory", "retain", "reference_prefix",
-         "color", "create_directory"},
+         "color", "create_directory", "min_free_percent"},
         where,
         warnings,
     )
@@ -194,21 +236,33 @@ def _parse_zone(raw_zone: object, index: int, warnings: list[str]) -> ZoneConfig
     color = _get_str(table, "color", where, default="#243447")
     if not _COLOR_RE.fullmatch(color):
         raise ConfigError(f"{where}: 'color' doit être au format #RRGGBB : {color!r}")
+    color = color.lower()
+    if _best_contrast(color) < 4.5:
+        raise ConfigError(
+            f"{where}: 'color' ne permet pas un contraste texte suffisant : {color!r}"
+        )
     create_dir = _get_bool(table, "create_directory", where, default=True)
+    min_free_percent = _get_percent(
+        table, "min_free_percent", where, DEFAULT_MIN_FREE_PERCENT
+    )
     return ZoneConfig(
         id=zid,
         label=label,
         directory=directory,
         retain=retain,
         reference_prefix=prefix,
-        color=color.lower(),
+        color=color,
         create_directory=create_dir,
+        min_free_percent=min_free_percent,
     )
 
 
 def _parse_trusted_proxies(raw: object, warnings: list[str]) -> tuple:
     if raw is None:
-        return ("127.0.0.1", "::1")
+        return (
+            ipaddress.ip_network("127.0.0.1/32"),
+            ipaddress.ip_network("::1/128"),
+        )
     if not isinstance(raw, list) or not all(isinstance(v, str) for v in raw):
         raise ConfigError("'trusted_proxies' doit être une liste de chaînes (IP ou CIDR)")
     networks = []
@@ -238,7 +292,9 @@ def load_config(path: Path) -> Config:
     _warn_unknown(
         data,
         {"listen_address", "port", "max_upload_size", "trusted_proxies",
-         "allow_unauthenticated_remote", "auth", "zones", "log_level"},
+         "max_image_pixels",
+         "allow_unauthenticated_local", "allow_unauthenticated_remote", "auth",
+         "zones", "log_level"},
         "config",
         warnings,
     )
@@ -248,13 +304,28 @@ def load_config(path: Path) -> Config:
     if isinstance(port, bool) or not isinstance(port, int) or not (1 <= port <= 65535):
         raise ConfigError("'port' doit être un entier entre 1 et 65535")
 
-    max_upload_bytes = parse_size(data.get("max_upload_size", "20MB"))
+    max_upload_bytes = parse_size(
+        data.get("max_upload_size", DEFAULT_MAX_UPLOAD_BYTES)
+    )
     if max_upload_bytes < 1024:
         raise ConfigError("'max_upload_size' est trop petit (minimum 1KB)")
-    if max_upload_bytes > 1024**3:
-        raise ConfigError("'max_upload_size' est trop grand (maximum 1GB)")
+    if max_upload_bytes > MAX_UPLOAD_BYTES:
+        raise ConfigError("'max_upload_size' est trop grand (maximum 50MiB)")
+
+    max_image_pixels = data.get("max_image_pixels", MAX_PIXELS)
+    if (
+        isinstance(max_image_pixels, bool)
+        or not isinstance(max_image_pixels, int)
+        or not (1 <= max_image_pixels <= HARD_MAX_PIXELS)
+    ):
+        raise ConfigError(
+            f"'max_image_pixels' doit être un entier entre 1 et {HARD_MAX_PIXELS}"
+        )
 
     trusted_proxies = _parse_trusted_proxies(data.get("trusted_proxies"), warnings)
+    allow_unauth_local = _get_bool(
+        data, "allow_unauthenticated_local", "config", default=False
+    )
     allow_unauth_remote = _get_bool(
         data, "allow_unauthenticated_remote", "config", default=False
     )
@@ -278,7 +349,9 @@ def load_config(path: Path) -> Config:
         listen_address=listen,
         port=port,
         max_upload_bytes=max_upload_bytes,
+        max_image_pixels=max_image_pixels,
         trusted_proxies=trusted_proxies,
+        allow_unauthenticated_local=allow_unauth_local,
         allow_unauthenticated_remote=allow_unauth_remote,
         auth=auth,
         zones=zones,
@@ -291,16 +364,30 @@ def load_config(path: Path) -> Config:
 
 
 def check_startup_policy(cfg: Config) -> None:
-    """Refuse les configurations dangereuses (exposition réseau sans auth)."""
+    """Refuse les configurations anonymes sans opt-in explicite."""
     loopback_only = is_loopback_address(cfg.listen_address)
-    if not loopback_only and not cfg.auth.enabled and not cfg.allow_unauthenticated_remote:
+    if cfg.auth.enabled:
+        return
+    if loopback_only and cfg.allow_unauthenticated_local:
+        return
+    if not loopback_only and cfg.allow_unauthenticated_remote:
+        return
+    if loopback_only:
+        raise ConfigError(
+            "refus de démarrer : authentification désactivée sur une écoute locale "
+            "sans opt-in explicite.\n"
+            "Un backend loopback peut être exposé par un reverse proxy.\n"
+            "Solutions :\n"
+            "  - activer l'authentification ([auth] enabled = true + `pasteberth passwd`) ;\n"
+            "  - en connaissance de cause : allow_unauthenticated_local = true."
+        )
+    if not cfg.auth.enabled and not cfg.allow_unauthenticated_remote:
         raise ConfigError(
             f"refus de démarrer : écoute sur '{cfg.listen_address}' (non-loopback) "
             "avec authentification désactivée.\n"
             "Un service sans mot de passe ne doit pas être exposé au réseau.\n"
             "Solutions :\n"
             "  - activer l'authentification ([auth] enabled = true + `pasteberth passwd`) ;\n"
-            "  - écouter en local (listen_address = \"127.0.0.1\") derrière un reverse proxy ;\n"
             "  - en connaissance de cause : allow_unauthenticated_remote = true."
         )
 
@@ -322,7 +409,13 @@ def resolve_config_path(explicit: str | None = None) -> Path:
 
 def prepare_directories(cfg: Config) -> None:
     """Crée/vérifie les répertoires des zones au démarrage (échec rapide)."""
+    seen: dict[tuple[int, int], str] = {}
     for zone in cfg.zones.values():
+        if zone.directory.is_symlink():
+            raise ConfigError(
+                f"zone '{zone.id}': le répertoire ne doit pas être un lien symbolique : "
+                f"{zone.directory}"
+            )
         if zone.directory.exists():
             if not zone.directory.is_dir():
                 raise ConfigError(
@@ -334,7 +427,7 @@ def prepare_directories(cfg: Config) -> None:
                 )
         elif zone.create_directory:
             try:
-                zone.directory.mkdir(parents=True, exist_ok=True)
+                zone.directory.mkdir(parents=True, exist_ok=True, mode=0o700)
             except OSError as exc:
                 raise ConfigError(
                     f"zone '{zone.id}': impossible de créer {zone.directory} ({exc})"
@@ -344,3 +437,24 @@ def prepare_directories(cfg: Config) -> None:
                 f"zone '{zone.id}': répertoire inexistant et create_directory = false : "
                 f"{zone.directory}"
             )
+        try:
+            mode = stat.S_IMODE(zone.directory.stat().st_mode)
+            if mode & 0o077:
+                raise ConfigError(
+                    f"zone '{zone.id}': permissions trop ouvertes sur {zone.directory} "
+                    f"({oct(mode)}), utilisez chmod 700"
+                )
+            identity = (zone.directory.stat().st_dev, zone.directory.stat().st_ino)
+        except ConfigError:
+            raise
+        except OSError as exc:
+            raise ConfigError(
+                f"zone '{zone.id}': impossible d'inspecter {zone.directory} ({exc})"
+            ) from exc
+        previous = seen.get(identity)
+        if previous is not None:
+            raise ConfigError(
+                f"zones '{previous}' et '{zone.id}' ciblent le même répertoire "
+                f"({zone.directory})"
+            )
+        seen[identity] = zone.id

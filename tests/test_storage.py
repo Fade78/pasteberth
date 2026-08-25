@@ -1,12 +1,21 @@
 """Tests du stockage : noms uniques, sidecars, rétention, ownership."""
 import json
+import os
+import stat
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from unittest import mock
 
 from pasteberth.images import ImageInfo
-from pasteberth.storage import DestinationError, LocalDestination, valid_filename
+from pasteberth.storage import (
+    DestinationError,
+    LocalDestination,
+    RetentionError,
+    StorageLowError,
+    valid_filename,
+)
 from tests.helpers import make_png
 
 INFO = lambda w=4, h=3: ImageInfo(fmt="png", width=w, height=h)
@@ -33,6 +42,8 @@ class TestSauvegarde(Base):
         self.assertEqual(meta["width"], 2)
         self.assertEqual(meta["size"], len(make_png(2, 2)))
         self.assertIn("T", meta["created_at"])
+        self.assertEqual(stat.S_IMODE((self.dir / stored.filename).stat().st_mode), 0o600)
+        self.assertEqual(stat.S_IMODE((self.dir / (stored.filename + ".json")).stat().st_mode), 0o600)
 
     def test_noms_uniques_rapides(self):
         names = {s.filename for s in self.save(20)}
@@ -127,6 +138,24 @@ class TestOwnership(Base):
         self.assertEqual(len(self.dest.list()), 1)
         self.assertTrue(bad.exists())
 
+    def test_sidecar_types_invalides_ignores(self):
+        stored = self.save()[0]
+        sidecar = self.dir / (stored.filename + ".json")
+        raw = json.loads(sidecar.read_text())
+        raw["filename"] = 123
+        sidecar.write_text(json.dumps(raw))
+        self.assertEqual(self.dest.list(), [])
+
+    def test_image_symbolique_refusee_en_lecture(self):
+        stored = self.save()[0]
+        original = self.dir / stored.filename
+        original.unlink()
+        target = self.dir.parent / "outside.png"
+        target.write_bytes(b"secret")
+        original.symlink_to(target)
+        with self.assertRaises(DestinationError):
+            self.dest.read(stored.filename)
+
 
 class TestRepertoires(unittest.TestCase):
     def setUp(self):
@@ -139,6 +168,7 @@ class TestRepertoires(unittest.TestCase):
         dest = LocalDestination(target, create_directory=True)
         dest.save(make_png(), INFO(1, 1))
         self.assertTrue(target.is_dir())
+        self.assertEqual(stat.S_IMODE(target.stat().st_mode), 0o700)
 
     def test_sans_creation_refuse(self):
         target = self.tmp / "absent"
@@ -159,6 +189,30 @@ class TestRepertoires(unittest.TestCase):
         self.assertFalse(valid_filename("../../etc/passwd"))
         self.assertFalse(valid_filename("random.png"))
         self.assertFalse(valid_filename("2026-08-25_01-22-31_a81c42.gif"))
+
+    def test_espace_libre_sous_seuil(self):
+        dest = LocalDestination(self.tmp / "space")
+        usage = type("Usage", (), {"f_blocks": 1000, "f_bavail": 10, "f_frsize": 1024})()
+        with mock.patch("pasteberth.storage.os.statvfs", return_value=usage):
+            with self.assertRaises(StorageLowError):
+                dest.ensure_space(1024, 2.0)
+
+    def test_reconciliation_supprime_un_orphelin_ancien(self):
+        target = self.tmp / "reconcile"
+        LocalDestination(target)
+        orphan = target / "2026-01-01_00-00-00_abcdef.png"
+        orphan.write_bytes(b"orphan")
+        old = time.time() - 7200
+        os.utime(orphan, (old, old))
+        LocalDestination(target)
+        self.assertFalse(orphan.exists())
+
+    def test_retention_signale_les_echecs(self):
+        dest = LocalDestination(self.tmp / "retention")
+        dest.save(make_png(), INFO())
+        with mock.patch.object(dest, "delete", side_effect=DestinationError("no")):
+            with self.assertRaises(RetentionError):
+                dest.apply_retention(0)
 
 
 if __name__ == "__main__":

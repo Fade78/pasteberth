@@ -62,11 +62,11 @@ class TestParsing(unittest.TestCase):
         with self.assertRaises(MultipartError):
             parse_multipart(body, "B")
 
-    def test_marqueur_final_absent_tolerant(self):
-        # Un client interrompu peut couper avant le marqueur final.
+    def test_marqueur_final_absent_rejete(self):
+        # Un corps interrompu ne doit pas devenir une valeur de formulaire.
         body = b'--B\r\nContent-Disposition: form-data; name="image"\r\n\r\nPARTIAL'
-        fields = parse_multipart(body, "B")
-        self.assertEqual(fields["image"][2], b"PARTIAL")
+        with self.assertRaises(MultipartError):
+            parse_multipart(body, "B")
 
     def test_corps_vide_rejete(self):
         with self.assertRaises(MultipartError):

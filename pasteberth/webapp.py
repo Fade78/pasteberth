@@ -50,7 +50,6 @@ _ROUTES: tuple[tuple[str, re.Pattern, str], ...] = tuple(
         ("GET", rf"^/previews/{_ZONE_RE}/{_FILENAME_RE}$", "h_preview"),
         ("POST", r"^/login$", "h_login_post"),
         ("POST", r"^/logout$", "h_logout"),
-        ("GET", r"^/logout$", "h_logout_get"),
         ("GET", r"^/login$", "h_login_page"),
         ("GET", r"^/static/app\.js$", "h_static_app_js"),
         ("GET", r"^/static/style\.css$", "h_static_style_css"),
@@ -108,7 +107,10 @@ def make_handler(cfg: Config, service: PasteService, sessions: SessionStore,
             if self._trusted_peer():
                 xff = self.headers.get("X-Forwarded-For")
                 if xff:
-                    candidate = xff.split(",")[0].strip()
+                    # Le proxy de confiance peut écraser XFF ou ajouter le
+                    # client réel à droite ; seul le saut le plus proche est
+                    # donc accepté, jamais une valeur client plus à gauche.
+                    candidate = xff.rsplit(",", 1)[-1].strip()
                     try:
                         return str(ipaddress.ip_address(candidate))
                     except ValueError:
@@ -127,17 +129,19 @@ def make_handler(cfg: Config, service: PasteService, sessions: SessionStore,
             return host[:253] if host else "localhost"
 
         def _expected_origin(self) -> str:
-            return f"{self._scheme()}://{self._normalize_netloc(self._host())}"
+            scheme = self._scheme()
+            return f"{scheme}://{self._normalize_netloc(self._host(), scheme)}"
 
         @staticmethod
-        def _normalize_netloc(netloc: str) -> str:
+        def _normalize_netloc(netloc: str, scheme: str) -> str:
             netloc = netloc.strip().lower()
             m = re.fullmatch(r"([^@]*@)?(\[[^\]]+\]|[^:]+)(?::(\d+))?", netloc)
             if not m:
                 return netloc
             host_part = m.group(2)
             port = m.group(3)
-            if port == "80" or port == "443":
+            default_port = "443" if scheme.lower() == "https" else "80"
+            if port == default_port:
                 return host_part
             return netloc
 
@@ -152,7 +156,8 @@ def make_handler(cfg: Config, service: PasteService, sessions: SessionStore,
                 parsed = urllib.parse.urlsplit(referer)
                 origin = f"{parsed.scheme}://{parsed.netloc}"
             got = urllib.parse.urlsplit(origin)
-            got_origin = f"{got.scheme.lower()}://{self._normalize_netloc(got.netloc)}"
+            got_scheme = got.scheme.lower()
+            got_origin = f"{got_scheme}://{self._normalize_netloc(got.netloc, got_scheme)}"
             return got_origin == self._expected_origin()
 
         # ----------------------------------------------------------- cookies
@@ -204,10 +209,8 @@ def make_handler(cfg: Config, service: PasteService, sessions: SessionStore,
             self.send_header("Content-Type", ctype)
             self.send_header("Content-Length", str(len(body)))
             self.send_header("Cache-Control", cache_control)
-            for key, value in _SECURITY_HEADERS:
+            for key, value in self._security_headers():
                 self.send_header(key, value)
-            if self._scheme() == "https":
-                self.send_header("Strict-Transport-Security", "max-age=31536000")
             for key, value in extra_headers or []:
                 self.send_header(key, value)
             self.end_headers()
@@ -221,6 +224,12 @@ def make_handler(cfg: Config, service: PasteService, sessions: SessionStore,
                 (time.monotonic() - getattr(self, "_t_start", time.monotonic())) * 1000,
                 self._client_ip(),
             )
+
+        def _security_headers(self) -> tuple[tuple[str, str], ...]:
+            headers = list(_SECURITY_HEADERS)
+            if self._scheme() == "https":
+                headers.append(("Strict-Transport-Security", "max-age=31536000"))
+            return tuple(headers)
 
         def _json(self, status: int, payload: dict, **kwargs) -> None:
             body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
@@ -239,7 +248,7 @@ def make_handler(cfg: Config, service: PasteService, sessions: SessionStore,
 
         # ------------------------------------------------------------- lecture
 
-        def _read_body(self) -> bytes:
+        def _read_body(self, max_bytes: int | None = None) -> bytes:
             if "chunked" in (self.headers.get("Transfer-Encoding") or "").lower():
                 self.close_connection = True
                 raise BodyTooLarge()  # traité comme 411 côté appelant
@@ -252,7 +261,8 @@ def make_handler(cfg: Config, service: PasteService, sessions: SessionStore,
                 raise ClientAbort()
             if length < 0:
                 raise ClientAbort()
-            if length > cfg.max_upload_bytes:
+            limit = cfg.max_upload_bytes if max_bytes is None else max_bytes
+            if length > limit:
                 self.close_connection = True
                 raise BodyTooLarge()
             chunks: list[bytes] = []
@@ -372,7 +382,7 @@ def make_handler(cfg: Config, service: PasteService, sessions: SessionStore,
             self.send_header("Location", location)
             self.send_header("Content-Length", "0")
             self.send_header("Cache-Control", "no-store")
-            for key, value in _SECURITY_HEADERS:
+            for key, value in self._security_headers():
                 self.send_header(key, value)
             self.end_headers()
             log.info("%s %s -> %d redirect %s", self.command, self.path, status, location)
@@ -407,7 +417,7 @@ def make_handler(cfg: Config, service: PasteService, sessions: SessionStore,
                 self._redirect("/")
                 return
             ip = self._client_ip()
-            retry_after = limiter.retry_after(ip)
+            retry_after = limiter.acquire(ip)
             if retry_after > 0:
                 self._json(
                     429,
@@ -417,43 +427,55 @@ def make_handler(cfg: Config, service: PasteService, sessions: SessionStore,
                 )
                 return
             try:
-                body = self._read_body()
+                body = self._read_body(16 * 1024)
             except BodyTooLarge:
                 self.close_connection = True
-                self._error(411, "invalid_request", "corps de requête invalide")
+                self._error(413, "too_large", "corps de login trop grand")
+                limiter.release(ip)
                 return
             except ClientAbort:
+                limiter.release(ip)
                 raise
-            password = ""
-            ctype = (self.headers.get("Content-Type") or "").lower()
-            if "multipart/form-data" in ctype:
-                boundary = extract_boundary(self.headers.get("Content-Type", ""))
-                try:
-                    fields = parse_multipart(body, boundary or "")
-                except MultipartError:
-                    password = ""
+            try:
+                password = ""
+                ctype = (self.headers.get("Content-Type") or "").lower()
+                if "multipart/form-data" in ctype:
+                    boundary = extract_boundary(self.headers.get("Content-Type", ""))
+                    try:
+                        fields = parse_multipart(body, boundary or "")
+                    except MultipartError:
+                        password = ""
+                    else:
+                        _, _, raw = fields.get("password", (None, None, b""))
+                        password = (raw or b"").decode("utf-8", "replace")
+                elif "application/json" in ctype:
+                    try:
+                        parsed = json.loads(body.decode("utf-8"))
+                        password = str(parsed.get("password", "")) if isinstance(parsed, dict) else ""
+                    except (ValueError, AttributeError):
+                        password = ""
                 else:
-                    _, _, raw = next(iter(fields.values()))
-                    password = (raw or b"").decode("utf-8", "replace")
-            elif "application/json" in ctype:
-                try:
-                    password = str(json.loads(body.decode("utf-8")).get("password", ""))
-                except (ValueError, AttributeError):
-                    password = ""
-            else:
-                values = urllib.parse.parse_qs(body.decode("utf-8", "replace"))
-                password = values.get("password", [""])[0]
+                    try:
+                        values = urllib.parse.parse_qs(
+                            body.decode("utf-8", "replace"),
+                            max_num_fields=8,
+                        )
+                    except ValueError:
+                        values = {}
+                    password = values.get("password", [""])[0]
 
-            stored_hash = load_password_hash(cfg.password_file())
-            if password and verify_password(password, stored_hash):
-                limiter.register_success(ip)
-                log.info("connexion réussie (%s)", ip)
-                self._do_login_success()
-            else:
-                time.sleep(0.5)
-                limiter.register_failure(ip)
-                log.warning("échec de connexion (%s)", ip)
-                self._render_login(401, "Mot de passe incorrect.")
+                stored_hash = load_password_hash(cfg.password_file())
+                if password and verify_password(password, stored_hash):
+                    limiter.register_success(ip)
+                    log.info("connexion réussie (%s)", ip)
+                    self._do_login_success()
+                else:
+                    time.sleep(0.5)
+                    limiter.register_failure(ip)
+                    log.warning("échec de connexion (%s)", ip)
+                    self._render_login(401, "Mot de passe incorrect.")
+            finally:
+                limiter.release(ip)
 
         # Connexion réussie : redirection + cookie de session sur la même réponse.
         def _do_login_success(self) -> None:
@@ -463,7 +485,7 @@ def make_handler(cfg: Config, service: PasteService, sessions: SessionStore,
             self.send_header("Set-Cookie", self._session_cookie(token))
             self.send_header("Content-Length", "0")
             self.send_header("Cache-Control", "no-store")
-            for key, value in _SECURITY_HEADERS:
+            for key, value in self._security_headers():
                 self.send_header(key, value)
             self.end_headers()
 
@@ -474,15 +496,9 @@ def make_handler(cfg: Config, service: PasteService, sessions: SessionStore,
             self.send_header("Set-Cookie", self._clear_cookie())
             self.send_header("Content-Length", "0")
             self.send_header("Cache-Control", "no-store")
-            for key, value in _SECURITY_HEADERS:
+            for key, value in self._security_headers():
                 self.send_header(key, value)
             self.end_headers()
-
-        def _h_logout_get(self) -> None:
-            if cfg.auth.enabled and not self._is_authenticated():
-                self._redirect("/login")
-                return
-            self._h_logout()
 
         # ---------------------------------------------------------------- API
 

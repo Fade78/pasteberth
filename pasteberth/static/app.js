@@ -16,9 +16,11 @@
     authEnabled: true,
     offline: false,
     retryTimer: null,
-    pollTimer: null,
     toastTimer: null,
   };
+
+  let refreshGeneration = 0;
+  let activeRefreshController = null;
 
   const grid = document.getElementById("grid");
   const statusEl = document.getElementById("status");
@@ -40,10 +42,30 @@
     ];
   }
 
-  function readableFg(hex) {
+  function relativeChannel(value) {
+    const channel = value / 255;
+    return channel <= 0.04045
+      ? channel / 12.92
+      : Math.pow((channel + 0.055) / 1.055, 2.4);
+  }
+
+  function luminance(hex) {
     const [r, g, b] = hexToRgb(hex);
-    const yiq = (r * 299 + g * 587 + b * 114) / 1000;
-    return yiq >= 150 ? "#12161b" : "#f3f6fa";
+    return 0.2126 * relativeChannel(r)
+      + 0.7152 * relativeChannel(g)
+      + 0.0722 * relativeChannel(b);
+  }
+
+  function contrastRatio(background, foreground) {
+    const a = luminance(background);
+    const b = luminance(foreground);
+    return (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05);
+  }
+
+  function readableFg(hex) {
+    const dark = "#12161b";
+    const light = "#f3f6fa";
+    return contrastRatio(hex, dark) >= contrastRatio(hex, light) ? dark : light;
   }
 
   function rgba(hex, alpha) {
@@ -79,8 +101,11 @@
   async function api(path, options) {
     let res;
     try {
-      res = await fetch(path, Object.assign({ headers: { Accept: "application/json" } }, options));
+      const requestOptions = Object.assign({}, options || {});
+      requestOptions.headers = Object.assign({ Accept: "application/json" }, requestOptions.headers || {});
+      res = await fetch(path, requestOptions);
     } catch (err) {
+      if (err && err.name === "AbortError") throw err;
       throw new Error("réseau injoignable");
     }
     if (res.status === 401 && state.authEnabled) {
@@ -156,12 +181,18 @@
 
     const head = document.createElement("header");
     head.className = "zone-head";
-    head.innerHTML =
+    const select = document.createElement("button");
+    select.type = "button";
+    select.className = "zone-select";
+    select.setAttribute("aria-pressed", String(zone.id === state.activeId));
+    select.setAttribute("aria-label", `Sélectionner la zone ${zone.label}`);
+    select.innerHTML =
       '<span class="zone-marker" aria-hidden="true"></span>' +
-      '<h2 class="zone-label"></h2>' +
+      '<span class="zone-label"></span>' +
       '<span class="zone-count"></span>';
-    head.querySelector(".zone-label").textContent = zone.label;
-    head.querySelector(".zone-count").textContent = `${zone.images.length} / ${zone.retain}`;
+    select.querySelector(".zone-label").textContent = zone.label;
+    select.querySelector(".zone-count").textContent = `${zone.images.length} / ${zone.retain}`;
+    head.appendChild(select);
     el.appendChild(head);
 
     if (zone.images.length === 0) {
@@ -201,6 +232,9 @@
     img.src = item.preview_url;
     img.alt = "dernière image";
     img.loading = "lazy";
+    img.tabIndex = 0;
+    img.setAttribute("role", "button");
+    img.setAttribute("aria-label", "Ouvrir l'aperçu de la dernière image");
     const right = document.createElement("div");
     right.className = "latest-right";
     right.appendChild(itemMeta(item));
@@ -248,9 +282,15 @@
 
   function setActive(zoneId, { announce = false } = {}) {
     state.activeId = zoneId;
-    try { localStorage.setItem("pb.activeZone", zoneId); } catch (_) {}
+    try {
+      if (zoneId) localStorage.setItem("pb.activeZone", zoneId);
+      else localStorage.removeItem("pb.activeZone");
+    } catch (_) {}
     for (const el of grid.querySelectorAll(".zone")) {
-      el.classList.toggle("active", el.dataset.zone === zoneId);
+      const active = el.dataset.zone === zoneId;
+      el.classList.toggle("active", active);
+      const select = el.querySelector(".zone-select");
+      if (select) select.setAttribute("aria-pressed", String(active));
     }
     if (announce) {
       const zone = state.zones.find(z => z.id === zoneId);
@@ -261,25 +301,37 @@
   // ------------------------------------------------------------- données
 
   async function refresh() {
-    const overview = await api("/api/zones");
-    state.authEnabled = overview.auth_enabled !== false;
-    logoutForm.hidden = !state.authEnabled;
+    const generation = ++refreshGeneration;
+    if (activeRefreshController) activeRefreshController.abort();
+    const controller = new AbortController();
+    activeRefreshController = controller;
+    try {
+      const overview = await api("/api/zones", { signal: controller.signal });
+      const nextZones = [];
+      for (const z of overview.zones) {
+        const data = await api(
+          `/api/zones/${encodeURIComponent(z.id)}/images`,
+          { signal: controller.signal },
+        );
+        nextZones.push(Object.assign({}, z, { images: data.images }));
+      }
+      if (generation !== refreshGeneration) return;
 
-    const previous = new Map(state.zones.map(z => [z.id, z]));
-    state.zones = [];
-    for (const z of overview.zones) {
-      const data = await api(`/api/zones/${encodeURIComponent(z.id)}/images`);
-      state.zones.push(Object.assign({}, z, { images: data.images }));
+      state.authEnabled = overview.auth_enabled !== false;
+      logoutForm.hidden = !state.authEnabled;
+      state.zones = nextZones;
+      renderAll();
+
+      let stored = null;
+      try { stored = localStorage.getItem("pb.activeZone"); } catch (_) {}
+      if (stored && state.zones.some(z => z.id === stored)) setActive(stored);
+      else if (state.zones.length === 1) setActive(state.zones[0].id);
+      else setActive(null);
+
+      setOnline(true);
+    } finally {
+      if (activeRefreshController === controller) activeRefreshController = null;
     }
-    renderAll();
-
-    let stored = null;
-    try { stored = localStorage.getItem("pb.activeZone"); } catch (_) {}
-    if (stored && state.zones.some(z => z.id === stored)) setActive(stored);
-    else if (state.zones.length === 1) setActive(state.zones[0].id);
-    else setActive(null);
-
-    setOnline(true);
   }
 
   function setOnline(ok, message) {
@@ -301,6 +353,7 @@
     try {
       await refresh();
     } catch (err) {
+      if (err && err.name === "AbortError") return;
       if (!silent) renderAll();
       if (err.message === "réseau injoignable") scheduleRetry();
       else if (!silent) toast(err.message, "error");
@@ -317,11 +370,15 @@
     }
     const zoneEl = grid.querySelector(`[data-zone="${CSS.escape(zoneId)}"]`);
     if (zoneEl) zoneEl.classList.add("busy");
+    refreshGeneration += 1;
+    if (activeRefreshController) activeRefreshController.abort();
     try {
       const fd = new FormData();
       fd.append("image", file, "clipboard.png"); // nom ignoré par le serveur
       const item = await api(`/api/zones/${encodeURIComponent(zoneId)}/images`,
         { method: "POST", body: fd });
+      refreshGeneration += 1;
+      if (activeRefreshController) activeRefreshController.abort();
       const zone = state.zones.find(z => z.id === zoneId);
       if (zone) {
         zone.images.unshift(item);
@@ -333,6 +390,7 @@
       writeClipboard(item.reference).then(ok => { if (ok) toast("Référence copiée"); });
     } catch (err) {
       if (err.status === 413) toast("Image trop grande pour ce serveur", "error");
+      else if (err.status === 507) toast("Espace disque insuffisant pour cet upload", "error");
       else toast(err.message, "error");
     } finally {
       if (zoneEl) zoneEl.classList.remove("busy");
@@ -393,6 +451,25 @@
     }
     const zoneCard = event.target.closest(".zone");
     if (zoneCard) setActive(zoneCard.dataset.zone, { announce: true });
+  });
+
+  grid.addEventListener("keydown", (event) => {
+    if (event.key !== "Enter" && event.key !== " ") return;
+    const bigThumb = event.target.closest(".thumb-big");
+    if (bigThumb) {
+      event.preventDefault();
+      const zoneEl = bigThumb.closest(".zone");
+      const zone = state.zones.find(z => z.id === zoneEl.dataset.zone);
+      if (zone && zone.images[0]) openPreview(zone.images[0].preview_url, zone.images[0].reference);
+      return;
+    }
+    const zoneSelect = event.target.closest(".zone-select");
+    if (zoneSelect) return;
+    const zoneCard = event.target.closest(".zone");
+    if (zoneCard && event.target === zoneCard) {
+      event.preventDefault();
+      setActive(zoneCard.dataset.zone, { announce: true });
+    }
   });
 
   grid.addEventListener("dragover", (event) => {

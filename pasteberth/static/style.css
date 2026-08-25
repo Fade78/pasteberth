@@ -140,11 +140,24 @@ code, kbd {
 }
 
 .zone-head {
+  color: var(--fg);
+}
+
+.zone-select {
   display: flex;
   align-items: baseline;
   gap: 0.55rem;
-  color: var(--fg);
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
 }
+
+.zone-select:hover { color: var(--fg); }
 
 .zone-marker {
   width: 10px;
@@ -254,6 +267,8 @@ code, kbd {
 
 .copy-btn:focus-visible,
 .thumb-wrap:focus-visible,
+.zone-select:focus-visible,
+.thumb-big:focus-visible,
 .ghost-btn:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
@@ -365,6 +380,11 @@ dialog#pv::backdrop { background: rgba(4, 6, 9, 0.66); }
   padding: 0.4rem 1rem 1rem;
   color: var(--muted);
   font-size: 0.76rem;
+}
+
+.zone-select:focus-visible,
+.thumb-big:focus-visible {
+  border-radius: 5px;
 }
 
 kbd {

@@ -1,0 +1,25 @@
+image: python:3.11-slim
+
+stages:
+  - test
+
+tests:
+  stage: test
+  script:
+    - python3 -m unittest discover -s tests -v
+
+browser:
+  stage: test
+  image: mcr.microsoft.com/playwright:v1.58.0-noble
+  before_script:
+    - apt-get update
+    - apt-get install -y --no-install-recommends python3
+    - npm ci
+  script:
+    - npm run test:e2e
+  artifacts:
+    when: always
+    paths:
+      - test-results/
+    reports:
+      junit: test-results/e2e-junit.xml

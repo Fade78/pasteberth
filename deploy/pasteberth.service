@@ -10,6 +10,8 @@ Type=simple
 ExecStart=%h/.local/bin/pasteberth serve
 Restart=on-failure
 RestartSec=2
+TimeoutStopSec=90
+UMask=0077
 
 # Durcissement sans risque pour un service utilisateur :
 NoNewPrivileges=true

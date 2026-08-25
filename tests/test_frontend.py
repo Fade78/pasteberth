@@ -45,8 +45,10 @@ class TestContratsFrontend(unittest.TestCase):
         self.assertIn("classList.toggle(\"active\"", self.app_js)
 
     def test_contraste_calcule(self):
-        # luminance YIQ -> texte lisible automatique sur fond configuré
-        self.assertIn("yiq", self.app_js.lower())
+        # luminance relative WCAG -> meilleur premier-plan automatique
+        self.assertIn("relativeChannel", self.app_js)
+        self.assertIn("contrastRatio", self.app_js)
+        self.assertIn("Math.pow", self.app_js)
 
     def test_prete_pour_repetition(self):
         # après upload : re-rendu de la zone uniquement, pas de reload global
@@ -61,6 +63,13 @@ class TestContratsFrontend(unittest.TestCase):
         self.assertIn("@media", self.style_css)
         self.assertIn("<dialog", self.index_html)
         self.assertIn("auto-fit", self.style_css)
+        self.assertNotIn('aria-live="polite"', self.index_html)
+
+    def test_refresh_ordonne_et_actions_clavier(self):
+        self.assertIn("AbortController", self.app_js)
+        self.assertIn("refreshGeneration", self.app_js)
+        self.assertIn("zone-select", self.app_js)
+        self.assertIn('tabIndex = 0', self.app_js)
 
     def test_raccourcis_clavier(self):
         self.assertIn('event.key === "c"', self.app_js)

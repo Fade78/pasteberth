@@ -1,0 +1,11 @@
+{
+  "name": "pasteberth-browser-tests",
+  "private": true,
+  "scripts": {
+    "test:all": "python3 tests/run_all.py",
+    "test:e2e": "playwright test"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.58.0"
+  }
+}

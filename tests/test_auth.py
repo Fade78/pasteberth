@@ -10,6 +10,7 @@ from pasteberth.auth import (
     hash_password,
     load_password_hash,
     save_password_hash,
+    valid_password_hash,
     verify_password,
 )
 
@@ -42,6 +43,19 @@ class TestHash(unittest.TestCase):
             loaded = load_password_hash(path)
             self.assertTrue(verify_password(PASSWORD, loaded))
             self.assertIsNone(load_password_hash(Path(tmp) / "absent"))
+
+    def test_changement_corrige_un_mode_trop_ouvert(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "passwd"
+            save_password_hash(path, hash_password(PASSWORD))
+            path.chmod(0o644)
+            save_password_hash(path, hash_password("nouveau mot de passe long"))
+            self.assertEqual(path.stat().st_mode & 0o777, 0o600)
+
+    def test_validation_structurelle_sans_scrypt(self):
+        stored = hash_password(PASSWORD)
+        self.assertTrue(valid_password_hash(stored))
+        self.assertFalse(valid_password_hash("scrypt$1$1$1$bad$bad"))
 
 
 class TestSessions(unittest.TestCase):
@@ -98,6 +112,15 @@ class TestRateLimiter(unittest.TestCase):
         for _ in range(8):
             limiter.register_failure("1.1.1.1")
         self.assertEqual(limiter.retry_after("2.2.2.2"), 0.0)
+
+    def test_une_seule_verification_couteuse_en_vol(self):
+        limiter = LoginRateLimiter()
+        ip = "10.2.2.2"
+        self.assertEqual(limiter.acquire(ip), 0.0)
+        self.assertGreater(limiter.acquire(ip), 0.0)
+        limiter.release(ip)
+        limiter.register_failure(ip)
+        self.assertEqual(limiter.acquire(ip), 0.0)
 
 
 if __name__ == "__main__":

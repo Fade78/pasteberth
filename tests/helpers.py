@@ -60,9 +60,8 @@ def make_jpeg(
     out += b"\xff\xdb" + struct.pack(">H", len(dqt) + 2) + dqt
     sof = struct.pack(">BHHB", 8, height, width, 1) + bytes([1, 0x11, 0])
     out += bytes([0xFF, sof_marker]) + struct.pack(">H", len(sof) + 2) + sof
-    if not progressive:
-        sos = bytes([1, 1, 0x00, 0, 63, 0])
-        out += b"\xff\xda" + struct.pack(">H", len(sos) + 2) + sos + b"\x00" * 8
+    sos = bytes([1, 1, 0x00, 0, 63, 0])
+    out += b"\xff\xda" + struct.pack(">H", len(sos) + 2) + sos + b"\x00" * 8
     out += b"\xff\xd9"
     return bytes(out)
 
@@ -124,9 +123,12 @@ def write_config(
     auth_enabled: bool = False,
     listen_address: str = "127.0.0.1",
     port: int | None = None,
-    max_upload_size: str = "20MB",
-    trusted_proxies: str = '["127.0.0.1", "::1"]',
+    max_upload_size: str = "20MiB",
+    max_image_pixels: int | None = None,
+    trusted_proxies: str | None = '["127.0.0.1", "::1"]',
+    allow_unauthenticated_local: bool | None = True,
     allow_unauthenticated_remote: bool | None = None,
+    min_free_percent: float | None = None,
     extra: str = "",
     password: str | None = None,
 ) -> Path:
@@ -142,7 +144,14 @@ def write_config(
     if port is not None:
         lines.append(f"port = {port}")
     lines.append(f'max_upload_size = "{max_upload_size}"')
-    lines.append(f"trusted_proxies = {trusted_proxies}")
+    if max_image_pixels is not None:
+        lines.append(f"max_image_pixels = {max_image_pixels}")
+    if trusted_proxies is not None:
+        lines.append(f"trusted_proxies = {trusted_proxies}")
+    if allow_unauthenticated_local is not None:
+        lines.append(
+            f"allow_unauthenticated_local = {str(allow_unauthenticated_local).lower()}"
+        )
     if allow_unauthenticated_remote is not None:
         lines.append(f"allow_unauthenticated_remote = {str(allow_unauthenticated_remote).lower()}")
     lines.append('log_level = "WARNING"')
@@ -159,6 +168,9 @@ def write_config(
         lines.append(f'retain = {zone.get("retain", 3)}')
         lines.append('reference_prefix = "@"')
         lines.append(f'color = "{zone.get("color", "#243447")}"')
+        zone_min_free = zone.get("min_free_percent", min_free_percent)
+        if zone_min_free is not None:
+            lines.append(f"min_free_percent = {zone_min_free}")
         lines.append("")
     text = "\n".join(lines) + extra
     cfg_path = tmp / "config.toml"

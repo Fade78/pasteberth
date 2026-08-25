@@ -50,7 +50,7 @@ celui que voit OpenCode, sur la machine où tourne Pasteberth.
   Glisser-déposer directement sur une carte fonctionne aussi.
 - **Rétention circulaire par zone** (`retain = N`) : au-delà de N images,
   les plus anciennes sont supprimées — uniquement des fichiers créés par
-  Pasteberth (preuve de paternité par sidecar JSON).
+  Pasteberth dans un répertoire privé (preuve de paternité par sidecar JSON).
 - **Référence exacte** : le serveur construit et retourne la référence ;
   le frontend la copie telle quelle (`navigator.clipboard.writeText`,
   repli `execCommand`), sans jamais reconstruire le chemin côté client.
@@ -86,16 +86,28 @@ Fichier : `~/.config/pasteberth/config.toml`
 |---|---|---|
 | `listen_address` | `"127.0.0.1"` | écoute ; non-loopback exige l'auth |
 | `port` | `8765` | port TCP |
-| `max_upload_size` | `"20MB"` | plafond par upload (KB/MiB/GB acceptés) |
+| `max_upload_size` | `"20MiB"` | plafond par upload (20 MiB par défaut, 50 MiB maximum) |
+| `max_image_pixels` | `25000000` | budget de décodage (25 MP par défaut, 50 MP maximum) |
 | `trusted_proxies` | loopback | seuls ces pairs peuvent poser `X-Forwarded-*` |
+| `allow_unauthenticated_local` | `false` | opt-in explicite pour le mode anonyme loopback/proxy |
 | `allow_unauthenticated_remote` | `false` | déverrouillage explicite (déconseillé) |
 | `log_level` | `"INFO"` | DEBUG/INFO/WARNING/ERROR |
-| `[auth] enabled` | `false` | protection par mot de passe |
+| `[auth] enabled` | `true` | protection par mot de passe |
 | `[auth] session_ttl_hours` | `72` | durée des sessions serveur |
-| `[[zones]] …` | — | `id`, `label`, `type=local`, `directory`, `retain`, `reference_prefix`, `color` (#RRGGBB), `create_directory` |
+| `[[zones]] …` | — | `id`, `label`, `type=local`, `directory`, `retain`, `reference_prefix`, `color` (#RRGGBB), `create_directory`, `min_free_percent` |
 
 `directory` est un chemin **absolu vu par le serveur** — c'est là
 qu'OpenCode lit les images, pas votre navigateur.
+
+Les zones doivent être des répertoires cibles distincts et privés (`0700`). Chaque
+zone refuse un nouvel upload si l'espace libre prévu après écriture passerait
+sous `min_free_percent` (défaut `2.0`). La mesure porte sur le filesystem du
+répertoire, pas sur le seul dossier ; plusieurs zones peuvent donc partager un
+filesystem, mais elles partagent alors aussi sa réserve d'espace.
+
+Les images sont limitées à `16 384 × 16 384` pixels et `25 MP` par défaut,
+ce qui couvre les écrans 4K à 6K usuels. Les images 8K dépassant `25 MP`
+nécessitent une extension explicite du budget.
 
 ## Mot de passe
 
@@ -108,6 +120,8 @@ Le mot de passe n'est jamais stocké en clair ni écrit dans config.toml ;
 le hash est vérifié avec `hashlib.scrypt` + comparaison en temps constant.
 Un changement est effectif immédiatement (rechargé à chaque tentative),
 sans redémarrer le service.
+Le serveur refuse de démarrer si l'authentification est activée sans fichier
+`passwd` lisible et valide.
 
 ## Lancement & service systemd
 
@@ -119,8 +133,18 @@ journalctl --user -u pasteberth -f        # logs
 
 L'unité fournie (`deploy/pasteberth.service`) ne nécessite aucun root.
 Un refus de démarrage protège contre l'exposition accidentelle :
-**écoute non-loopback + auth désactivée = arrêt avec message explicite**
-(déroutable uniquement via `allow_unauthenticated_remote = true`).
+**auth désactivée sans opt-in explicite = arrêt avec message explicite**
+(`allow_unauthenticated_local` ou `allow_unauthenticated_remote` selon le cas).
+
+Pour que le service utilisateur survive à la dernière déconnexion et démarre
+au boot, activez le linger pour le compte concerné :
+
+```sh
+loginctl enable-linger "$USER"
+```
+
+Cette option maintient un gestionnaire systemd utilisateur actif même sans
+session interactive ; activez-la seulement si cette persistance est souhaitée.
 
 ## HTTPS & reverse proxy
 
@@ -191,14 +215,19 @@ curl -b cookies.txt -F image=@capture.png \
 
 Formats : PNG, JPEG, WebP — déterminés par le **contenu** (magic bytes +
 structure), jamais par le MIME déclaré. Refus : vide, trop grand, format
-inconnu, image corrompue. Les noms sont générés côté serveur
+inconnu, conteneur incomplet ou image corrompue. Les noms sont générés côté serveur
 (`AAAA-MM-JJ_HH-MM-SS_<6 hex>.ext`, création `O_EXCL` : zéro écrasement).
+Un espace libre sous le seuil renvoie `507 storage_low`. Une erreur de
+rétention renvoie `503 retention_error` après la création de l'image ; le
+client doit donc recharger l'historique avant de retenter aveuglément.
 
 ## Sécurité
 
 - Mots de passe : scrypt salé (N=16384), comparaison temps constant,
   fichier 0600 hors dépôt ; temporisation + verrouillage progressif par IP
   (honorant XFF seulement via proxy de confiance).
+- Les requêtes de login sont limitées à 16 KiB et les requêtes simultanées sont
+  bornées ; les uploads sont limités à 20 MiB par défaut et 50 MiB au maximum.
 - Sessions côté serveur, révocables (logout effectif), token 256 bits,
   cookie `HttpOnly; SameSite=Lax` + `Secure` dès que le schéma effectif
   est HTTPS.
@@ -211,21 +240,32 @@ inconnu, image corrompue. Les noms sont générés côté serveur
 - Seuls les fichiers dotés d'un sidecar Pasteberth peuvent être lus ou
   supprimés ; vos fichiers personnels dans les répertoires cibles ne sont
   jamais touchés.
+- Répertoires privés (`0700`), images/sidecars privés (`0600`), liens
+  symboliques refusés et réconciliation des temporaires après crash.
+- Validation structurelle complète des PNG/JPEG/WebP, budget de dimensions et
+  de pixels, et refus des conteneurs tronqués.
 - Rétention sous verrou par zone : ordre déterministe, uploads concurrents
   sûrs (tests dédiés).
 
 ## Tests
 
 ```sh
-python3 -m unittest discover -s tests -v
+npm ci
+npm run test:all              # Python + navigateur en parallèle
+# ciblé : python3 -m unittest discover -s tests -v
+# ciblé : npm run test:e2e
 ```
 
-139 tests : validation images (PNG/JPEG/WebP, corruption, spoofing),
+La suite couvre : validation images (PNG/JPEG/WebP, corruption, spoofing),
 configuration & politique de démarrage, stockage/rétention/ownership,
 auth/sessions/anti-bruteforce, parser multipart, intégration HTTP complète
 (auth, CSRF/Origin, proxys, en-têtes, fuite de secret), concurrence
 (uploads parallèles même/multi zones, lecteurs pendant écritures),
-CLI (passwd, refus de configuration dangereuse), contrats frontend.
+CLI (passwd, refus de configuration dangereuse), contrats frontend, et quatre
+scénarios navigateur Playwright sur un serveur Pasteberth réel : chargement et
+sélection clavier, collage sans zone, upload/aperçu et glisser-déposer.
+Les tests navigateur utilisent Chromium par défaut ; `E2E_BROWSER=firefox` est
+disponible si le navigateur Playwright correspondant est installé.
 
 ## Limitations & V2
 

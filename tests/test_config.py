@@ -1,6 +1,7 @@
 """Tests de configuration : parsing, validation, politique de sécurité."""
 import tempfile
 import unittest
+import os
 from pathlib import Path
 
 from pasteberth.config import (
@@ -9,6 +10,7 @@ from pasteberth.config import (
     default_config_path,
     is_loopback_address,
     load_config,
+    prepare_directories,
     parse_size,
     resolve_config_path,
 )
@@ -64,6 +66,21 @@ class TestParsing(unittest.TestCase):
         self.assertEqual(set(cfg.zones), {"pulse", "lwp"})
         self.assertEqual(cfg.zones["pulse"].reference_prefix, "@")
         self.assertTrue(cfg.zones["pulse"].create_directory)
+        self.assertEqual(cfg.zones["pulse"].min_free_percent, 2.0)
+
+    def test_defauts_reels_auth_et_proxy(self):
+        path = self.tmp / "minimal.toml"
+        path.write_text(
+            f'listen_address = "127.0.0.1"\n'
+            f'[[zones]]\n'
+            f'id = "one"\n'
+            f'directory = "{self.tmp / "one"}"\n',
+            encoding="utf-8",
+        )
+        cfg = load_config(path)
+        self.assertTrue(cfg.auth.enabled)
+        self.assertEqual(str(cfg.trusted_proxies[0]), "127.0.0.1/32")
+        self.assertEqual(str(cfg.trusted_proxies[1]), "::1/128")
 
     def test_zones_chargees(self):
         zones = [
@@ -102,6 +119,7 @@ class TestParsing(unittest.TestCase):
             {"id": "Mauvais", "directory": "/tmp/x"},          # id invalide
             {"id": "ok", "directory": "relatif/path"},         # chemin relatif
             {"id": "ok2", "directory": "/tmp/x", "color": "red"},
+            {"id": "ok5", "directory": "/tmp/x", "color": "#777777"},
             {"id": "ok3", "directory": "/tmp/x", "retain": 0},
             {"id": "ok4", "directory": "/tmp/x", "type": "ssh"},
         ]
@@ -120,6 +138,24 @@ class TestParsing(unittest.TestCase):
         with self.assertRaises(ConfigError):
             make_cfg(self.tmp, port=99999)
 
+    def test_upload_trop_grand(self):
+        with self.assertRaises(ConfigError):
+            make_cfg(self.tmp, max_upload_size="51MiB")
+
+    def test_budget_pixels_borne(self):
+        cfg = make_cfg(self.tmp, max_image_pixels=50_000_000)
+        self.assertEqual(cfg.max_image_pixels, 50_000_000)
+        with self.assertRaises(ConfigError):
+            make_cfg(self.tmp, max_image_pixels=50_000_001)
+
+    def test_seuil_espace_invalide(self):
+        with self.assertRaises(ConfigError):
+            make_cfg(
+                self.tmp,
+                zones=[{"id": "x", "directory": str(self.tmp / "x"),
+                        "min_free_percent": 100}],
+            )
+
 
 class TestPolitiqueSecurite(unittest.TestCase):
     def setUp(self):
@@ -135,6 +171,14 @@ class TestPolitiqueSecurite(unittest.TestCase):
     def test_accepte_loopback_sans_auth(self):
         cfg = make_cfg(self.tmp, listen_address="127.0.0.1", auth_enabled=False)
         check_startup_policy(cfg)
+
+    def test_refuse_loopback_sans_optin(self):
+        with self.assertRaises(ConfigError):
+            make_cfg(
+                self.tmp,
+                auth_enabled=False,
+                allow_unauthenticated_local=None,
+            )
 
     def test_accepte_remote_avec_auth(self):
         cfg = make_cfg(self.tmp, listen_address="0.0.0.0", auth_enabled=True)
@@ -168,6 +212,37 @@ class TestChemins(unittest.TestCase):
                 del os.environ["PASTEBERTH_CONFIG"]
             else:
                 os.environ["PASTEBERTH_CONFIG"] = old
+
+
+class TestRepertoires(unittest.TestCase):
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.tmp = Path(self._tmp.name)
+        self.addCleanup(self._tmp.cleanup)
+
+    def test_zones_meme_repertoire_refusees(self):
+        shared = self.tmp / "shared"
+        cfg = load_config(
+            write_config(
+                self.tmp,
+                zones=[
+                    {"id": "a", "directory": str(shared)},
+                    {"id": "b", "directory": str(shared)},
+                ],
+            )
+        )
+        with self.assertRaises(ConfigError):
+            prepare_directories(cfg)
+
+    def test_repertoire_permissions_trop_ouvertes(self):
+        target = self.tmp / "open"
+        target.mkdir(mode=0o755)
+        os.chmod(target, 0o755)
+        cfg = load_config(
+            write_config(self.tmp, zones=[{"id": "x", "directory": str(target)}])
+        )
+        with self.assertRaises(ConfigError):
+            prepare_directories(cfg)
 
 
 if __name__ == "__main__":

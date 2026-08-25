@@ -56,11 +56,16 @@ class TestWebp(unittest.TestCase):
         info = inspect_image(make_webp_vp8x(3000, 2000))
         self.assertEqual((info.fmt, info.width, info.height), ("webp", 3000, 2000))
 
-    def test_truncated_payload_tolerated_for_header(self):
+    def test_budget_pixels(self):
+        with self.assertRaises(InvalidImageError):
+            inspect_image(make_webp_vp8x(6000, 5000))
+        info = inspect_image(make_webp_vp8x(6000, 5000), max_pixels=50_000_000)
+        self.assertEqual((info.width, info.height), (6000, 5000))
+
+    def test_truncated_payload_rejected(self):
         data = make_webp_vp8l(50, 40)
-        # coupe l'octet de padding, garde signature + 4 octets de dimensions
-        info = inspect_image(data[:-1])
-        self.assertEqual((info.width, info.height), (50, 40))
+        with self.assertRaises(InvalidImageError):
+            inspect_image(data[:-1])
 
 
 class TestRejets(unittest.TestCase):

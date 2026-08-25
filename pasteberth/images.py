@@ -1,16 +1,18 @@
 """Validation structurelle des images : PNG, JPEG, WebP.
 
-Principe : on ne décode jamais les pixels (pas de surface d'attaque de
-décodeur). On vérifie la signature, la structure minimale des en-têtes et on
-extrait les dimensions. Le format retenu est déterminé par le CONTENU,
-jamais par le Content-Type déclaré par le client.
+Le serveur ne décode pas les pixels. Il vérifie toutefois les conteneurs
+complets et impose un budget de pixels afin de limiter les décodages côté
+navigateur/harness lors de l'affichage des previews.
 """
 from __future__ import annotations
 
+import binascii
 import struct
 from dataclasses import dataclass
 
-MAX_DIMENSION = 100_000
+MAX_DIMENSION = 16_384
+MAX_PIXELS = 25_000_000
+HARD_MAX_PIXELS = 50_000_000
 
 # Formats acceptés -> (extension, MIME)
 FORMATS: dict[str, tuple[str, str]] = {
@@ -38,23 +40,67 @@ class ImageInfo:
     height: int
 
 
-def _check_dims(width: int, height: int, fmt: str) -> ImageInfo:
+def _check_dims(width: int, height: int, fmt: str, max_pixels: int) -> ImageInfo:
     if not (1 <= width <= MAX_DIMENSION and 1 <= height <= MAX_DIMENSION):
         raise InvalidImageError(
             "invalid_image",
             f"dimensions {fmt} irréalistes : {width}x{height}",
         )
+    if width * height > max_pixels:
+        raise InvalidImageError(
+            "invalid_image",
+            f"image {fmt} trop grande à décoder : {width}x{height} "
+            f"(maximum {max_pixels} pixels)",
+        )
     return ImageInfo(fmt=fmt, width=width, height=height)
 
 
-def _parse_png(data: bytes) -> ImageInfo:
-    if len(data) < 24 or not data.startswith(b"\x89PNG\r\n\x1a\n"):
+def _parse_png(data: bytes, max_pixels: int) -> ImageInfo:
+    signature = b"\x89PNG\r\n\x1a\n"
+    if len(data) < len(signature) or not data.startswith(signature):
         raise InvalidImageError("invalid_image", "signature PNG absente")
-    chunk_len = struct.unpack(">I", data[8:12])[0]
-    if data[12:16] != b"IHDR" or chunk_len < 13:
-        raise InvalidImageError("invalid_image", "premier chunk PNG != IHDR")
-    width, height = struct.unpack(">II", data[16:24])
-    return _check_dims(width, height, "png")
+
+    pos = len(signature)
+    saw_ihdr = False
+    saw_idat = False
+    saw_iend = False
+    dimensions: tuple[int, int] | None = None
+    while pos < len(data):
+        if pos + 12 > len(data):
+            raise InvalidImageError("invalid_image", "chunk PNG tronqué")
+        chunk_len = struct.unpack(">I", data[pos:pos + 4])[0]
+        chunk_type = data[pos + 4:pos + 8]
+        chunk_start = pos + 8
+        chunk_end = chunk_start + chunk_len
+        if chunk_end + 4 > len(data):
+            raise InvalidImageError("invalid_image", "chunk PNG tronqué")
+        payload = data[chunk_start:chunk_end]
+        expected_crc = struct.unpack(">I", data[chunk_end:chunk_end + 4])[0]
+        actual_crc = binascii.crc32(chunk_type + payload) & 0xFFFFFFFF
+        if actual_crc != expected_crc:
+            raise InvalidImageError("invalid_image", "CRC PNG invalide")
+
+        if not saw_ihdr:
+            if chunk_type != b"IHDR" or chunk_len != 13:
+                raise InvalidImageError("invalid_image", "premier chunk PNG != IHDR")
+            width, height = struct.unpack(">II", payload[:8])
+            dimensions = (width, height)
+            saw_ihdr = True
+        elif chunk_type == b"IDAT":
+            saw_idat = True
+        elif chunk_type == b"IEND":
+            if chunk_len != 0 or not saw_idat:
+                raise InvalidImageError("invalid_image", "PNG incomplet")
+            saw_iend = True
+            pos = chunk_end + 4
+            if pos != len(data):
+                raise InvalidImageError("invalid_image", "données après IEND PNG")
+            break
+        pos = chunk_end + 4
+
+    if dimensions is None or not saw_idat or not saw_iend or pos != len(data):
+        raise InvalidImageError("invalid_image", "PNG incomplet")
+    return _check_dims(*dimensions, "png", max_pixels)
 
 
 _SOF_MARKERS = {
@@ -63,71 +109,90 @@ _SOF_MARKERS = {
 }
 
 
-def _parse_jpeg(data: bytes) -> ImageInfo:
-    if len(data) < 4 or data[0] != 0xFF or data[1] != 0xD8:
+def _parse_jpeg(data: bytes, max_pixels: int) -> ImageInfo:
+    if len(data) < 4 or data[0:2] != b"\xff\xd8":
         raise InvalidImageError("invalid_image", "signature JPEG absente")
     pos = 2
     end = len(data)
-    while pos + 2 <= end:
-        if data[pos] != 0xFF:  # désynchronisé
+    dimensions: tuple[int, int] | None = None
+    while pos + 1 < end:
+        if data[pos] != 0xFF:
             raise InvalidImageError("invalid_image", "flux JPEG désynchronisé")
-        marker = data[pos + 1]
-        if marker == 0xFF:  # octets de bourrage
+        while pos < end and data[pos] == 0xFF:
             pos += 1
-            continue
-        if marker in (0xD8, 0x01) or 0xD0 <= marker <= 0xD7:  # sans longueur
-            pos += 2
-            continue
-        if marker == 0xD9:  # EOI avant SOF
+        if pos >= end:
             break
-        if pos + 4 > end:
+        marker = data[pos]
+        pos += 1
+        if marker == 0xD9:
             break
-        seg_len = struct.unpack(">H", data[pos + 2:pos + 4])[0]
-        if seg_len < 2:
-            raise InvalidImageError("invalid_image", "longueur de segment JPEG invalide")
+        if marker == 0xDA:
+            if dimensions is None or pos + 2 > end:
+                raise InvalidImageError("invalid_image", "trame JPEG incomplète")
+            seg_len = struct.unpack(">H", data[pos:pos + 2])[0]
+            if seg_len < 2 or pos + seg_len > end:
+                raise InvalidImageError("invalid_image", "segment SOS JPEG tronqué")
+            entropy_start = pos + seg_len
+            eoi = data.find(b"\xff\xd9", entropy_start)
+            if eoi < 0 or eoi + 2 != end:
+                raise InvalidImageError("invalid_image", "fin JPEG absente ou incohérente")
+            return _check_dims(*dimensions, "jpeg", max_pixels)
+        if marker in (0x01,) or 0xD0 <= marker <= 0xD7:
+            continue
+        if pos + 2 > end:
+            raise InvalidImageError("invalid_image", "segment JPEG tronqué")
+        seg_len = struct.unpack(">H", data[pos:pos + 2])[0]
+        if seg_len < 2 or pos + seg_len > end:
+            raise InvalidImageError("invalid_image", "segment JPEG tronqué")
         if marker in _SOF_MARKERS:
-            if pos + 9 > end:
+            if seg_len < 7:
                 raise InvalidImageError("invalid_image", "segment SOF JPEG tronqué")
-            height, width = struct.unpack(">HH", data[pos + 5:pos + 9])
-            return _check_dims(width, height, "jpeg")
-        if marker == 0xDA:  # SOS : données d'image, pas de SOF trouvé
-            break
-        pos += 2 + seg_len
-    raise InvalidImageError("invalid_image", "en-tête de trame JPEG introuvable")
+            height, width = struct.unpack(">HH", data[pos + 3:pos + 7])
+            dimensions = (width, height)
+        pos += seg_len
+    raise InvalidImageError("invalid_image", "JPEG incomplet ou en-tête de trame absent")
 
 
-def _parse_webp(data: bytes) -> ImageInfo:
+def _parse_webp(data: bytes, max_pixels: int) -> ImageInfo:
     if len(data) < 20 or data[0:4] != b"RIFF" or data[8:12] != b"WEBP":
         raise InvalidImageError("invalid_image", "signature WebP absente")
+    riff_size = struct.unpack("<I", data[4:8])[0]
+    if riff_size != len(data) - 8:
+        raise InvalidImageError("invalid_image", "taille RIFF WebP incohérente")
+
     pos = 12
     end = len(data)
-    while pos + 8 <= end:
+    dimensions: tuple[int, int] | None = None
+    while pos < end:
+        if pos + 8 > end:
+            raise InvalidImageError("invalid_image", "chunk WebP tronqué")
         fourcc = data[pos:pos + 4]
         size = struct.unpack("<I", data[pos + 4:pos + 8])[0]
         body = pos + 8
-        if body + size > end:
-            size = end - body  # tolère un RIFFSize incohérent, valide le contenu présent
-        try:
-            if fourcc == b"VP8X" and size >= 10:
-                w = int.from_bytes(data[body + 4:body + 7], "little") + 1
-                h = int.from_bytes(data[body + 7:body + 10], "little") + 1
-                return _check_dims(w, h, "webp")
-            if fourcc == b"VP8 " and size >= 10:
-                if data[body + 3:body + 6] != b"\x9d\x01\x2a":
-                    raise InvalidImageError("invalid_image", "code de synchronisation VP8 invalide")
-                w, h = struct.unpack("<HH", data[body + 6:body + 10])
-                return _check_dims(w & 0x3FFF, h & 0x3FFF, "webp")
-            if fourcc == b"VP8L" and size >= 5:
-                if data[body] != 0x2F:
-                    raise InvalidImageError("invalid_image", "signature VP8L invalide")
-                bits = struct.unpack("<I", data[body + 1:body + 5])[0]
-                w = (bits & 0x3FFF) + 1
-                h = ((bits >> 14) & 0x3FFF) + 1
-                return _check_dims(w, h, "webp")
-        finally:
-            pass
-        pos = body + size + (size & 1)  # chunks paddés sur octet pair
-    raise InvalidImageError("invalid_image", "chunk de dimension WebP introuvable")
+        chunk_end = body + size
+        padded_end = chunk_end + (size & 1)
+        if chunk_end > end or padded_end > end:
+            raise InvalidImageError("invalid_image", "chunk WebP tronqué")
+        if dimensions is None and fourcc == b"VP8X" and size >= 10:
+            w = int.from_bytes(data[body + 4:body + 7], "little") + 1
+            h = int.from_bytes(data[body + 7:body + 10], "little") + 1
+            dimensions = (w, h)
+        elif dimensions is None and fourcc == b"VP8 " and size >= 10:
+            if data[body + 3:body + 6] != b"\x9d\x01\x2a":
+                raise InvalidImageError("invalid_image", "code de synchronisation VP8 invalide")
+            w, h = struct.unpack("<HH", data[body + 6:body + 10])
+            dimensions = (w & 0x3FFF, h & 0x3FFF)
+        elif dimensions is None and fourcc == b"VP8L" and size >= 5:
+            if data[body] != 0x2F:
+                raise InvalidImageError("invalid_image", "signature VP8L invalide")
+            bits = struct.unpack("<I", data[body + 1:body + 5])[0]
+            w = (bits & 0x3FFF) + 1
+            h = ((bits >> 14) & 0x3FFF) + 1
+            dimensions = (w, h)
+        pos = padded_end
+    if dimensions is None:
+        raise InvalidImageError("invalid_image", "chunk de dimension WebP introuvable")
+    return _check_dims(*dimensions, "webp", max_pixels)
 
 
 _PARSERS = {"png": _parse_png, "jpeg": _parse_jpeg, "webp": _parse_webp}
@@ -138,8 +203,10 @@ _SIGNATURES = (
 )
 
 
-def inspect_image(data: bytes) -> ImageInfo:
+def inspect_image(data: bytes, *, max_pixels: int = MAX_PIXELS) -> ImageInfo:
     """Identifie et valide une image à partir de son contenu."""
+    if not (1 <= max_pixels <= HARD_MAX_PIXELS):
+        raise ValueError(f"max_pixels doit être entre 1 et {HARD_MAX_PIXELS}")
     if not data:
         raise InvalidImageError("empty_upload", "upload vide")
     fmt = None
@@ -152,7 +219,7 @@ def inspect_image(data: bytes) -> ImageInfo:
             "unsupported_format",
             "contenu non reconnu (formats acceptés : PNG, JPEG, WebP)",
         )
-    return _PARSERS[fmt](data)
+    return _PARSERS[fmt](data, max_pixels)
 
 
 def mime_allowed(declared: str | None) -> bool:

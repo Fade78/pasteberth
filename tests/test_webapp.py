@@ -7,6 +7,7 @@ import tempfile
 import time
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from tests.helpers import (
     build_multipart,
@@ -92,6 +93,15 @@ class TestPublic(Base):
             status, headers, _ = self.req("GET", path)
             self.assertEqual(status, 200, path)
             self.assertTrue(headers["content-type"].startswith(ctype), path)
+
+
+class TestConfigurationProxyParDefaut(Base):
+    config_kwargs = {"trusted_proxies": None}
+
+    def test_health_avec_proxy_par_defaut(self):
+        status, _, body = self.req("GET", "/api/health")
+        self.assertEqual(status, 200)
+        self.assertEqual(json_of(body), {"ok": True})
 
 
 class TestModeAnonymeLoopback(Base):
@@ -200,6 +210,22 @@ class TestAuthentification(Base):
         self.assertIn("Max-Age=0", headers["set-cookie"])
         status, _, _ = self.req("GET", "/api/zones")
         self.assertEqual(status, 401)
+
+    def test_logout_get_refuse_et_ne_revoque_pas(self):
+        status, _, _ = self.req("GET", "/logout")
+        self.assertEqual(status, 405)
+        status, _, _ = self.req("GET", "/api/zones")
+        self.assertEqual(status, 200)
+
+    def test_corps_login_trop_grand(self):
+        status, _, _ = request(
+            self.server.port,
+            "POST",
+            "/login",
+            body=b"password=" + b"x" * (16 * 1024),
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+        )
+        self.assertEqual(status, 413)
 
     def test_cookie_forge_rejete(self):
         forged = "pb_session=AQAAANBBB_forged-token-value"
@@ -320,6 +346,18 @@ class TestRejetsUploads(Base):
                                         body=truncated, headers={"Content-Type": "image/png"})
         self.assertEqual(status_code, 400)
         self.assertEqual(json_of(body)["error"]["code"], "invalid_image")
+
+    def test_espace_disque_insuffisant(self):
+        usage = type("Usage", (), {"f_blocks": 1000, "f_bavail": 1, "f_frsize": 1024})()
+        with mock.patch("pasteberth.storage.os.statvfs", return_value=usage):
+            status_code, _, body = self.req(
+                "POST",
+                "/api/zones/pulse/images",
+                body=make_png(),
+                headers={"Content-Type": "image/png"},
+            )
+        self.assertEqual(status_code, 507)
+        self.assertEqual(json_of(body)["error"]["code"], "storage_low")
 
 
 class TestZonesEtPreviews(Base):
@@ -568,6 +606,42 @@ class TestProxysConfiance(Base):
                      "X-Forwarded-For": "203.0.113.8"},
         )
         self.assertEqual(status, 401)
+
+    def test_xff_prend_le_saut_le_plus_proche(self):
+        prefix = "198.51.100."
+        for _ in range(5):
+            status, _, _ = request(
+                self.server.port,
+                "POST",
+                "/login",
+                body=b"password=faux",
+                headers={
+                    "Content-Type": "application/x-www-form-urlencoded",
+                    "X-Forwarded-For": prefix + "99," + prefix + "7",
+                },
+            )
+            self.assertEqual(status, 401)
+        status, _, _ = request(
+            self.server.port,
+            "POST",
+            "/login",
+            body=b"password=faux",
+            headers={
+                "Content-Type": "application/x-www-form-urlencoded",
+                "X-Forwarded-For": prefix + "7",
+            },
+        )
+        self.assertEqual(status, 429)
+
+    def test_hsts_sur_redirect_https(self):
+        status, headers, _ = request(
+            self.server.port,
+            "GET",
+            "/",
+            headers={"X-Forwarded-Proto": "https"},
+        )
+        self.assertEqual(status, 303)
+        self.assertIn("max-age=31536000", headers["strict-transport-security"])
 
 
 class TestEnTetesSecurite(Base):

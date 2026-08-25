@@ -12,7 +12,14 @@ import logging
 import sys
 
 from pasteberth import __version__
-from pasteberth.auth import LoginRateLimiter, SessionStore, hash_password, save_password_hash
+from pasteberth.auth import (
+    LoginRateLimiter,
+    SessionStore,
+    hash_password,
+    load_password_hash,
+    save_password_hash,
+    valid_password_hash,
+)
 from pasteberth.config import (
     ConfigError,
     check_startup_policy,
@@ -37,6 +44,20 @@ def _cmd_serve(args: argparse.Namespace) -> int:
     except ConfigError as exc:
         print(f"pasteberth : erreur de configuration\n  {exc}", file=sys.stderr)
         return 2
+    if cfg.auth.enabled:
+        try:
+            stored_hash = load_password_hash(cfg.password_file())
+        except RuntimeError as exc:
+            print(f"pasteberth : erreur de configuration\n  {exc}", file=sys.stderr)
+            return 2
+        if not valid_password_hash(stored_hash):
+            print(
+                "pasteberth : erreur de configuration\n"
+                f"  [auth] enabled = true exige un hash scrypt valide dans {cfg.password_file()}\n"
+                "  exécutez `pasteberth passwd` avant de démarrer le service",
+                file=sys.stderr,
+            )
+            return 2
     _setup_logging(args.log_level or cfg.log_level)
     for warning in cfg.warnings:
         logging.getLogger("pasteberth.config").warning("%s", warning)
@@ -107,7 +128,11 @@ def _cmd_passwd(args: argparse.Namespace) -> int:
     if pw1 != pw2:
         print("refus : les deux saisies diffèrent", file=sys.stderr)
         return 1
-    save_password_hash(password_file, hash_password(pw1))
+    try:
+        save_password_hash(password_file, hash_password(pw1))
+    except OSError as exc:
+        print(f"erreur : impossible d'écrire {password_file} : {exc}", file=sys.stderr)
+        return 1
     try:
         mode = oct(password_file.stat().st_mode & 0o777)
     except OSError:

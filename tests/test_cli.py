@@ -65,6 +65,12 @@ class TestErreursDemarrage(unittest.TestCase):
         self.assertEqual(proc.returncode, 2)
         self.assertIn("absolu", proc.stderr)
 
+    def test_auth_activee_sans_hash_refusee(self):
+        cfg = write_config(self.tmp, auth_enabled=True)
+        proc = run_cli(["serve", "--config", str(cfg)])
+        self.assertEqual(proc.returncode, 2)
+        self.assertIn("hash scrypt valide", proc.stderr)
+
 
 class TestPasswd(unittest.TestCase):
     def setUp(self):
