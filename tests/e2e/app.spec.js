@@ -87,12 +87,37 @@ test("colle une image et ouvre son aperçu au clavier", async ({ page }) => {
     "src",
     /\/previews\/default\//,
   );
+  await expect(defaultZone.locator(".history-index")).toBeVisible();
+  await expect(defaultZone.locator(".thumb-wrap")).toHaveCount(1);
+  await expect(defaultZone.locator(".thumb-wrap")).toHaveAttribute("aria-pressed", "true");
 
   await defaultZone.locator(".thumb-big").press("Enter");
   await expect(page.locator("#pv")).toBeVisible();
   await expect(page.locator("#pv-ref")).toHaveText(reference);
   await page.getByRole("button", { name: "Fermer" }).click();
   await expect(page.locator("#pv")).not.toBeVisible();
+
+  await defaultZone.getByRole("button", { name: "Agrandir l'image" }).click();
+  await expect(page.locator("#pv")).toBeVisible();
+  await page.locator("#pv-clear").click();
+  await expect(page.locator("#toast")).toContainText("Presse-papiers effacé");
+  await page.getByRole("button", { name: "Fermer" }).click();
+});
+
+test("sélectionne une image depuis l'index", async ({ page }) => {
+  await openApp(page);
+  const defaultZone = page.locator('[data-zone="default"]');
+  await defaultZone.getByRole("button", { name: "Sélectionner la zone Default" }).click();
+
+  await dispatchPaste(page);
+  await expect(defaultZone.locator(".latest")).toBeVisible();
+  const firstName = await defaultZone.locator(".fname").textContent();
+  await dispatchPaste(page);
+  await expect(defaultZone.locator(".thumb-wrap")).toHaveCount(2);
+
+  await defaultZone.locator(".thumb-wrap").last().click();
+  await expect(defaultZone.locator(".thumb-wrap").last()).toHaveAttribute("aria-pressed", "true");
+  await expect(defaultZone.locator(".latest .fname")).toHaveText(firstName);
 });
 
 test("accepte le glisser-déposer sur une zone", async ({ page }) => {

@@ -33,6 +33,11 @@ class TestContratsFrontend(unittest.TestCase):
         self.assertIn("navigator.clipboard.writeText", self.app_js)
         self.assertIn("execCommand(\"copy\")", self.app_js.replace("'", '"'))
 
+    def test_effacement_clipboard(self):
+        self.assertIn("function clearClipboard", self.app_js)
+        self.assertIn('writeClipboard("")', self.app_js)
+        self.assertIn('className = "clear-btn"', self.app_js)
+
     def test_pas_de_blob_urls_accumulees(self):
         self.assertNotIn("createObjectURL", self.app_js)
         self.assertIn("preview_url", self.app_js)  # miniatures servies par le serveur
@@ -70,6 +75,12 @@ class TestContratsFrontend(unittest.TestCase):
         self.assertIn("refreshGeneration", self.app_js)
         self.assertIn("zone-select", self.app_js)
         self.assertIn('tabIndex = 0', self.app_js)
+
+    def test_index_selection_et_zoom(self):
+        self.assertIn("selectedByZone", self.app_js)
+        self.assertIn("history-index", self.app_js)
+        self.assertIn('className = "zoom-btn"', self.app_js)
+        self.assertIn('id="pv-clear"', self.index_html)
 
     def test_raccourcis_clavier(self):
         self.assertIn('event.key === "c"', self.app_js)

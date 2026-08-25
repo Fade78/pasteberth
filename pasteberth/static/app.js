@@ -15,6 +15,7 @@
     activeId: null,
     authEnabled: true,
     offline: false,
+    selectedByZone: Object.create(null),
     retryTimer: null,
     toastTimer: null,
   };
@@ -31,6 +32,7 @@
   const pvImg = document.getElementById("pv-img");
   const pvRef = document.getElementById("pv-ref");
   const pvCopy = document.getElementById("pv-copy");
+  const pvClear = document.getElementById("pv-clear");
 
   // ------------------------------------------------------------- utilitaires
 
@@ -157,6 +159,13 @@
     return ok;
   }
 
+  async function clearClipboard() {
+    const ok = await writeClipboard("");
+    if (ok) toast("Presse-papiers effacé");
+    else toast("Effacement impossible — utilisez le presse-papiers du système", "error");
+    return ok;
+  }
+
   function shortRef(ref) {
     const name = ref.split("/").pop();
     return name.length > 40 ? name.slice(0, 37) + "…" : name;
@@ -201,10 +210,15 @@
       hint.textContent = "Ctrl+V pour coller une image ici";
       el.appendChild(hint);
     } else {
-      el.appendChild(renderLatest(zone.images[0]));
-      if (zone.images.length > 1) el.appendChild(renderThumbs(zone.images.slice(1)));
+      const selected = selectedItem(zone);
+      el.appendChild(renderLatest(selected));
+      el.appendChild(renderThumbs(zone.images, selected.id));
     }
     return el;
+  }
+
+  function selectedItem(zone) {
+    return zone.images.find(item => item.id === state.selectedByZone[zone.id]) || zone.images[0];
   }
 
   function itemMeta(item) {
@@ -243,21 +257,44 @@
     btn.className = "copy-btn";
     btn.dataset.ref = item.reference;
     btn.textContent = "Copier";
-    right.appendChild(btn);
+    const clear = document.createElement("button");
+    clear.type = "button";
+    clear.className = "clear-btn";
+    clear.textContent = "Effacer";
+    clear.setAttribute("aria-label", "Effacer le presse-papiers");
+    const zoom = document.createElement("button");
+    zoom.type = "button";
+    zoom.className = "zoom-btn";
+    zoom.textContent = "Zoom";
+    zoom.setAttribute("aria-label", "Agrandir l'image");
+    zoom.dataset.ref = item.reference;
+    zoom.dataset.preview = item.preview_url;
+    const actions = document.createElement("div");
+    actions.className = "latest-actions";
+    actions.append(btn, clear, zoom);
+    right.appendChild(actions);
     card.append(img, right);
     return card;
   }
 
-  function renderThumbs(items) {
+  function renderThumbs(items, selectedId) {
+    const index = document.createElement("div");
+    index.className = "history-index";
+    const title = document.createElement("div");
+    title.className = "index-title";
+    title.textContent = "Index des images";
     const row = document.createElement("div");
     row.className = "thumbs";
+    row.setAttribute("role", "list");
     for (const item of items) {
       const wrap = document.createElement("button");
       wrap.type = "button";
       wrap.className = "thumb-wrap";
+      if (item.id === selectedId) wrap.classList.add("selected");
+      wrap.setAttribute("aria-pressed", String(item.id === selectedId));
+      wrap.setAttribute("aria-label", `Sélectionner ${item.filename}`);
       wrap.title = `${item.filename} — ${fmtDateTime(item.created_at)}`;
-      wrap.dataset.ref = item.reference;
-      wrap.dataset.preview = item.preview_url;
+      wrap.dataset.itemId = item.id;
       const img = document.createElement("img");
       img.className = "thumb";
       img.src = item.preview_url;
@@ -266,7 +303,8 @@
       wrap.appendChild(img);
       row.appendChild(wrap);
     }
-    return row;
+    index.append(title, row);
+    return index;
   }
 
   function renderAll() {
@@ -320,6 +358,12 @@
       state.authEnabled = overview.auth_enabled !== false;
       logoutForm.hidden = !state.authEnabled;
       state.zones = nextZones;
+      for (const zoneId of Object.keys(state.selectedByZone)) {
+        const zone = state.zones.find(z => z.id === zoneId);
+        if (!zone || !zone.images.some(item => item.id === state.selectedByZone[zoneId])) {
+          delete state.selectedByZone[zoneId];
+        }
+      }
       renderAll();
 
       let stored = null;
@@ -383,6 +427,7 @@
       if (zone) {
         zone.images.unshift(item);
         if (zone.images.length > zone.retain) zone.images.length = zone.retain;
+        state.selectedByZone[zoneId] = item.id;
         rerenderZone(zoneId);
       }
       toast(`Image envoyée (${shortRef(item.reference)})`);
@@ -437,9 +482,21 @@
       copyReference(copyBtn.dataset.ref);
       return;
     }
+    const clearBtn = event.target.closest(".clear-btn");
+    if (clearBtn) {
+      clearClipboard();
+      return;
+    }
+    const zoomBtn = event.target.closest(".zoom-btn");
+    if (zoomBtn && zoomBtn.dataset.preview) {
+      openPreview(zoomBtn.dataset.preview, zoomBtn.dataset.ref);
+      return;
+    }
     const thumbWrap = event.target.closest(".thumb-wrap");
     if (thumbWrap) {
-      openPreview(thumbWrap.dataset.preview, thumbWrap.dataset.ref);
+      const zoneEl = thumbWrap.closest(".zone");
+      state.selectedByZone[zoneEl.dataset.zone] = thumbWrap.dataset.itemId;
+      rerenderZone(zoneEl.dataset.zone);
       return;
     }
     const bigThumb = event.target.closest(".thumb-big");
@@ -506,7 +563,7 @@
       if (zone) setActive(zone.id, { announce: true });
     } else if (event.key === "c" || event.key === "C") {
       const zone = state.zones.find(z => z.id === state.activeId);
-      if (zone && zone.images[0]) copyReference(zone.images[0].reference);
+      if (zone && zone.images.length) copyReference(selectedItem(zone).reference);
     }
   });
 
@@ -518,6 +575,7 @@
   }
 
   pvCopy.addEventListener("click", () => copyReference(pvRef.textContent));
+  pvClear.addEventListener("click", clearClipboard);
   document.getElementById("pv-close").addEventListener("click", () => pv.close());
   pv.addEventListener("click", (event) => { if (event.target === pv) pv.close(); });
   pv.addEventListener("close", () => { pvImg.src = ""; });

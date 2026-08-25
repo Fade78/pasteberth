@@ -228,6 +228,13 @@ code, kbd {
   flex: 1;
 }
 
+.latest-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  margin-top: auto;
+}
+
 .meta { display: flex; flex-direction: column; gap: 5px; min-width: 0; }
 
 .fname, .ref {
@@ -249,9 +256,8 @@ code, kbd {
 
 /* ------------------------------------------------------------- boutons */
 
-.copy-btn {
+.copy-btn, .clear-btn, .zoom-btn {
   align-self: flex-start;
-  margin-top: auto;
   background: rgba(127, 127, 127, 0.22);
   color: var(--fg, var(--text));
   border: 1px solid rgba(255, 255, 255, 0.16);
@@ -262,10 +268,14 @@ code, kbd {
   cursor: pointer;
 }
 
-.copy-btn:hover { background: rgba(127, 127, 127, 0.34); }
-.copy-btn:active { transform: translateY(1px); }
+.copy-btn:hover, .clear-btn:hover, .zoom-btn:hover { background: rgba(127, 127, 127, 0.34); }
+.copy-btn:active, .clear-btn:active, .zoom-btn:active { transform: translateY(1px); }
+
+.clear-btn { color: #ffd7d3; }
 
 .copy-btn:focus-visible,
+.clear-btn:focus-visible,
+.zoom-btn:focus-visible,
 .thumb-wrap:focus-visible,
 .zone-select:focus-visible,
 .thumb-big:focus-visible,
@@ -294,6 +304,22 @@ code, kbd {
   gap: 8px;
 }
 
+.history-index {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: auto;
+}
+
+.index-title {
+  color: var(--fg);
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  opacity: 0.62;
+  text-transform: uppercase;
+}
+
 .thumb-wrap {
   padding: 0;
   border: 1px solid var(--line);
@@ -305,6 +331,10 @@ code, kbd {
 }
 
 .thumb-wrap:hover { border-color: var(--halo); }
+.thumb-wrap.selected {
+  border-color: var(--halo);
+  box-shadow: 0 0 0 2px var(--halo-soft);
+}
 
 .thumb {
   width: 64px;
@@ -372,7 +402,7 @@ dialog#pv::backdrop { background: rgba(4, 6, 9, 0.66); }
 
 .pv-bar .ref { flex: 1; min-width: 200px; }
 .pv-actions { display: flex; gap: 8px; }
-.pv-actions .copy-btn { margin-top: 0; }
+.pv-actions .copy-btn, .pv-actions .clear-btn { margin-top: 0; }
 
 /* ---------------------------------------------------------------- footer */
 
