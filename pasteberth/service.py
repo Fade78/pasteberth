@@ -241,5 +241,5 @@ class PasteService:
             "size": item.size,
             "format": item.fmt,
             "preview_url": f"/previews/{zid}/{item.filename}",
-            "reference": f"{zone.reference_prefix}{reference_path}",
+            "reference": f"{zone.reference_prefix}{reference_path}{zone.reference_suffix}",
         }

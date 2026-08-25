@@ -75,8 +75,38 @@ class TestParsing(unittest.TestCase):
         self.assertFalse(cfg.auth.enabled)
         self.assertEqual(set(cfg.zones), {"default", "secondary"})
         self.assertEqual(cfg.zones["default"].reference_prefix, "@")
+        self.assertEqual(cfg.zones["default"].reference_suffix, "")
         self.assertTrue(cfg.zones["default"].create_directory)
         self.assertEqual(cfg.zones["default"].min_free_percent, 2.0)
+
+    def test_format_reference_configurable(self):
+        cfg = load_config(
+            write_config(
+                self.tmp,
+                zones=[{
+                    "id": "quoted",
+                    "directory": str(self.tmp / "quoted"),
+                    "reference_prefix": "`",
+                    "reference_suffix": "`",
+                }],
+            )
+        )
+        zone = cfg.zones["quoted"]
+        self.assertEqual(zone.reference_prefix, "`")
+        self.assertEqual(zone.reference_suffix, "`")
+
+    def test_format_reference_prefix_vide(self):
+        cfg = load_config(
+            write_config(
+                self.tmp,
+                zones=[{
+                    "id": "plain",
+                    "directory": str(self.tmp / "plain"),
+                    "reference_prefix": "",
+                }],
+            )
+        )
+        self.assertEqual(cfg.zones["plain"].reference_prefix, "")
 
     def test_defauts_reels_auth_et_proxy(self):
         path = self.tmp / "minimal.toml"

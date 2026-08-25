@@ -105,6 +105,7 @@ class ZoneConfig:
     directory: Path
     retain: int
     reference_prefix: str = "@"
+    reference_suffix: str = ""
     color: str = "#243447"
     create_directory: bool = True
     min_free_percent: float = DEFAULT_MIN_FREE_PERCENT
@@ -257,7 +258,7 @@ def _parse_zone(raw_zone: object, index: int, warnings: list[str]) -> ZoneConfig
     table = _expect_table(raw_zone, where)
     _warn_unknown(
         table,
-        {"id", "label", "type", "directory", "retain", "reference_prefix",
+        {"id", "label", "type", "directory", "retain", "reference_prefix", "reference_suffix",
          "color", "create_directory", "min_free_percent"},
         where,
         warnings,
@@ -285,9 +286,12 @@ def _parse_zone(raw_zone: object, index: int, warnings: list[str]) -> ZoneConfig
     retain = table.get("retain", 10)
     if isinstance(retain, bool) or not isinstance(retain, int) or not (1 <= retain <= 10_000):
         raise ConfigError(f"{where}: 'retain' doit être un entier entre 1 et 10000")
-    prefix = _get_str(table, "reference_prefix", where, default="@")
+    prefix = _get_str(table, "reference_prefix", where, default="@", allow_empty=True)
     if len(prefix) > 16:
         raise ConfigError(f"{where}: 'reference_prefix' trop long (16 caractères max)")
+    suffix = _get_str(table, "reference_suffix", where, default="", allow_empty=True)
+    if len(suffix) > 16:
+        raise ConfigError(f"{where}: 'reference_suffix' trop long (16 caractères max)")
     color = _get_str(table, "color", where, default="#243447")
     if not _COLOR_RE.fullmatch(color):
         raise ConfigError(f"{where}: 'color' doit être au format #RRGGBB : {color!r}")
@@ -306,6 +310,7 @@ def _parse_zone(raw_zone: object, index: int, warnings: list[str]) -> ZoneConfig
         directory=directory,
         retain=retain,
         reference_prefix=prefix,
+        reference_suffix=suffix,
         color=color,
         create_directory=create_dir,
         min_free_percent=min_free_percent,
@@ -506,6 +511,7 @@ def build_default_config() -> Config:
                 directory=default_storage_path(),
                 retain=10,
                 reference_prefix="@",
+                reference_suffix="",
                 color="#304237",
             )
         },

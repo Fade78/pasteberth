@@ -115,10 +115,17 @@ les zones et chemins souhaités.
 | `[auth] enabled` | `true` | protection par mot de passe |
 | `[auth] session_ttl_hours` | `72` | durée des sessions serveur |
 | `[auth] password_file` | à côté de `config.toml` | chemin absolu du hash `passwd` (fichier régulier 0600) |
-| `[[zones]] …` | `default` | `id`, `label`, `type=local`, `directory`, `retain`, `reference_prefix`, `color` (#RRGGBB), `create_directory`, `min_free_percent` |
+| `[[zones]] …` | `default` | `id`, `label`, `type=local`, `directory`, `retain`, `reference_prefix`, `reference_suffix`, `color` (#RRGGBB), `create_directory`, `min_free_percent` |
 
 `directory` est un chemin **absolu vu par le serveur** — c'est là
 qu'OpenCode lit les images, pas votre navigateur.
+
+Pour copier une référence entourée de backquotes, par exemple `` `/chemin/image.png` `` :
+
+```toml
+reference_prefix = "`"
+reference_suffix = "`"
+```
 
 Le stockage intégré par défaut est `<racine-du-dépôt>/storage/default`. Le
 répertoire `storage/` est ignoré par Git, mais il faut le sauvegarder séparément

@@ -185,6 +185,7 @@ type = "local"
 directory = "{storage}"
 retain = 10
 reference_prefix = "@"
+reference_suffix = ""
 color = "#304237"
 create_directory = true
 min_free_percent = 2.0

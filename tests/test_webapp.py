@@ -40,7 +40,9 @@ class Base(unittest.TestCase):
         }
         zones = [
             {"id": zid, "label": zid.upper(), "retain": retain,
-             "color": color, "directory": str(path)}
+             "color": color, "directory": str(path),
+             "reference_prefix": self.config_kwargs.get("reference_prefix", "@"),
+             "reference_suffix": self.config_kwargs.get("reference_suffix", "")}
             for zid, path, retain, color in [
                 ("default", self.zones_dirs["default"], 3, "#304237"),
                 ("secondary", self.zones_dirs["secondary"], 2, "#26394a"),
@@ -461,6 +463,22 @@ class TestHistoriqueOrdre(Base):
         self.assertEqual(item["reference"], "@" + str(path))
         self.assertTrue(path.is_file())
         self.assertEqual(path.parent.resolve(), self.zones_dirs["default"].resolve())
+
+
+class TestReferenceFormatee(Base):
+    config_kwargs = {"reference_prefix": "`", "reference_suffix": "`"}
+
+    def test_reference_entouree_de_backquotes(self):
+        body, ctype = build_multipart(data=make_png())
+        _, _, resp = self.req(
+            "POST",
+            "/api/zones/default/images",
+            body=body,
+            headers={"Content-Type": ctype},
+        )
+        item = json_of(resp)
+        self.assertTrue(item["reference"].startswith("`/"))
+        self.assertTrue(item["reference"].endswith(".png`"))
 
 
 class TestRetentionAPI(Base):
