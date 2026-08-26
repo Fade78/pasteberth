@@ -131,6 +131,9 @@ class Config:
     allow_unauthenticated_local: bool
     allow_unauthenticated_remote: bool
     allow_insecure_http_remote: bool
+    accept_bin: bool
+    accept_img: bool
+    accept_doc: bool
     auth: AuthConfig
     tls: TLSConfig
     zones: dict[str, ZoneConfig]
@@ -391,7 +394,8 @@ def load_config(path: Path) -> Config:
          "max_image_pixels",
          "allowed_hosts",
          "allow_unauthenticated_local", "allow_unauthenticated_remote",
-         "allow_insecure_http_remote", "auth", "tls",
+         "allow_insecure_http_remote", "accept_bin", "accept_img", "accept_doc",
+         "auth", "tls",
          "zones", "log_level"},
         "config",
         warnings,
@@ -431,6 +435,9 @@ def load_config(path: Path) -> Config:
     allow_insecure_http_remote = _get_bool(
         data, "allow_insecure_http_remote", "config", default=False
     )
+    accept_bin = _get_bool(data, "accept_bin", "config", default=True)
+    accept_img = _get_bool(data, "accept_img", "config", default=True)
+    accept_doc = _get_bool(data, "accept_doc", "config", default=True)
     auth = _parse_auth(data.get("auth"), warnings)
     tls = _parse_tls(data.get("tls"), warnings)
 
@@ -458,6 +465,9 @@ def load_config(path: Path) -> Config:
         allow_unauthenticated_local=allow_unauth_local,
         allow_unauthenticated_remote=allow_unauth_remote,
         allow_insecure_http_remote=allow_insecure_http_remote,
+        accept_bin=accept_bin,
+        accept_img=accept_img,
+        accept_doc=accept_doc,
         auth=auth,
         tls=tls,
         zones=zones,
@@ -542,6 +552,9 @@ def build_default_config() -> Config:
         allow_unauthenticated_local=True,
         allow_unauthenticated_remote=False,
         allow_insecure_http_remote=False,
+        accept_bin=True,
+        accept_img=True,
+        accept_doc=True,
         auth=AuthConfig(enabled=False),
         tls=TLSConfig(),
         zones={

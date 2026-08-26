@@ -111,6 +111,26 @@ class TestContratsFrontend(unittest.TestCase):
         self.assertIn("setPreviewSource(pvImg", self.app_js)
         self.assertIn("clearTimeout(img._previewRetryTimer)", self.app_js)
 
+    def test_paste_texte_et_drop_binaire(self):
+        self.assertIn('i.kind === "string"', self.app_js)
+        self.assertIn("getAsString", self.app_js)
+        self.assertIn("new Blob([text]", self.app_js)
+        self.assertIn("file.name || \"clipboard\"", self.app_js)
+        self.assertNotIn("Only images are accepted", self.app_js)
+
+    def test_preview_texte_et_binaire(self):
+        self.assertIn("function openTextPreview", self.app_js)
+        self.assertIn("function openContentPreview", self.app_js)
+        self.assertIn('id="pv-text"', self.index_html)
+        self.assertIn("a.download = item.filename", self.app_js)
+
+    def test_echec_copie_signeale(self):
+        self.assertIn("Link NOT copied", self.app_js)
+
+    def test_mode_compact(self):
+        self.assertIn("@media (max-width: 480px)", self.style_css)
+        self.assertIn(".file-box", self.style_css)
+
     def test_version_dans_le_branding(self):
         self.assertIn("brand-version", self.index_html)
         self.assertIn("__PASTEBERTH_VERSION__", self.index_html)

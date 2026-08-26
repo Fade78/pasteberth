@@ -247,6 +247,21 @@ class TestConfigurationDepot(unittest.TestCase):
         self.assertIn("wildcard", proc.stdout)
         self.assertIn("AVERTISSEMENT", proc.stdout)
 
+    def test_audit_accept_tous_faux_avertit(self):
+        with socket.socket() as probe:
+            probe.bind(("127.0.0.1", 0))
+            port = probe.getsockname()[1]
+        cfg = write_config(
+            self.tmp,
+            port=port,
+            accept_bin=False,
+            accept_img=False,
+            accept_doc=False,
+        )
+        proc = run_cli(["audit", "--config", str(cfg)])
+        self.assertIn("refusera tout contenu", proc.stdout)
+        self.assertIn("AVERTISSEMENT", proc.stdout)
+
     def test_audit_permissions_zone_avertit_sans_echouer(self):
         target = self.tmp / "open"
         target.mkdir(mode=0o755)

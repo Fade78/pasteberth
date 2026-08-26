@@ -22,7 +22,13 @@ FORMATS: dict[str, tuple[str, str]] = {
 }
 
 # MIME déclarés acceptés à l'upload (indicatif : le contenu fait foi).
-ALLOWED_DECLARED_MIMES = {"image/png", "image/jpeg", "image/webp", "application/octet-stream"}
+ALLOWED_DECLARED_MIMES = {
+    "image/png", "image/jpeg", "image/webp", "application/octet-stream",
+    "text/plain", "text/markdown", "text/html", "text/css",
+    "text/javascript", "application/json", "application/xml", "text/csv",
+    "application/x-yaml", "application/x-sh", "text/x-python",
+    "text/x-shellscript",
+}
 
 
 class InvalidImageError(Exception):
@@ -38,6 +44,9 @@ class ImageInfo:
     fmt: str  # clé de FORMATS
     width: int
     height: int
+    kind: str = "image"
+    mime: str = "image/png"
+    ext: str = ".png"
 
 
 def _check_dims(width: int, height: int, fmt: str, max_pixels: int) -> ImageInfo:
@@ -52,7 +61,7 @@ def _check_dims(width: int, height: int, fmt: str, max_pixels: int) -> ImageInfo
             f"image {fmt} trop grande à décoder : {width}x{height} "
             f"(maximum {max_pixels} pixels)",
         )
-    return ImageInfo(fmt=fmt, width=width, height=height)
+    return ImageInfo(fmt=fmt, width=width, height=height, mime=mime_for(fmt), ext=FORMATS[fmt][0])
 
 
 def _parse_png(data: bytes, max_pixels: int) -> ImageInfo:

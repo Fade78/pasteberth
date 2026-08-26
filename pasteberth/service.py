@@ -15,11 +15,10 @@ from contextlib import contextmanager
 from pathlib import Path
 
 from pasteberth.config import Config, ZoneConfig
+from pasteberth.content import classify
 from pasteberth.images import (
     InvalidImageError,
-    inspect_image,
     mime_allowed,
-    mime_for,
 )
 from pasteberth.storage import (
     DestinationError,
@@ -138,7 +137,13 @@ class PasteService:
 
     # --------------------------------------------------------------- upload
 
-    def upload(self, zid: str, data: bytes, declared_mime: str | None) -> dict:
+    def upload(
+        self,
+        zid: str,
+        data: bytes,
+        declared_mime: str | None,
+        filename_hint: str | None = None,
+    ) -> dict:
         zone = self._zone_cfg.get(zid)
         if zone is None:
             raise ServiceError("unknown_zone", f"zone inconnue : {zid}")
@@ -147,7 +152,7 @@ class PasteService:
         if len(data) > self.cfg.max_upload_bytes:
             raise ServiceError(
                 "too_large",
-                f"image trop grande ({len(data)} > {self.cfg.max_upload_bytes} octets)",
+                f"contenu trop grand ({len(data)} > {self.cfg.max_upload_bytes} octets)",
             )
         if not mime_allowed(declared_mime):
             raise ServiceError(
@@ -155,9 +160,24 @@ class PasteService:
                 f"Content-Type déclaré refusé : {declared_mime!r}",
             )
         try:
-            info = inspect_image(data, max_pixels=self.cfg.max_image_pixels)
+            info = classify(
+                data,
+                declared_mime,
+                filename_hint,
+                max_pixels=self.cfg.max_image_pixels,
+            )
         except InvalidImageError as exc:
             raise ServiceError(exc.code, str(exc)) from exc
+        accepted = {
+            "image": self.cfg.accept_img,
+            "text": self.cfg.accept_doc,
+            "binary": self.cfg.accept_bin,
+        }
+        if not accepted[info.kind]:
+            raise ServiceError(
+                "unsupported_media_type",
+                f"contenu {info.kind} refusé par la configuration (accept_*)",
+            )
 
         dest = self._destinations[zid]
         try:
@@ -180,11 +200,10 @@ class PasteService:
         except (DestinationError, OSError) as exc:
             raise ServiceError("destination_error", str(exc)) from exc
         log.info(
-            "upload zone=%s fichier=%s %dx%d %d octets (rétention : %d supprimé(s))",
+            "upload zone=%s fichier=%s kind=%s %d octets (rétention : %d supprimé(s))",
             zid,
             stored.filename,
-            stored.width,
-            stored.height,
+            stored.kind,
             stored.size,
             len(deleted),
         )
@@ -243,10 +262,7 @@ class PasteService:
             raise ServiceError("unknown_image", str(exc)) from exc
         except (DestinationError, OSError) as exc:
             raise ServiceError("destination_error", str(exc)) from exc
-        # Format déduit de l'extension, elle-même générée côté serveur.
-        ext = filename.rsplit(".", 1)[-1]
-        fmt = {"png": "png", "jpg": "jpeg", "webp": "webp"}[ext]
-        return data, mime_for(fmt)
+        return data, item.mime
 
     # ---------------------------------------------------------------- divers
 
@@ -261,6 +277,8 @@ class PasteService:
             "height": item.height,
             "size": item.size,
             "format": item.fmt,
+            "kind": item.kind,
+            "mime": item.mime,
             "preview_url": f"/previews/{zid}/{item.filename}",
             "reference": f"{zone.reference_prefix}{reference_path}{zone.reference_suffix}",
         }

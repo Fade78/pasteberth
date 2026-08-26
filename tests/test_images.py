@@ -98,9 +98,9 @@ class TestRejets(unittest.TestCase):
         self.assertTrue(mime_allowed("application/octet-stream"))
         self.assertTrue(mime_allowed(None))
         self.assertTrue(mime_allowed("image/png; charset=binary"))
-        self.assertFalse(mime_allowed("text/plain"))
+        self.assertTrue(mime_allowed("text/plain"))
         self.assertFalse(mime_allowed("image/gif"))
-        self.assertFalse(mime_allowed("text/html"))
+        self.assertTrue(mime_allowed("text/html"))
 
 
 if __name__ == "__main__":

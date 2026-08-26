@@ -132,6 +132,9 @@ def write_config(
     allow_unauthenticated_local: bool | None = True,
     allow_unauthenticated_remote: bool | None = None,
     allow_insecure_http_remote: bool | None = None,
+    accept_bin: bool | None = None,
+    accept_img: bool | None = None,
+    accept_doc: bool | None = None,
     tls_enabled: bool = False,
     tls_certificate: str | None = None,
     tls_private_key: str | None = None,
@@ -168,6 +171,12 @@ def write_config(
         lines.append(
             f"allow_insecure_http_remote = {str(allow_insecure_http_remote).lower()}"
         )
+    if accept_bin is not None:
+        lines.append(f"accept_bin = {str(accept_bin).lower()}")
+    if accept_img is not None:
+        lines.append(f"accept_img = {str(accept_img).lower()}")
+    if accept_doc is not None:
+        lines.append(f"accept_doc = {str(accept_doc).lower()}")
     lines.append('log_level = "WARNING"')
     if tls_enabled or tls_certificate is not None or tls_private_key is not None:
         lines.extend(

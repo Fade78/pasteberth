@@ -33,9 +33,9 @@ from pasteberth.paths import first_symlink_component
 log = logging.getLogger("pasteberth.storage")
 
 _FILENAME_RE = re.compile(
-    r"^\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}_[0-9a-f]{6}\.(?:png|jpg|webp)$"
+    r"^\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}_[0-9a-f]{6}\.[a-z0-9]{1,10}$"
 )
-_META_KEYS = {"filename", "created_at", "width", "height", "size", "format"}
+_META_KEYS = {"filename", "created_at", "width", "height", "size", "format", "kind", "mime"}
 _SPACE_MARGIN_BYTES = 64 * 1024
 _ORPHAN_GRACE_SECONDS = 3600.0
 _O_DIRECTORY = getattr(os, "O_DIRECTORY", 0)
@@ -54,6 +54,8 @@ class StoredImage:
     height: int
     size: int
     fmt: str
+    kind: str = "image"  # "image" | "text" | "binary"
+    mime: str = "application/octet-stream"
 
 
 @dataclass(frozen=True)
@@ -348,7 +350,7 @@ class LocalDestination(Destination):
 
     def save(self, data: bytes, info: ImageInfo) -> StoredImage:
         self._ensure_dir()
-        ext = extension_for(info.fmt)
+        ext = info.ext
         last_exc: Exception | None = None
         with self._directory_fd() as directory_fd:
             for _attempt in range(8):
@@ -383,6 +385,8 @@ class LocalDestination(Destination):
                     height=info.height,
                     size=len(data),
                     fmt=info.fmt,
+                    kind=info.kind,
+                    mime=info.mime,
                 )
                 try:
                     self._write_meta_atomic(
@@ -394,6 +398,8 @@ class LocalDestination(Destination):
                             "height": stored.height,
                             "size": stored.size,
                             "format": stored.fmt,
+                            "kind": stored.kind,
+                            "mime": stored.mime,
                         },
                     )
                 except BaseException as exc:
@@ -458,15 +464,31 @@ class LocalDestination(Destination):
                     height = raw["height"]
                     size = raw["size"]
                     fmt = raw["format"]
-                    if any(isinstance(v, bool) or not isinstance(v, int) for v in (width, height, size)):
+                    kind = raw.get("kind", "image")
+                    mime = raw.get("mime", "application/octet-stream")
+                    if isinstance(size, bool) or not isinstance(size, int):
                         raise ValueError("types numériques invalides")
-                    if not (1 <= width <= MAX_DIMENSION and 1 <= height <= MAX_DIMENSION):
-                        raise ValueError("dimensions invalides")
-                    if width * height > HARD_MAX_PIXELS or size < 0 or size != actual_size:
+                    if kind == "image":
+                        if any(isinstance(v, bool) or not isinstance(v, int) for v in (width, height)):
+                            raise ValueError("types numériques invalides")
+                        if not (1 <= width <= MAX_DIMENSION and 1 <= height <= MAX_DIMENSION):
+                            raise ValueError("dimensions invalides")
+                        if width * height > HARD_MAX_PIXELS:
+                            raise ValueError("métadonnées incohérentes")
+                        if fmt not in FORMATS:
+                            raise ValueError("format invalide")
+                    else:
+                        if width is not None or height is not None:
+                            raise ValueError("dimensions inattendues")
+                        if fmt is not None:
+                            raise ValueError("format inattendu")
+                    if size < 0 or size != actual_size:
                         raise ValueError("métadonnées incohérentes")
-                    if fmt not in FORMATS:
-                        raise ValueError("format invalide")
-                    item = StoredImage(filename, created_at, width, height, size, fmt)
+                    if kind not in ("image", "text", "binary"):
+                        raise ValueError("kind invalide")
+                    if not isinstance(mime, str) or not mime or len(mime) > 120:
+                        raise ValueError("mime invalide")
+                    item = StoredImage(filename, created_at, width, height, size, fmt, kind, mime)
                 except (TypeError, ValueError, KeyError):
                     log.warning("métadonnées invalides, ignorées : %s", entry.name)
                     continue

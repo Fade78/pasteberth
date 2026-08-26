@@ -173,6 +173,10 @@ allow_unauthenticated_local = false
 allow_unauthenticated_remote = false
 # Non-loopback HTTP is refused by default; use an HTTPS reverse proxy.
 allow_insecure_http_remote = false
+# Accepted content kinds (all true by default).
+accept_bin = true
+accept_img = true
+accept_doc = true
 log_level = "INFO"
 
 [tls]
@@ -387,6 +391,11 @@ def _cmd_audit(args: argparse.Namespace) -> int:
         warnings.append(
             "allowed_hosts vide : contrôle de Host désactivé (wildcard) ; "
             "listez vos noms d'hôte exposés pour le réactiver"
+        )
+    if not (cfg.accept_bin or cfg.accept_img or cfg.accept_doc):
+        warnings.append(
+            "accept_bin, accept_img et accept_doc sont tous à false : "
+            "le serveur refusera tout contenu"
         )
 
     for zone in cfg.zones.values():

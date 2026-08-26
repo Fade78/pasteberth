@@ -58,6 +58,9 @@ class Base(unittest.TestCase):
             max_upload_size=self.config_kwargs.get("max_upload_size", "20MB"),
             trusted_proxies=self.config_kwargs.get("trusted_proxies", '["127.0.0.1", "::1"]'),
             allowed_hosts=self.config_kwargs.get("allowed_hosts"),
+            accept_bin=self.config_kwargs.get("accept_bin"),
+            accept_img=self.config_kwargs.get("accept_img"),
+            accept_doc=self.config_kwargs.get("accept_doc"),
         )
         self.tmp = tmp
         self.server = LiveServer(cfg_path)
@@ -420,12 +423,46 @@ class TestRejetsUploads(Base):
 
     config_kwargs = {"max_upload_size": "4KB"}
 
-    def test_texte_brut_refuse(self):
-        status, err = None, None
+    def test_texte_brut_accepte(self):
         status_code, _, body = self.req("POST", "/api/zones/default/images",
                                         body=b"juste du texte",
                                         headers={"Content-Type": "text/plain"})
-        self.assertEqual(status_code, 415)
+        self.assertEqual(status_code, 201)
+        self.assertEqual(json_of(body)["kind"], "text")
+
+    def test_texte_accepte_et_preview(self):
+        status_code, _, resp = self.req("POST", "/api/zones/default/images",
+                                        body=b"hello world",
+                                        headers={"Content-Type": "text/plain"})
+        self.assertEqual(status_code, 201)
+        item = json_of(resp)
+        self.assertEqual(item["kind"], "text")
+        self.assertTrue(item["filename"].endswith(".txt"))
+        self.assertEqual(item["mime"], "text/plain")
+        status_code, headers, data = self.req("GET", item["preview_url"])
+        self.assertEqual(status_code, 200)
+        self.assertEqual(data, b"hello world")
+        self.assertEqual(headers["content-type"], "text/plain")
+
+    def test_markdown_selon_type_declare(self):
+        status_code, _, resp = self.req("POST", "/api/zones/default/images",
+                                        body=b"# Titre",
+                                        headers={"Content-Type": "text/markdown"})
+        self.assertEqual(status_code, 201)
+        self.assertTrue(json_of(resp)["filename"].endswith(".md"))
+
+    def test_binaire_avec_extension_dorigine(self):
+        body, ctype = build_multipart(filename="archive.zip", data=b"\x00\x01\x02\x03")
+        status_code, _, resp = self.req("POST", "/api/zones/default/images",
+                                        body=body, headers={"Content-Type": ctype})
+        self.assertEqual(status_code, 201)
+        item = json_of(resp)
+        self.assertEqual(item["kind"], "binary")
+        self.assertTrue(item["filename"].endswith(".zip"))
+        status_code, headers, data = self.req("GET", item["preview_url"])
+        self.assertEqual(status_code, 200)
+        self.assertEqual(data, b"\x00\x01\x02\x03")
+        self.assertIn("attachment", headers.get("content-disposition", ""))
 
     def test_corps_vide(self):
         status_code, _, body = self.req("POST", "/api/zones/default/images",
@@ -526,6 +563,28 @@ class TestRejetsUploads(Base):
         self.assertEqual(status, 500)
         self.assertTrue(headers["content-type"].startswith("application/json"))
         self.assertEqual(json_of(body)["error"]["code"], "destination_error")
+
+
+class TestAcceptFlags(Base):
+    """accept_bin / accept_img / accept_doc : refus par kind."""
+
+    config_kwargs = {"accept_bin": "false"}
+
+    def test_binaire_refuse_texte_et_image_acceptes(self):
+        body, ctype = build_multipart(filename="archive.zip", data=b"\x00\x01\x02\x03")
+        status_code, _, resp = self.req("POST", "/api/zones/default/images",
+                                        body=body, headers={"Content-Type": ctype})
+        self.assertEqual(status_code, 415)
+        self.assertEqual(json_of(resp)["error"]["code"], "unsupported_media_type")
+
+        status_code, _, resp = self.req("POST", "/api/zones/default/images",
+                                        body=b"hello", headers={"Content-Type": "text/plain"})
+        self.assertEqual(status_code, 201)
+
+        body, ctype = build_multipart(data=make_png())
+        status_code, _, _ = self.req("POST", "/api/zones/default/images",
+                                     body=body, headers={"Content-Type": ctype})
+        self.assertEqual(status_code, 201)
 
 
 class TestZonesEtPreviews(Base):

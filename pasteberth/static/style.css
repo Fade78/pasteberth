@@ -228,6 +228,23 @@ code, kbd {
   cursor: zoom-in;
 }
 
+.file-box {
+  width: 96px;
+  height: 96px;
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--fg);
+  font-size: 0.8rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  cursor: pointer;
+}
+
 .latest-right {
   display: flex;
   flex-direction: column;
@@ -420,6 +437,20 @@ dialog#pv::backdrop { background: rgba(4, 6, 9, 0.66); }
   border-radius: 8px;
 }
 
+#pv-text {
+  max-width: 100%;
+  max-height: 68vh;
+  overflow: auto;
+  margin: 0;
+  padding: 10px;
+  background: rgba(0, 0, 0, 0.3);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-size: 0.85rem;
+}
+
 .pv-bar {
   display: flex;
   align-items: center;
@@ -508,4 +539,34 @@ kbd {
   .grid { grid-template-columns: 1fr; }
   .latest { flex-direction: column; }
   .thumb-big { max-width: 100%; }
+}
+
+/* Mode compact : les zones deviennent des bandes de couleur étroites,
+   toujours visibles, avec un bouton pour coller dedans. */
+@media (max-width: 480px) {
+  .grid {
+    grid-template-columns: 1fr;
+    gap: 8px;
+    padding: 8px;
+  }
+  .zone {
+    min-height: 0;
+    padding: 8px 10px;
+    gap: 6px;
+    border-radius: 8px;
+  }
+  .zone-head { display: flex; align-items: center; }
+  .zone-select { gap: 0.4rem; }
+  .zone-label { font-size: 0.9rem; }
+  .zone-count { font-size: 0.7rem; }
+  .drop-hint { padding: 0.6rem 0.8rem; font-size: 0.8rem; }
+  .latest { flex-direction: row; padding: 6px; gap: 8px; }
+  .thumb-big { max-width: 30%; max-height: 90px; }
+  .file-box { width: 56px; height: 56px; font-size: 0.65rem; }
+  .latest-actions { gap: 4px; }
+  .latest-actions button { padding: 0.25rem 0.5rem; font-size: 0.75rem; }
+  .meta .dims { font-size: 0.68rem; }
+  .thumbs { gap: 4px; }
+  .thumb { width: 40px; height: 40px; }
+  .help { font-size: 0.68rem; }
 }

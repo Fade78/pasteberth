@@ -848,16 +848,22 @@ def make_handler(cfg: Config, service: PasteService, sessions: SessionStore,
                         self._error(400, "invalid_request",
                                     "champ 'image' attendu (multipart)")
                         return
-                    del filename_client  # jamais utilisé pour nommer un fichier
                     declared = part_ctype or "application/octet-stream"
-                elif ctype.startswith("image/") or ctype in ("application/octet-stream", ""):
+                elif ctype.startswith("image/") or ctype.startswith("text/") or ctype in (
+                    "application/octet-stream",
+                    "application/json",
+                    "application/xml",
+                    "application/x-yaml",
+                    "",
+                ):
                     data = body
+                    filename_client = None
                     declared = ctype or "application/octet-stream"
                 else:
                     self._error(415, "unsupported_media_type",
                                 f"Content-Type refusé : {ctype!r}")
                     return
-                item = service.upload(zid, data, declared)
+                item = service.upload(zid, data, declared, filename_client)
             except ServiceError as exc:
                 self._error(exc.status, exc.code, str(exc))
                 return
@@ -892,11 +898,15 @@ def make_handler(cfg: Config, service: PasteService, sessions: SessionStore,
                 except ServiceError as exc:
                     self._error(exc.status, exc.code, str(exc))
                     return
+                extra = []
+                if mime == "application/octet-stream":
+                    extra = [("Content-Disposition", f'attachment; filename="{filename}"')]
                 self._finish(
                     200,
                     mime,
                     data,
                     cache_control="no-store",
+                    extra_headers=extra,
                 )
             finally:
                 preview_slots.release()

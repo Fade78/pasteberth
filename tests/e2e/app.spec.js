@@ -28,6 +28,16 @@ async function dispatchPaste(page) {
   }, ONE_PIXEL_PNG);
 }
 
+async function dispatchTextPaste(page, text, type = "text/plain") {
+  await page.evaluate(({ text, type }) => {
+    const dataTransfer = new DataTransfer();
+    dataTransfer.setData(type, text);
+    const event = new Event("paste", { bubbles: true, cancelable: true });
+    Object.defineProperty(event, "clipboardData", { value: dataTransfer });
+    window.dispatchEvent(event);
+  }, { text, type });
+}
+
 async function dispatchCanvasPaste(page, type) {
   const payload = await page.evaluate(async (mime) => {
     const canvas = document.createElement("canvas");
@@ -238,8 +248,7 @@ test("accepte le glisser-déposer sur une zone", async ({ page }) => {
   await expect(secondary.locator(".zone-select")).toHaveAttribute("aria-pressed", "true");
 });
 
-test("supprime une image depuis la carte", async ({ page }) => {
-  await openApp(page);
+test("supprime une image depuis la carte", async ({ page }) => {  await openApp(page);
   const defaultZone = page.locator('[data-zone="default"]');
   await defaultZone.getByRole("button", { name: "Select zone Default" }).click();
   await dispatchPaste(page);
@@ -254,4 +263,19 @@ test("supprime une image depuis la carte", async ({ page }) => {
   const response = await page.request.get(`/api/zones/default/images`);
   const payload = await response.json();
   expect(payload.images.some(i => i.filename === filename)).toBe(false);
+});
+
+test("colle du texte et l'affiche", async ({ page }) => {
+  await openApp(page);
+  const defaultZone = page.locator('[data-zone="default"]');
+  await defaultZone.getByRole("button", { name: "Select zone Default" }).click();
+
+  await dispatchTextPaste(page, "hello world", "text/plain");
+
+  await expect(defaultZone.locator(".latest")).toBeVisible();
+  await expect(defaultZone.locator(".fname")).toHaveText(/\.txt$/);
+  await defaultZone.locator(".file-box").click();
+  await expect(page.locator("#pv")).toBeVisible();
+  await expect(page.locator("#pv-text")).toHaveText("hello world");
+  await page.getByRole("button", { name: "Close" }).click();
 });

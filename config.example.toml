@@ -23,6 +23,11 @@ allow_unauthenticated_local = false  # including behind a reverse proxy
 allow_unauthenticated_remote = false
 allow_insecure_http_remote = false   # true only on a controlled private network
 
+# Accepted content kinds (all true by default; all false = server refuses everything).
+accept_bin = true
+accept_img = true
+accept_doc = true
+
 log_level = "INFO"                # DEBUG | INFO | WARNING | ERROR
 
 [tls]

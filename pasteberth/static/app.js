@@ -31,6 +31,7 @@
   const pvToastEl = document.getElementById("pv-toast");
   const pv = document.getElementById("pv");
   const pvImg = document.getElementById("pv-img");
+  const pvText = document.getElementById("pv-text");
   const pvRef = document.getElementById("pv-ref");
   const pvCopy = document.getElementById("pv-copy");
   const pvCopyImage = document.getElementById("pv-copy-image");
@@ -372,14 +373,6 @@
   function renderLatest(zoneId, item) {
     const card = document.createElement("div");
     card.className = "latest";
-    const img = document.createElement("img");
-    img.className = "thumb-big";
-    setPreviewSource(img, item.preview_url);
-    img.alt = "latest image";
-    img.loading = "lazy";
-    img.tabIndex = 0;
-    img.setAttribute("role", "button");
-    img.setAttribute("aria-label", "Open the latest image preview");
     const right = document.createElement("div");
     right.className = "latest-right";
     right.appendChild(itemMeta(item));
@@ -417,7 +410,25 @@
     actions.className = "latest-actions";
     actions.append(btn, imageCopy, clear, zoom, del);
     right.appendChild(actions);
-    card.append(img, right);
+    if (item.kind === "image") {
+      const img = document.createElement("img");
+      img.className = "thumb-big";
+      setPreviewSource(img, item.preview_url);
+      img.alt = "latest image";
+      img.loading = "lazy";
+      img.tabIndex = 0;
+      img.setAttribute("role", "button");
+      img.setAttribute("aria-label", "Open the latest image preview");
+      card.append(img, right);
+    } else {
+      const box = document.createElement("div");
+      box.className = "file-box";
+      box.textContent = item.kind === "text" ? "TXT" : "FILE";
+      box.tabIndex = 0;
+      box.setAttribute("role", "button");
+      box.setAttribute("aria-label", "Open the latest content preview");
+      card.append(box, right);
+    }
     return card;
   }
 
@@ -552,17 +563,15 @@
 
   async function upload(zoneId, file) {
     if (!file) return;
-    if (!/image\//.test(file.type || "") && !/\.(png|jpe?g|webp)$/i.test(file.name || "")) {
-      toast("The pasted content is not a recognized image", "error");
-      return;
-    }
     const zoneEl = grid.querySelector(`[data-zone="${CSS.escape(zoneId)}"]`);
     if (zoneEl) zoneEl.classList.add("busy");
     refreshGeneration += 1;
     if (activeRefreshController) activeRefreshController.abort();
     try {
       const fd = new FormData();
-      fd.append("image", file, "clipboard.png"); // filename ignored by the server
+      // Le nom du fichier est conservé pour les drops (extension binaire) ;
+      // le serveur ne l'utilise jamais pour nommer quoi que ce soit.
+      fd.append("image", file, file.name || "clipboard");
       const item = await api(`/api/zones/${encodeURIComponent(zoneId)}/images`,
         { method: "POST", body: fd });
       refreshGeneration += 1;
@@ -574,11 +583,15 @@
         state.selectedByZone[zoneId] = item.id;
         rerenderZone(zoneId);
       }
-      toast(`Image uploaded (${shortRef(item.reference)})`);
-      // Best-effort automatic copy: the Copy link button remains available on failure.
-      writeClipboard(item.reference).then(ok => { if (ok) toast("Link copied"); });
+      toast(`${item.kind === "image" ? "Image" : "Content"} uploaded (${shortRef(item.reference)})`);
+      // Copie automatique best-effort : si elle échoue, on le signale
+      // explicitement (le bouton Copy link reste disponible).
+      writeClipboard(item.reference).then(ok => {
+        if (ok) toast("Link copied");
+        else toast("Link NOT copied — use the Copy link button", "error");
+      });
     } catch (err) {
-      if (err.status === 413) toast("Image is too large for this server", "error");
+      if (err.status === 413) toast("Content is too large for this server", "error");
       else if (err.status === 507) toast("Not enough disk space for this upload", "error");
       else {
         if (err.code === "retention_error") {
@@ -631,15 +644,27 @@
         break;
       }
     }
-    if (!file) {
-      const hasText = [...items].some(i => i.kind === "string");
-      if (hasText) toast("The clipboard does not contain an image");
+    if (file) {
+      event.preventDefault();
+      const zoneId = requireActiveZone();
+      if (!zoneId) return;
+      upload(zoneId, file);
       return;
     }
-    event.preventDefault();
-    const zoneId = requireActiveZone();
-    if (!zoneId) return;
-    upload(zoneId, file);
+    // Texte : on garde l'identité du clipboard (text/plain, text/html, …).
+    const textItem = [...items].find(i => i.kind === "string");
+    if (textItem) {
+      event.preventDefault();
+      const zoneId = requireActiveZone();
+      if (!zoneId) return;
+      textItem.getAsString((text) => {
+        if (!text) return;
+        const blob = new Blob([text], { type: textItem.type || "text/plain" });
+        upload(zoneId, blob);
+      });
+      return;
+    }
+    toast("The clipboard does not contain an image or text");
   });
 
   grid.addEventListener("click", (event) => {
@@ -682,6 +707,13 @@
       if (zone && zone.images[0]) openPreview(zone.images[0].preview_url, zone.images[0].reference);
       return;
     }
+    const fileBox = event.target.closest(".file-box");
+    if (fileBox) {
+      const zoneEl = fileBox.closest(".zone");
+      const zone = state.zones.find(z => z.id === zoneEl.dataset.zone);
+      if (zone && zone.images[0]) openContentPreview(zone.images[0]);
+      return;
+    }
     const zoneCard = event.target.closest(".zone");
     if (zoneCard) setActive(zoneCard.dataset.zone, { announce: true });
   });
@@ -694,6 +726,14 @@
       const zoneEl = bigThumb.closest(".zone");
       const zone = state.zones.find(z => z.id === zoneEl.dataset.zone);
       if (zone && zone.images[0]) openPreview(zone.images[0].preview_url, zone.images[0].reference);
+      return;
+    }
+    const fileBox = event.target.closest(".file-box");
+    if (fileBox) {
+      event.preventDefault();
+      const zoneEl = fileBox.closest(".zone");
+      const zone = state.zones.find(z => z.id === zoneEl.dataset.zone);
+      if (zone && zone.images[0]) openContentPreview(zone.images[0]);
       return;
     }
     const zoneSelect = event.target.closest(".zone-select");
@@ -723,10 +763,6 @@
     setActive(zoneCard.dataset.zone);
     const file = event.dataTransfer && event.dataTransfer.files && event.dataTransfer.files[0];
     if (!file) return;
-    if (!/^image\//.test(file.type)) {
-      toast("Only images are accepted", "error");
-      return;
-    }
     upload(zoneCard.dataset.zone, file);
   });
 
@@ -752,6 +788,37 @@
     else pv.setAttribute("open", "");
   }
 
+  function openTextPreview(text) {
+    pvText.textContent = text;
+    pvText.hidden = false;
+    pvImg.hidden = true;
+    if (typeof pv.showModal === "function") pv.showModal();
+    else pv.setAttribute("open", "");
+  }
+
+  async function openContentPreview(item) {
+    if (item.kind === "text") {
+      try {
+        const response = await fetchPreview(item.preview_url, {
+          credentials: "same-origin",
+          headers: { Accept: "text/plain" },
+        });
+        if (!response.ok) throw new Error("preview unavailable");
+        const text = await response.text();
+        openTextPreview(text);
+      } catch (_) {
+        toast("Could not load the text preview", "error");
+      }
+      return;
+    }
+    // Binaire : téléchargement direct (Content-Disposition: attachment).
+    const a = document.createElement("a");
+    a.href = item.preview_url;
+    a.download = item.filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+  }
   function closePreview() {
     if (typeof pv.close === "function") pv.close();
     else {
@@ -759,7 +826,6 @@
       setPreviewSource(pvImg, "");
     }
   }
-
   pvCopy.addEventListener("click", () => copyLink(pvRef.textContent));
   pvCopyImage.addEventListener("click", () => copyImage(pvCopyImage.dataset.preview));
   pvClear.addEventListener("click", clearClipboard);
@@ -772,7 +838,11 @@
   });
   document.getElementById("pv-close").addEventListener("click", closePreview);
   pv.addEventListener("click", (event) => { if (event.target === pv) closePreview(); });
-  pv.addEventListener("close", () => { setPreviewSource(pvImg, ""); });
+  pv.addEventListener("close", () => {
+    setPreviewSource(pvImg, "");
+    pvText.hidden = true;
+    pvImg.hidden = false;
+  });
 
   document.addEventListener("visibilitychange", () => {
     if (document.visibilityState === "visible") boot(true);

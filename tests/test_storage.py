@@ -210,9 +210,12 @@ class TestRepertoires(unittest.TestCase):
 
     def test_valid_filename(self):
         self.assertTrue(valid_filename("2026-08-25_01-22-31_a81c42.png"))
+        self.assertTrue(valid_filename("2026-08-25_01-22-31_a81c42.txt"))
+        self.assertTrue(valid_filename("2026-08-25_01-22-31_a81c42.pdf"))
+        self.assertTrue(valid_filename("2026-08-25_01-22-31_a81c42.gif"))
         self.assertFalse(valid_filename("../../etc/passwd"))
         self.assertFalse(valid_filename("random.png"))
-        self.assertFalse(valid_filename("2026-08-25_01-22-31_a81c42.gif"))
+        self.assertFalse(valid_filename("2026-08-25_01-22-31_a81c42.exe.bat"))
 
     def test_espace_libre_sous_seuil(self):
         dest = LocalDestination(self.tmp / "space")
