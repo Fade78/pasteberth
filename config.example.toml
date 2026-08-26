@@ -14,8 +14,8 @@ max_image_pixels = 25000000        # 25 MP default; absolute maximum 50 MP
 # Proxies allowed to set X-Forwarded-* (IP or CIDR).
 # Never include addresses reachable from the Internet.
 trusted_proxies = ["127.0.0.1", "::1"]
-# Public hostnames accepted in browser Origin/Referer checks; required for a
-# non-loopback listener or a reverse proxy using a public hostname.
+# Empty list = wildcard: any Host is accepted (Origin must still match Host).
+# List hostnames (e.g. "pasteberth.example") to enforce a strict allowlist.
 allowed_hosts = []
 
 # Explicitly refuse non-loopback startup without authentication unless enabled:

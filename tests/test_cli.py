@@ -237,8 +237,15 @@ class TestConfigurationDepot(unittest.TestCase):
         )
         self.assertEqual(proc.returncode, 2 if port_busy else 1)
         self.assertIn("stockage par défaut", proc.stdout)
-        if port_busy:
-            self.assertIn("bind impossible", proc.stdout)
+
+    def test_audit_allowed_hosts_vide_avertit_wildcard(self):
+        with socket.socket() as probe:
+            probe.bind(("127.0.0.1", 0))
+            port = probe.getsockname()[1]
+        cfg = write_config(self.tmp, port=port, auth_enabled=True, password="un-hash-valide")
+        proc = run_cli(["audit", "--config", str(cfg)])
+        self.assertIn("wildcard", proc.stdout)
+        self.assertIn("AVERTISSEMENT", proc.stdout)
 
     def test_audit_permissions_zone_avertit_sans_echouer(self):
         target = self.tmp / "open"

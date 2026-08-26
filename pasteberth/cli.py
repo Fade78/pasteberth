@@ -167,6 +167,7 @@ port = 8765
 max_upload_size = "20MiB"
 max_image_pixels = 25000000
 trusted_proxies = ["127.0.0.1", "::1"]
+# Empty list = wildcard (Host check disabled); list hostnames to enable it.
 allowed_hosts = []
 allow_unauthenticated_local = false
 allow_unauthenticated_remote = false
@@ -381,6 +382,11 @@ def _cmd_audit(args: argparse.Namespace) -> int:
     if uses_default_storage and config_path is not None:
         warnings.append(
             f"stockage par défaut utilisé : {default_storage_path()}"
+        )
+    if not cfg.allowed_hosts:
+        warnings.append(
+            "allowed_hosts vide : contrôle de Host désactivé (wildcard) ; "
+            "listez vos noms d'hôte exposés pour le réactiver"
         )
 
     for zone in cfg.zones.values():

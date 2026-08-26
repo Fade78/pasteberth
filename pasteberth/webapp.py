@@ -282,16 +282,12 @@ def make_handler(cfg: Config, service: PasteService, sessions: SessionStore,
             host_name = self._host_name(self._host())
             if host_name is None:
                 return False
-            if cfg.allowed_hosts:
-                return host_name in cfg.allowed_hosts
-            listen_name = self._host_name(cfg.listen_address)
-            if listen_name in (None, "0.0.0.0", "::"):
-                return False
-            if host_name == listen_name:
+            # Feature: allowed_hosts vide = wildcard. Tout nom d'hôte est
+            # accepté (l'Origin doit toujours matcher le Host de la requête).
+            # Une liste explicite restaure la vérification stricte.
+            if not cfg.allowed_hosts:
                 return True
-            if listen_name in ("127.0.0.1", "::1", "localhost"):
-                return host_name in ("127.0.0.1", "::1", "localhost")
-            return False
+            return host_name in cfg.allowed_hosts
 
         def _expected_origin(self) -> str:
             scheme = self._scheme()

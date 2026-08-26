@@ -794,7 +794,9 @@ class TestOriginCSRF(Base):
                                          "Referer": "https://evil.example/page"})
         self.assertEqual(status, 403)
 
-    def test_hote_inconnu_refuse_meme_avec_origine_correspondante(self):
+    def test_hote_inconnu_accepte_en_wildcard_si_origine_correspond(self):
+        # Feature: allowed_hosts vide = wildcard ; un hôte quelconque est
+        # accepté tant que l'Origin matche le Host de la requête.
         body, ctype = build_multipart(data=make_png())
         status, _, _ = self.req(
             "POST",
@@ -806,7 +808,7 @@ class TestOriginCSRF(Base):
                 "Content-Type": ctype,
             },
         )
-        self.assertEqual(status, 403)
+        self.assertEqual(status, 201)
 
 
 class TestAllowedHosts(Base):
@@ -843,6 +845,20 @@ class TestAllowedHosts(Base):
             },
         )
         self.assertEqual(status, 201)
+
+    def test_hote_hors_liste_refuse_meme_avec_origine_correspondante(self):
+        body, ctype = build_multipart(data=make_png())
+        status, _, _ = self.req(
+            "POST",
+            "/api/zones/default/images",
+            body=body,
+            headers={
+                "Host": "attacker.example",
+                "Origin": "http://attacker.example",
+                "Content-Type": ctype,
+            },
+        )
+        self.assertEqual(status, 403)
 
 
 class TestRequestFraming(Base):

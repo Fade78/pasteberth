@@ -160,7 +160,7 @@ les zones et chemins souhaités. Le fichier reste ignoré par Git.
 | `max_upload_size` | `"20MiB"` | plafond par upload (20 MiB par défaut, 50 MiB maximum) |
 | `max_image_pixels` | `25000000` | budget de décodage (25 MP par défaut, 50 MP maximum) |
 | `trusted_proxies` | loopback | seuls ces pairs peuvent poser `X-Forwarded-*` |
-| `allowed_hosts` | `[]` | noms d'hôte autorisés pour les contrôles Origin/Referer ; requis derrière un reverse proxy public |
+| `allowed_hosts` | `[]` | noms d'hôte autorisés pour les contrôles Host/Origin ; liste vide = wildcard (l'audit avertit), une liste restaure la vérification stricte |
 | `allow_unauthenticated_local` | `false` | opt-in explicite pour le mode anonyme loopback/proxy |
 | `allow_unauthenticated_remote` | `false` | déverrouillage explicite (déconseillé) |
 | `allow_insecure_http_remote` | `false` | opt-in séparé pour HTTP non-loopback (réseau privé uniquement) |
@@ -310,8 +310,11 @@ Avec une écoute non-loopback, activez TLS ou utilisez un reverse proxy HTTPS.
 L'option `allow_insecure_http_remote = true` ne doit être utilisée que sur un
 réseau privé maîtrisé.
 
-Avec un reverse proxy, indiquez son nom d'hôte public dans `allowed_hosts` (nom
-seul, sans schéma, port ni chemin) :
+Par défaut `allowed_hosts` est vide, ce qui désactive le contrôle de Host
+(wildcard) : tout nom d'hôte est accepté, et l'Origin du navigateur doit
+toujours correspondre au Host. Pour restaurer une liste stricte, indiquez les
+noms d'hôte exposés (nom seul, sans schéma, port ni chemin) ; `pasteberth
+audit` avertit tant que la liste est vide :
 
 ```toml
 listen_address = "127.0.0.1"

@@ -157,7 +157,7 @@ desired zones and paths. The file remains ignored by Git.
 | `max_upload_size` | `"20MiB"` | per-upload limit (20 MiB by default, 50 MiB maximum) |
 | `max_image_pixels` | `25000000` | decoding budget (25 MP by default, 50 MP maximum) |
 | `trusted_proxies` | loopback | only these peers may set `X-Forwarded-*` |
-| `allowed_hosts` | `[]` | hostnames accepted by browser Origin/Referer checks; required behind a public reverse proxy |
+| `allowed_hosts` | `[]` | hostnames accepted by Host/Origin checks; empty = wildcard (audit warns). List hostnames to enforce a strict allowlist |
 | `allow_unauthenticated_local` | `false` | explicit opt-in for anonymous loopback/proxy mode |
 | `allow_unauthenticated_remote` | `false` | explicit unlock (discouraged) |
 | `allow_insecure_http_remote` | `false` | separate opt-in for non-loopback HTTP (private network only) |
@@ -305,8 +305,11 @@ With a non-loopback listener, enable TLS or use an HTTPS reverse proxy. The
 `allow_insecure_http_remote = true` option should only be used on a controlled
 private network.
 
-For a reverse proxy, list its public hostname in `allowed_hosts` (hostname only,
-without scheme, port, or path):
+By default `allowed_hosts` is empty, which disables the Host check (wildcard):
+any Host header is accepted, and the browser Origin must still match it. To
+enforce a strict allowlist, list the hostnames you expose (hostname only,
+without scheme, port, or path) — `pasteberth audit` warns while the list is
+empty:
 
 ```toml
 listen_address = "127.0.0.1"
