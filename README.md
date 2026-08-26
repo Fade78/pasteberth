@@ -19,7 +19,7 @@ the right project in your browser, and retrieve a filesystem reference ready to
 paste into the harness:
 
 ```
-@/home/user/PasteBerth/captures/2026-08-25_22-58-10_7ad5d9.png
+@/absolute/path/to/PasteBerth/captures/project-alpha/example.png
 ```
 
 ```
@@ -182,20 +182,20 @@ For three projects, repeat `[[zones]]`; each block describes an entry in the
 
 ```toml
 [[zones]]
-id = "lightwebpres"
-label = "LightWebPres"
+id = "project-alpha"
+label = "Project Alpha"
 type = "local"
-directory = "/home/user/PasteBerth/captures/lightwebpres"
+directory = "/absolute/path/to/PasteBerth/captures/project-alpha"
 retain = 10
 reference_prefix = ""
 reference_suffix = ""
 color = "#304237"
 
 [[zones]]
-id = "lightwebpres-gui"
-label = "LightWebPres-GUI"
+id = "project-beta"
+label = "Project Beta"
 type = "local"
-directory = "/home/user/PasteBerth/captures/lightwebpres-gui"
+directory = "/absolute/path/to/PasteBerth/captures/project-beta"
 retain = 10
 reference_prefix = ""
 reference_suffix = ""
@@ -205,7 +205,7 @@ color = "#9e3451"
 id = "pasteberth"
 label = "PasteBerth"
 type = "local"
-directory = "/home/user/PasteBerth/captures/pasteberth"
+directory = "/absolute/path/to/PasteBerth/captures/pasteberth"
 retain = 10
 reference_prefix = ""
 reference_suffix = ""
@@ -254,7 +254,7 @@ journalctl --user -u pasteberth -f                 # logs
 The supplied unit (`deploy/pasteberth.service`) is optional and requires no
 root. Adapt its `WorkingDirectory`, `ExecStart`, and configuration path to the
 actual repository before enabling it. Example if the repository is in
-`/home/devint3/PasteBerth` and the configuration is in `config/`:
+`~/PasteBerth` and the configuration is in `config/`:
 
 ```ini
 [Service]

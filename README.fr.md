@@ -19,7 +19,7 @@ la zone du bon projet dans votre navigateur, et vous récupérez une référence
 filesystem prête à coller dans le harness :
 
 ```
-@/home/user/PasteBerth/captures/2026-08-25_22-58-10_7ad5d9.png
+@/chemin/absolu/vers/PasteBerth/captures/projet-alpha/exemple.png
 ```
 
 ```
@@ -185,20 +185,20 @@ liste `zones` :
 
 ```toml
 [[zones]]
-id = "lightwebpres"
-label = "LightWebPres"
+id = "projet-alpha"
+label = "Projet Alpha"
 type = "local"
-directory = "/home/user/PasteBerth/captures/lightwebpres"
+directory = "/chemin/absolu/vers/PasteBerth/captures/projet-alpha"
 retain = 10
 reference_prefix = ""
 reference_suffix = ""
 color = "#304237"
 
 [[zones]]
-id = "lightwebpres-gui"
-label = "LightWebPres-GUI"
+id = "projet-beta"
+label = "Projet Beta"
 type = "local"
-directory = "/home/user/PasteBerth/captures/lightwebpres-gui"
+directory = "/chemin/absolu/vers/PasteBerth/captures/projet-beta"
 retain = 10
 reference_prefix = ""
 reference_suffix = ""
@@ -208,7 +208,7 @@ color = "#9e3451"
 id = "pasteberth"
 label = "PasteBerth"
 type = "local"
-directory = "/home/user/PasteBerth/captures/pasteberth"
+directory = "/chemin/absolu/vers/PasteBerth/captures/pasteberth"
 retain = 10
 reference_prefix = ""
 reference_suffix = ""
@@ -258,7 +258,7 @@ journalctl --user -u pasteberth -f                 # logs
 L'unité fournie (`deploy/pasteberth.service`) est optionnelle et ne nécessite
 aucun root. Adaptez son `WorkingDirectory`, son `ExecStart` et son chemin de
 configuration au dépôt réel avant activation. Exemple si le dépôt est dans
-`/home/devint3/PasteBerth` et la configuration dans `config/` :
+`~/PasteBerth` et la configuration dans `config/` :
 
 ```ini
 [Service]
