@@ -573,6 +573,22 @@ class TestOriginCSRF(Base):
         status, _, _ = self._post(f"http://127.0.0.1:{self.server.port}")
         self.assertEqual(status, 201)
 
+    def test_hote_ipv6_loopback_normalise(self):
+        handler = self.server.httpd.RequestHandlerClass
+        self.assertEqual(handler._host_name("::1"), "::1")
+        body, ctype = build_multipart(data=make_png())
+        status, _, _ = self.req(
+            "POST",
+            "/api/zones/default/images",
+            body=body,
+            headers={
+                "Host": f"[::1]:{self.server.port}",
+                "Origin": f"http://[::1]:{self.server.port}",
+                "Content-Type": ctype,
+            },
+        )
+        self.assertEqual(status, 201)
+
     def test_sans_origin_client_scripte_acceptee(self):
         status, _, _ = self._post(None)
         self.assertEqual(status, 201)
@@ -704,6 +720,49 @@ class TestRequestFraming(Base):
             sock.shutdown(socket.SHUT_WR)
             response = self._read_all(sock).decode("latin-1")
         self.assertTrue(response.startswith("HTTP/1.1 400"), response[:60])
+
+    def test_cible_invalide_refuse_le_corps_et_ferme(self):
+        import socket
+
+        pipelined = b"GET /api/health HTTP/1.1\r\nHost: localhost\r\n\r\n"
+        request_bytes = (
+            b"POST /%ff HTTP/1.1\r\n"
+            b"Host: localhost\r\n"
+            + f"Content-Length: {len(pipelined)}\r\n".encode()
+            + b"Content-Type: application/octet-stream\r\n\r\n"
+            + pipelined
+        )
+        with socket.create_connection(("127.0.0.1", self.server.port), timeout=5) as sock:
+            sock.sendall(request_bytes)
+            sock.shutdown(socket.SHUT_WR)
+            response = self._read_all(sock).decode("latin-1").lower()
+        self.assertEqual(response.count("http/1.1 400"), 1)
+        self.assertNotIn("http/1.1 200", response)
+        self.assertIn("connection: close", response)
+
+    def test_http_10_et_connection_close_restent_fermes(self):
+        import socket
+
+        for request_line, extra in (
+            (b"GET /api/health HTTP/1.0\r\n", b""),
+            (b"GET /api/health HTTP/1.1\r\n", b"Connection: close\r\n"),
+        ):
+            with self.subTest(request_line=request_line):
+                with socket.create_connection(("127.0.0.1", self.server.port), timeout=5) as sock:
+                    sock.sendall(request_line + b"Host: localhost\r\n" + extra + b"\r\n")
+                    sock.shutdown(socket.SHUT_WR)
+                    response = self._read_all(sock).decode("latin-1").lower()
+                self.assertTrue(response.startswith("http/1.1 200"), response[:60])
+                self.assertIn("connection: close", response)
+
+    def test_http_09_ne_provoque_pas_erreur_interne(self):
+        import socket
+
+        with socket.create_connection(("127.0.0.1", self.server.port), timeout=5) as sock:
+            sock.sendall(b"GET /api/health\r\n")
+            sock.shutdown(socket.SHUT_WR)
+            response = self._read_all(sock).decode("latin-1")
+        self.assertEqual(response, '{"ok": true}')
 
 
 class TestProxysConfiance(Base):

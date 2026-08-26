@@ -28,6 +28,33 @@ async function dispatchPaste(page) {
   }, ONE_PIXEL_PNG);
 }
 
+async function dispatchCanvasPaste(page, type) {
+  const payload = await page.evaluate(async (mime) => {
+    const canvas = document.createElement("canvas");
+    canvas.width = 2;
+    canvas.height = 2;
+    const context = canvas.getContext("2d");
+    context.fillStyle = "#d56b36";
+    context.fillRect(0, 0, 2, 2);
+    const blob = await new Promise((resolve) => canvas.toBlob(resolve, mime));
+    if (!blob) throw new Error(`could not encode ${mime}`);
+    const buffer = await blob.arrayBuffer();
+    return {
+      type: blob.type,
+      base64: btoa(String.fromCharCode(...new Uint8Array(buffer))),
+    };
+  }, type);
+  await page.evaluate(({ base64, type }) => {
+    const bytes = Uint8Array.from(atob(base64), (char) => char.charCodeAt(0));
+    const file = new File([bytes], "clipboard-image", { type });
+    const dataTransfer = new DataTransfer();
+    dataTransfer.items.add(file);
+    const event = new Event("paste", { bubbles: true, cancelable: true });
+    Object.defineProperty(event, "clipboardData", { value: dataTransfer });
+    window.dispatchEvent(event);
+  }, payload);
+}
+
 async function dispatchDrop(page, selector) {
   await page.locator(selector).evaluate((element, base64) => {
     const bytes = Uint8Array.from(atob(base64), (char) => char.charCodeAt(0));
@@ -111,6 +138,24 @@ test("colle une image et ouvre son aperçu au clavier", async ({ page }) => {
   await page.locator("#pv-clear").click();
   await expect(page.locator("#pv-toast")).toContainText("Clipboard cleared");
   await page.getByRole("button", { name: "Close" }).click();
+});
+
+test("copie les previews JPEG et WebP comme PNG", async ({ page, browserName }) => {
+  test.skip(browserName !== "chromium", "ClipboardItem image support is validated in Chromium");
+  await openApp(page);
+  const defaultZone = page.locator('[data-zone="default"]');
+  await defaultZone.getByRole("button", { name: "Select zone Default" }).click();
+
+  for (const [index, [type, extension]] of [
+    [1, ["image/jpeg", "jpg"]],
+    [2, ["image/webp", "webp"]],
+  ]) {
+    await dispatchCanvasPaste(page, type);
+    await expect(defaultZone.locator(".thumb-wrap")).toHaveCount(index);
+    await expect(defaultZone.locator(".fname")).toHaveText(new RegExp(`\\.${extension}$`));
+    await defaultZone.getByRole("button", { name: "Copy image to the clipboard" }).click();
+    await expect(page.locator("#toast")).toContainText("Image copied");
+  }
 });
 
 test("sélectionne une image depuis l'index", async ({ page }) => {

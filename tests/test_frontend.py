@@ -72,6 +72,7 @@ class TestContratsFrontend(unittest.TestCase):
         self.assertIn("@media", self.style_css)
         self.assertIn("<dialog", self.index_html)
         self.assertIn("auto-fit", self.style_css)
+        self.assertIn("dialog#pv:not([open])", self.style_css)
         self.assertNotIn('aria-live="polite"', self.index_html)
 
     def test_refresh_ordonne_et_actions_clavier(self):

@@ -407,6 +407,8 @@ dialog#pv {
   max-width: min(92vw, 1100px);
 }
 
+dialog#pv:not([open]) { display: none; }
+
 dialog#pv::backdrop { background: rgba(4, 6, 9, 0.66); }
 
 #pv-img {

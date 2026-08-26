@@ -248,8 +248,14 @@ def make_handler(cfg: Config, service: PasteService, sessions: SessionStore,
 
         @staticmethod
         def _host_name(netloc: str) -> str | None:
+            raw = netloc.strip()
+            ip_candidate = raw[1:-1] if raw.startswith("[") and raw.endswith("]") else raw
             try:
-                parsed = urllib.parse.urlsplit("//" + netloc.strip())
+                return str(ipaddress.ip_address(ip_candidate)).lower()
+            except ValueError:
+                pass
+            try:
+                parsed = urllib.parse.urlsplit("//" + raw)
                 hostname = parsed.hostname
                 parsed.port  # Validate a possible port before accepting the host.
             except ValueError:
@@ -412,9 +418,10 @@ def make_handler(cfg: Config, service: PasteService, sessions: SessionStore,
         # ------------------------------------------------------------- lecture
 
         def _validate_request_framing(self) -> bool:
-            self.close_connection = self.command != "GET"
-            content_lengths = self.headers.get_all("Content-Length", [])
-            transfer_encodings = self.headers.get_all("Transfer-Encoding", [])
+            self.close_connection = self.close_connection or self.command != "GET"
+            get_all = getattr(self.headers, "get_all", None)
+            content_lengths = get_all("Content-Length", []) if get_all else []
+            transfer_encodings = get_all("Transfer-Encoding", []) if get_all else []
             if len(content_lengths) > 1 or transfer_encodings:
                 self.close_connection = True
                 self._error(400, "invalid_request", "ambiguous request framing")
@@ -474,14 +481,16 @@ def make_handler(cfg: Config, service: PasteService, sessions: SessionStore,
 
         def _dispatch(self) -> None:
             self._t_start = time.monotonic()
+            self._route_path = self.path.split("?")[0]
+            if not self._validate_request_framing():
+                return
             try:
                 path = urllib.parse.unquote(self.path.split("?")[0], errors="strict")
             except (UnicodeDecodeError, ValueError):
+                self.close_connection = True
                 self._error(400, "invalid_request", "encodage de chemin invalide")
                 return
             self._route_path = path
-            if not self._validate_request_framing():
-                return
             if "\x00" in path or "\\" in path:
                 self._error(400, "invalid_request", "requête invalide")
                 return
@@ -581,6 +590,8 @@ def make_handler(cfg: Config, service: PasteService, sessions: SessionStore,
             self.send_header("Location", location)
             self.send_header("Content-Length", "0")
             self.send_header("Cache-Control", "no-store")
+            if self.close_connection:
+                self.send_header("Connection", "close")
             for key, value in self._security_headers():
                 self.send_header(key, value)
             self.end_headers()
@@ -688,6 +699,8 @@ def make_handler(cfg: Config, service: PasteService, sessions: SessionStore,
             self.send_header("Set-Cookie", self._session_cookie(token))
             self.send_header("Content-Length", "0")
             self.send_header("Cache-Control", "no-store")
+            if self.close_connection:
+                self.send_header("Connection", "close")
             for key, value in self._security_headers():
                 self.send_header(key, value)
             self.end_headers()
@@ -699,6 +712,8 @@ def make_handler(cfg: Config, service: PasteService, sessions: SessionStore,
             self.send_header("Set-Cookie", self._clear_cookie())
             self.send_header("Content-Length", "0")
             self.send_header("Cache-Control", "no-store")
+            if self.close_connection:
+                self.send_header("Connection", "close")
             for key, value in self._security_headers():
                 self.send_header(key, value)
             self.end_headers()
