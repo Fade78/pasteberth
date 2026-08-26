@@ -45,6 +45,8 @@ class PasteberthServer(ThreadingHTTPServer):
         self.tls_context = tls_context
         super().__init__(server_address, handler_class, bind_and_activate)
         self._request_slots = threading.BoundedSemaphore(self.max_active_requests)
+        self._active_sockets: set[socket.socket] = set()
+        self._sockets_lock = threading.Lock()
 
     def get_request(self):
         request, client_address = super().get_request()
@@ -65,9 +67,13 @@ class PasteberthServer(ThreadingHTTPServer):
         if not self._request_slots.acquire(blocking=False):
             request.close()
             return
+        with self._sockets_lock:
+            self._active_sockets.add(request)
         try:
             super().process_request(request, client_address)
         except BaseException:
+            with self._sockets_lock:
+                self._active_sockets.discard(request)
             self._request_slots.release()
             raise
 
@@ -75,7 +81,33 @@ class PasteberthServer(ThreadingHTTPServer):
         try:
             super().process_request_thread(request, client_address)
         finally:
+            with self._sockets_lock:
+                self._active_sockets.discard(request)
             self._request_slots.release()
+
+    def close_active_connections(self) -> None:
+        """Ferme les connexions en attente pour débloquer l'arrêt gracieux.
+
+        Sans cela, les connexions keep-alive (polling navigateur) laissent
+        leurs threads bloqués en lecture et server_close() attend indéfiniment.
+        """
+        with self._sockets_lock:
+            sockets = list(self._active_sockets)
+        for sock in sockets:
+            try:
+                sock.shutdown(socket.SHUT_RDWR)
+            except OSError:
+                pass
+            try:
+                sock.close()
+            except OSError:
+                pass
+
+    def server_close(self) -> None:
+        # Ferme d'abord les connexions actives : les threads bloqués en
+        # lecture se réveillent et server_close() peut les drainer.
+        self.close_active_connections()
+        super().server_close()
 
 
 def serve_forever(handler_class, listen_address: str, port: int, tls_context=None) -> None:
@@ -83,6 +115,7 @@ def serve_forever(handler_class, listen_address: str, port: int, tls_context=Non
 
     def _shutdown(signum, _frame) -> None:
         log.info("signal %s reçu, arrêt…", signal.Signals(signum).name)
+        server.close_active_connections()
         threading.Thread(target=server.shutdown, daemon=True).start()
 
     previous_term = signal.signal(signal.SIGTERM, _shutdown)
