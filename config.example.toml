@@ -23,12 +23,12 @@ allow_unauthenticated_local = false  # including behind a reverse proxy
 allow_unauthenticated_remote = false
 allow_insecure_http_remote = false   # true only on a controlled private network
 
+log_level = "INFO"                # DEBUG | INFO | WARNING | ERROR
+
 [tls]
 enabled = false
 # certificate = "/absolute/path/to/cert.pem"
 # private_key = "/absolute/path/to/key.pem"
-
-log_level = "INFO"                # DEBUG | INFO | WARNING | ERROR
 
 [auth]
 enabled = true                    # false only with the explicit opt-in above
