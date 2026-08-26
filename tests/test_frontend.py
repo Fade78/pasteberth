@@ -98,8 +98,11 @@ class TestContratsFrontend(unittest.TestCase):
 
     def test_previews_reessaient_les_reponses_temporaires(self):
         self.assertIn("function setPreviewSource", self.app_js)
+        self.assertIn("function fetchPreview", self.app_js)
         self.assertIn("preview_retry", self.app_js)
-        self.assertIn("maxRetries = 3", self.app_js)
+        self.assertIn("PREVIEW_MAX_RETRIES = 3", self.app_js)
+        self.assertIn("setPreviewSource(pvImg", self.app_js)
+        self.assertIn("clearTimeout(img._previewRetryTimer)", self.app_js)
 
     def test_version_dans_le_branding(self):
         self.assertIn("brand-version", self.index_html)

@@ -259,7 +259,7 @@ def _audit_zone(cfg, zone) -> tuple[list[str], list[str]]:
         if mode & 0o022:
             errors.append(
                 f"zone {zone.id}: permissions d'écriture non privées ({oct(mode)}) : {path} "
-                "(0700 requis)"
+                "(écriture groupe/autres refusée)"
             )
         elif mode & 0o077:
             warnings.append(

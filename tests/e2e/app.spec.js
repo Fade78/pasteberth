@@ -140,6 +140,60 @@ test("colle une image et ouvre son aperçu au clavier", async ({ page }) => {
   await page.getByRole("button", { name: "Close" }).click();
 });
 
+test("réessaie une preview temporairement indisponible", async ({ page }) => {
+  let previewAttempts = 0;
+  await page.route("**/previews/**", async (route) => {
+    previewAttempts += 1;
+    if (previewAttempts === 1) {
+      await route.fulfill({
+        status: 503,
+        contentType: "application/json",
+        headers: { "Retry-After": "1" },
+        body: JSON.stringify({ error: { code: "preview_busy", message: "busy" } }),
+      });
+      return;
+    }
+    await route.continue();
+  });
+
+  await openApp(page);
+  await page.getByRole("button", { name: "Select zone Default" }).click();
+  await dispatchPaste(page);
+
+  const preview = page.locator('[data-zone="default"] .thumb-big');
+  await expect.poll(() => previewAttempts).toBeGreaterThan(1);
+  await expect.poll(() => preview.evaluate((image) => image.naturalWidth)).toBeGreaterThan(0);
+});
+
+test("réessaie la copie d'une preview temporaire", async ({ page, browserName }) => {
+  test.skip(browserName !== "chromium", "ClipboardItem image support is validated in Chromium");
+  let copyAttempts = 0;
+  await page.route("**/previews/**", async (route) => {
+    if (route.request().headers().accept === "image/*") {
+      copyAttempts += 1;
+      if (copyAttempts === 1) {
+        await route.fulfill({
+          status: 503,
+          contentType: "application/json",
+          headers: { "Retry-After": "1" },
+          body: JSON.stringify({ error: { code: "preview_busy", message: "busy" } }),
+        });
+        return;
+      }
+    }
+    await route.continue();
+  });
+
+  await openApp(page);
+  const defaultZone = page.locator('[data-zone="default"]');
+  await defaultZone.getByRole("button", { name: "Select zone Default" }).click();
+  await dispatchPaste(page);
+  await expect(defaultZone.locator(".latest")).toBeVisible();
+  await defaultZone.getByRole("button", { name: "Copy image to the clipboard" }).click();
+  await expect(page.locator("#toast")).toContainText("Image copied");
+  expect(copyAttempts).toBeGreaterThan(1);
+});
+
 test("copie les previews JPEG et WebP comme PNG", async ({ page, browserName }) => {
   test.skip(browserName !== "chromium", "ClipboardItem image support is validated in Chromium");
   await openApp(page);

@@ -892,6 +892,20 @@ class TestRequestFraming(Base):
             response = self._read_all(sock).decode("latin-1")
         self.assertTrue(response.startswith("HTTP/1.1 400"), response[:60])
 
+    def test_host_duplique_refuse(self):
+        import socket
+
+        request_bytes = (
+            b"GET /api/health HTTP/1.1\r\n"
+            b"Host: localhost\r\n"
+            b"Host: attacker.example\r\n\r\n"
+        )
+        with socket.create_connection(("127.0.0.1", self.server.port), timeout=5) as sock:
+            sock.sendall(request_bytes)
+            sock.shutdown(socket.SHUT_WR)
+            response = self._read_all(sock).decode("latin-1")
+        self.assertTrue(response.startswith("HTTP/1.1 400"), response[:60])
+
     def test_cible_invalide_refuse_le_corps_et_ferme(self):
         import socket
 

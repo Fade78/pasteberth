@@ -464,6 +464,7 @@ def make_handler(cfg: Config, service: PasteService, sessions: SessionStore,
         def _validate_request_framing(self) -> bool:
             self.close_connection = self.close_connection or self.command != "GET"
             get_all = getattr(self.headers, "get_all", None)
+            host_values = get_all("Host", []) if get_all else []
             content_lengths = get_all("Content-Length", []) if get_all else []
             transfer_encodings = get_all("Transfer-Encoding", []) if get_all else []
             connection_values = get_all("Connection", []) if get_all else []
@@ -473,7 +474,7 @@ def make_handler(cfg: Config, service: PasteService, sessions: SessionStore,
                 for token in value.split(",")
             ):
                 self.close_connection = True
-            if len(content_lengths) > 1 or transfer_encodings:
+            if len(host_values) > 1 or len(content_lengths) > 1 or transfer_encodings:
                 self.close_connection = True
                 self._error(400, "invalid_request", "ambiguous request framing")
                 return False

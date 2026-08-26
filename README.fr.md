@@ -311,6 +311,15 @@ Avec une écoute non-loopback, activez TLS ou utilisez un reverse proxy HTTPS.
 L'option `allow_insecure_http_remote = true` ne doit être utilisée que sur un
 réseau privé maîtrisé.
 
+Avec un reverse proxy, indiquez son nom d'hôte public dans `allowed_hosts` (nom
+seul, sans schéma, port ni chemin) :
+
+```toml
+listen_address = "127.0.0.1"
+trusted_proxies = ["127.0.0.1"]
+allowed_hosts = ["pasteberth.example.internal"]
+```
+
 ### Caddy (recommandé)
 
 ```caddy
@@ -403,10 +412,10 @@ client doit donc recharger l'historique avant de retenter aveuglément.
 - Seuls les fichiers dotés d'un sidecar Pasteberth peuvent être lus ou
   supprimés ; vos fichiers personnels dans les répertoires cibles ne sont
   jamais touchés.
-- Répertoires privés requis pour un service qui écrit (`0700`), images/sidecars
-  privés (`0600`), liens symboliques refusés et réconciliation des temporaires
-  après crash. Les modes partagés en lecture seule sont signalés ; les
-  répertoires accessibles en écriture au groupe/autres sont refusés.
+- Les répertoires cibles inscriptibles refusent les bits d'écriture groupe/autres ;
+  le mode privé (`0700`) est recommandé. Images/sidecars privés (`0600`), liens
+  symboliques refusés et réconciliation des temporaires après crash. Les modes
+  partagés en lecture seule sont signalés.
 - Validation structurelle complète des PNG/JPEG/WebP, budget de dimensions et
   de pixels, et refus des conteneurs tronqués.
 - Rétention sous verrou par zone : ordre déterministe, uploads concurrents

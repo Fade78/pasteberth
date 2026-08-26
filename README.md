@@ -306,6 +306,15 @@ With a non-loopback listener, enable TLS or use an HTTPS reverse proxy. The
 `allow_insecure_http_remote = true` option should only be used on a controlled
 private network.
 
+For a reverse proxy, list its public hostname in `allowed_hosts` (hostname only,
+without scheme, port, or path):
+
+```toml
+listen_address = "127.0.0.1"
+trusted_proxies = ["127.0.0.1"]
+allowed_hosts = ["pasteberth.example.internal"]
+```
+
 ### Caddy (recommended)
 
 ```caddy
@@ -396,10 +405,10 @@ therefore reload the history before blindly retrying.
   `[A-Za-z0-9._-]` + history membership required).
 - Only files with a Pasteberth sidecar can be read or deleted; your personal
   files in the target directories are never touched.
-- Private directories required for writable service use (`0700`), private
-  images/sidecars (`0600`), symbolic links refused, and temporary files
-  reconciled after a crash. Read-only shared directory modes are warned about;
-  group/other-writable directories are refused.
+- Writable target directories reject group/other write bits; private mode
+  (`0700`) is recommended. Private images/sidecars (`0600`), symbolic links
+  refused, and temporary files
+  reconciled after a crash. Read-only shared directory modes are warned about.
 - Complete structural validation of PNG/JPEG/WebP, dimensions and pixel budget,
   and rejection of truncated containers.
 - Retention under a per-zone lock: deterministic ordering, safe concurrent

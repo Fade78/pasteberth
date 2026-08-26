@@ -224,7 +224,7 @@
       return false;
     }
     try {
-      const response = await fetch(previewUrl, {
+      const response = await fetchPreview(previewUrl, {
         credentials: "same-origin",
         headers: { Accept: "image/*" },
       });
@@ -253,18 +253,52 @@
     return name.length > 40 ? name.slice(0, 37) + "…" : name;
   }
 
+  const PREVIEW_MAX_RETRIES = 3;
+
+  function previewAttemptUrl(url, retry) {
+    if (!retry) return url;
+    const separator = url.includes("?") ? "&" : "?";
+    return `${url}${separator}preview_retry=${retry}`;
+  }
+
   function setPreviewSource(img, url) {
+    if (img._previewRetryTimer) {
+      window.clearTimeout(img._previewRetryTimer);
+      img._previewRetryTimer = null;
+    }
+    if (img._previewErrorHandler) {
+      img.removeEventListener("error", img._previewErrorHandler);
+    }
+    if (!url) {
+      img._previewErrorHandler = null;
+      img.src = "";
+      return;
+    }
     let retries = 0;
-    const maxRetries = 3;
-    img.addEventListener("error", () => {
-      if (retries >= maxRetries) return;
+    const onError = () => {
+      if (retries >= PREVIEW_MAX_RETRIES) return;
       retries += 1;
-      window.setTimeout(() => {
-        const separator = url.includes("?") ? "&" : "?";
-        img.src = `${url}${separator}preview_retry=${retries}`;
+      img._previewRetryTimer = window.setTimeout(() => {
+        img._previewRetryTimer = null;
+        img.src = previewAttemptUrl(url, retries);
       }, retries * 1000);
-    });
+    };
+    img._previewErrorHandler = onError;
+    img.addEventListener("error", onError);
     img.src = url;
+  }
+
+  async function fetchPreview(url, options) {
+    for (let retry = 0; retry <= PREVIEW_MAX_RETRIES; retry += 1) {
+      const response = await fetch(previewAttemptUrl(url, retry), options);
+      if (response.status !== 503 || retry === PREVIEW_MAX_RETRIES) return response;
+      const retryAfter = Number(response.headers.get("Retry-After"));
+      const delay = Number.isFinite(retryAfter) && retryAfter >= 0
+        ? retryAfter * 1000
+        : (retry + 1) * 1000;
+      await new Promise(resolve => window.setTimeout(resolve, Math.min(delay, 5000)));
+    }
+    throw new Error("preview unavailable");
   }
 
   // ------------------------------------------------------------- rendering
@@ -680,7 +714,7 @@
   });
 
   function openPreview(url, reference) {
-    pvImg.src = url;
+    setPreviewSource(pvImg, url);
     pvRef.textContent = reference;
     pvCopyImage.dataset.preview = url;
     if (typeof pv.showModal === "function") pv.showModal();
@@ -691,7 +725,7 @@
     if (typeof pv.close === "function") pv.close();
     else {
       pv.removeAttribute("open");
-      pvImg.src = "";
+      setPreviewSource(pvImg, "");
     }
   }
 
@@ -700,7 +734,7 @@
   pvClear.addEventListener("click", clearClipboard);
   document.getElementById("pv-close").addEventListener("click", closePreview);
   pv.addEventListener("click", (event) => { if (event.target === pv) closePreview(); });
-  pv.addEventListener("close", () => { pvImg.src = ""; });
+  pv.addEventListener("close", () => { setPreviewSource(pvImg, ""); });
 
   document.addEventListener("visibilitychange", () => {
     if (document.visibilityState === "visible") boot(true);
