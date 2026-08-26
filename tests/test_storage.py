@@ -59,7 +59,7 @@ class TestSauvegarde(Base):
         items = self.dest.list()
         self.assertEqual(len(items), 1)
         self.assertEqual(items[0].kind, "image")
-        self.assertEqual(items[0].mime, "application/octet-stream")
+        self.assertEqual(items[0].mime, "image/png")
         self.assertEqual(len(self.dest.read(stored.filename)), len(make_png(2, 2)))
 
     def test_collision_forcee_resolue(self):
@@ -74,6 +74,40 @@ class TestSauvegarde(Base):
             saved.append(self.dest.save(make_png(), INFO()).filename)
         self.assertNotEqual(saved[0], saved[1])
         self.assertEqual(len(list(self.dir.glob("*.png"))), 2)
+
+    def test_nom_explicit_et_ecrasement_atomique(self):
+        info = ImageInfo(
+            fmt=None,
+            width=None,
+            height=None,
+            kind="binary",
+            mime="application/octet-stream",
+            ext=".zip",
+        )
+        first = self.dest.save(b"old", info, filename="archive final.zip")
+        second = self.dest.save(b"new", info, filename="archive final.zip")
+
+        self.assertEqual(first.filename, "archive final.zip")
+        self.assertEqual(second.filename, first.filename)
+        self.assertEqual(self.dest.read(first.filename), b"new")
+        self.assertEqual([item.filename for item in self.dest.list()], [first.filename])
+        self.assertEqual(list(self.dir.glob(".pb*")), [])
+
+    def test_nom_explicit_necrase_pas_un_fichier_etranger(self):
+        foreign = self.dir / "archive.zip"
+        foreign.write_bytes(b"foreign")
+        info = ImageInfo(
+            fmt=None,
+            width=None,
+            height=None,
+            kind="binary",
+            mime="application/octet-stream",
+            ext=".zip",
+        )
+
+        with self.assertRaises(DestinationError):
+            self.dest.save(b"replacement", info, filename=foreign.name)
+        self.assertEqual(foreign.read_bytes(), b"foreign")
 
 
 class TestListe(Base):
@@ -226,9 +260,13 @@ class TestRepertoires(unittest.TestCase):
         self.assertTrue(valid_filename("2026-08-25_01-22-31_a81c42.txt"))
         self.assertTrue(valid_filename("2026-08-25_01-22-31_a81c42.pdf"))
         self.assertTrue(valid_filename("2026-08-25_01-22-31_a81c42.gif"))
+        self.assertTrue(valid_filename("rapport final.txt"))
+        self.assertTrue(valid_filename("résumé.pdf"))
         self.assertFalse(valid_filename("../../etc/passwd"))
-        self.assertFalse(valid_filename("random.png"))
-        self.assertFalse(valid_filename("2026-08-25_01-22-31_a81c42.exe.bat"))
+        self.assertTrue(valid_filename("random.png"))
+        self.assertTrue(valid_filename("2026-08-25_01-22-31_a81c42.exe.bat"))
+        self.assertFalse(valid_filename(".pasteberth.lock"))
+        self.assertFalse(valid_filename("bad\nname.txt"))
 
     def test_espace_libre_sous_seuil(self):
         dest = LocalDestination(self.tmp / "space")

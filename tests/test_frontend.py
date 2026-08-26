@@ -116,6 +116,8 @@ class TestContratsFrontend(unittest.TestCase):
         self.assertIn("getAsString", self.app_js)
         self.assertIn("new Blob([text]", self.app_js)
         self.assertIn("file.name || \"clipboard\"", self.app_js)
+        self.assertIn('fd.append("preserve_name", "1")', self.app_js)
+        self.assertIn("preserveName: true", self.app_js)
         self.assertNotIn("Only images are accepted", self.app_js)
 
     def test_bouton_copie_par_kind(self):
@@ -124,12 +126,16 @@ class TestContratsFrontend(unittest.TestCase):
         self.assertIn("function copyContent", self.app_js)
         self.assertIn("Text copied", self.app_js)
         self.assertIn("Bin copied", self.app_js)
+        self.assertIn("function downloadLabel", self.app_js)
+        self.assertIn("function downloadContent", self.app_js)
+        self.assertIn('className = "download-btn"', self.app_js)
+        self.assertIn('id="pv-download"', self.index_html)
 
     def test_preview_texte_et_binaire(self):
         self.assertIn("function openTextPreview", self.app_js)
         self.assertIn("function openContentPreview", self.app_js)
         self.assertIn('id="pv-text"', self.index_html)
-        self.assertIn("a.download = item.filename", self.app_js)
+        self.assertIn("link.download = filename", self.app_js)
 
     def test_echec_copie_signeale(self):
         self.assertIn("Link NOT copied", self.app_js)

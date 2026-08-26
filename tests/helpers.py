@@ -105,12 +105,19 @@ def build_multipart(
     data: bytes = b"",
     content_type: str = "image/png",
     boundary: str = "pasteberthtest7351029384756abc",
+    extra_fields: dict[str, bytes | str] | None = None,
 ) -> tuple[bytes, str]:
     body = bytearray()
     body += f"--{boundary}\r\n".encode()
     body += f'Content-Disposition: form-data; name="{field}"; filename="{filename}"\r\n'.encode()
     body += f"Content-Type: {content_type}\r\n\r\n".encode()
     body += data
+    for name, value in (extra_fields or {}).items():
+        raw = value.encode() if isinstance(value, str) else value
+        body += f"\r\n--{boundary}\r\n".encode()
+        body += f'Content-Disposition: form-data; name="{name}"\r\n'.encode()
+        body += b"Content-Type: text/plain\r\n\r\n"
+        body += raw
     body += f"\r\n--{boundary}--\r\n".encode()
     return bytes(body), f"multipart/form-data; boundary={boundary}"
 

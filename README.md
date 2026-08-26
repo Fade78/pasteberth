@@ -77,16 +77,22 @@ terminal process.
 - **One zone per project**: each zone has an independent identifier, label,
   color, directory, and retention policy. Click a zone to make it active, then
   use Ctrl+V or drag and drop.
-- **Selected image panel**: after an upload, the new image is selected at the
-  top with its name, reference, and the `Copy link`, `Copy image`, `Clear`, and
-  `Zoom` actions.
-- **Image index**: the thumbnails at the bottom form the zone's complete
-  history, newest first. Click a thumbnail to select it in the upper panel; the
-  selected thumbnail is marked.
+- **Image, text, and file content**: Ctrl+V preserves clipboard content; a
+  dragged file is stored under its original name. If it replaces a Pasteberth-
+  managed file with the same name, the content and sidecar are replaced
+  atomically. Foreign files are never overwritten.
+- **Selected content panel**: after an upload, the new content is selected at
+  the top with its name, reference, and a matching content action: `Copy Image`
+  or `Copy Text` where relevant, plus `Download EXT` for every type. `Copy link`,
+  `Clear`, and `Preview`/`Zoom` remain available according to the content.
+- **Content index**: the items at the bottom form the zone's complete history,
+  newest first. Images have thumbnails; text and files have a type marker. Click
+  an item to select it in the upper panel; the selected item is marked.
 - **Clipboard**: after an upload, Pasteberth tries to copy the exact reference
-  to the clipboard. `Copy link` copies that reference, `Copy image` copies the
-  image itself, and `Clear` replaces the clipboard contents with empty text,
-  within the limits of the browser's Clipboard permissions.
+  to the clipboard. `Copy link` copies that reference, `Copy Image` copies the
+  image itself, `Copy Text` copies text, and `Clear` replaces the clipboard
+  contents with empty text, within the limits of the browser's Clipboard
+  permissions.
 - **Exact references**: the server builds and returns the path; the frontend
   copies it as-is, never reconstructing it client-side. The prefix and suffix
   are configurable, for example to obtain `` `/path/image.png` ``.
@@ -358,7 +364,7 @@ validated image in a zone.
 | GET | `/api/health` | probe (public) |
 | GET | `/api/zones` | zones + counts |
 | GET | `/api/zones/{id}/images` | history, newest first |
-| POST | `/api/zones/{id}/images` | upload (multipart `image` field, or raw `image/*` / `application/octet-stream` body) |
+| POST | `/api/zones/{id}/images` | upload (multipart `image` field; `preserve_name=1` keeps a dragged file's name, or raw `image/*` / `application/octet-stream` body) |
 | GET | `/previews/{id}/{file}` | thumbnail (protected) |
 
 Example:

@@ -41,7 +41,7 @@ _STATIC_DIR = _PACKAGE_DIR / "static"
 _TEMPLATES_DIR = _PACKAGE_DIR / "templates"
 
 _ZONE_RE = r"([a-z0-9][a-z0-9_-]{0,63})"
-_FILENAME_RE = r"([A-Za-z0-9._\-]{1,200})"
+_FILENAME_RE = r"([^/\\\x00]{1,200})"
 
 _ROUTES: tuple[tuple[str, re.Pattern, str], ...] = tuple(
     (method, re.compile(pattern), name)
@@ -606,13 +606,19 @@ def make_handler(cfg: Config, service: PasteService, sessions: SessionStore,
             "h_static_favicon": (_STATIC_DIR / "favicon.svg", "image/svg+xml"),
         }
 
-        def _serve_static(self, path: Path, ctype: str) -> None:
+        def _serve_static(
+            self,
+            path: Path,
+            ctype: str,
+            *,
+            cache_control: str = "no-store",
+        ) -> None:
             try:
                 data = path.read_bytes()
             except OSError:
                 self._error(404, "not_found", "ressource introuvable")
                 return
-            self._finish(200, ctype, data, cache_control="public, max-age=300")
+            self._finish(200, ctype, data, cache_control=cache_control)
 
         def _h_static_app_js(self) -> None:
             self._serve_static(self._STATIC_FILES["h_static_app_js"][0],
@@ -624,7 +630,8 @@ def make_handler(cfg: Config, service: PasteService, sessions: SessionStore,
 
         def _h_static_favicon(self) -> None:
             self._serve_static(self._STATIC_FILES["h_static_favicon"][0],
-                               self._STATIC_FILES["h_static_favicon"][1])
+                               self._STATIC_FILES["h_static_favicon"][1],
+                               cache_control="public, max-age=300")
 
         def _h_health(self) -> None:
             self._json(200, {"ok": True})
@@ -849,6 +856,9 @@ def make_handler(cfg: Config, service: PasteService, sessions: SessionStore,
                                     "champ 'image' attendu (multipart)")
                         return
                     declared = part_ctype or "application/octet-stream"
+                    preserve_name = (
+                        fields.get("preserve_name", (None, None, b""))[2].strip() == b"1"
+                    )
                 elif ctype.startswith("image/") or ctype.startswith("text/") or ctype in (
                     "application/octet-stream",
                     "application/json",
@@ -859,11 +869,18 @@ def make_handler(cfg: Config, service: PasteService, sessions: SessionStore,
                     data = body
                     filename_client = None
                     declared = ctype or "application/octet-stream"
+                    preserve_name = False
                 else:
                     self._error(415, "unsupported_media_type",
                                 f"Content-Type refusé : {ctype!r}")
                     return
-                item = service.upload(zid, data, declared, filename_client)
+                item = service.upload(
+                    zid,
+                    data,
+                    declared,
+                    filename_client,
+                    preserve_filename=preserve_name,
+                )
             except ServiceError as exc:
                 self._error(exc.status, exc.code, str(exc))
                 return
@@ -900,7 +917,17 @@ def make_handler(cfg: Config, service: PasteService, sessions: SessionStore,
                     return
                 extra = []
                 if mime == "application/octet-stream":
-                    extra = [("Content-Disposition", f'attachment; filename="{filename}"')]
+                    fallback = "".join(
+                        char if 32 <= ord(char) < 127 and char not in {'"', "\\"} else "_"
+                        for char in filename
+                    ) or "download"
+                    encoded = urllib.parse.quote(filename, safe="")
+                    extra = [
+                        (
+                            "Content-Disposition",
+                            f'attachment; filename="{fallback}"; filename*=UTF-8\'\'{encoded}',
+                        )
+                    ]
                 self._finish(
                     200,
                     mime,

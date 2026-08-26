@@ -77,16 +77,25 @@ et un processus de terminal.
 - **Une zone par projet** : chaque zone a un identifiant, un label, une couleur,
   un répertoire et une rétention indépendants. Cliquez une zone pour la rendre
   active, puis utilisez Ctrl+V ou le glisser-déposer.
-- **Panneau de l'image sélectionnée** : après un upload, la nouvelle image est
-  sélectionnée en haut avec son nom, sa référence et les actions `Copier le
-  lien`, `Copier l'image`, `Effacer` et `Zoom`.
-- **Index des images** : les miniatures du bas forment l'historique complet de
-  la zone, plus récent en premier. Cliquez une miniature pour la sélectionner
-  dans le panneau supérieur ; la miniature sélectionnée est signalée.
+- **Contenus image, texte et fichier** : Ctrl+V conserve les contenus du
+  presse-papiers ; un fichier glissé est enregistré sous son nom d'origine.
+  S'il remplace un fichier déjà géré par Pasteberth du même nom, le contenu et
+  le sidecar sont remplacés atomiquement. Les fichiers étrangers ne sont pas
+  écrasés.
+- **Panneau du contenu sélectionné** : après un upload, le nouveau contenu est
+  sélectionné en haut avec son nom, sa référence et une action de contenu
+  adaptée : `Copy Image` ou `Copy Text` quand c'est pertinent, plus `Download
+  EXT` pour tous les types. Les actions `Copy link`, `Clear` et `Preview`/`Zoom`
+  restent disponibles selon le contenu.
+- **Index des contenus** : les miniatures du bas forment l'historique complet
+  de la zone, plus récent en premier. Les images ont une miniature ; les textes
+  et fichiers ont un indicateur de type. Cliquez un élément pour le sélectionner
+  dans le panneau supérieur ; l'élément sélectionné est signalé.
 - **Presse-papiers** : après un upload, Pasteberth tente de copier la référence
-  exacte dans le presse-papiers. `Copier le lien` copie cette référence,
-  `Copier l'image` copie l'image elle-même et `Effacer` remplace son contenu
-  par un texte vide, dans la limite des permissions Clipboard du navigateur.
+  exacte dans le presse-papiers. `Copy link` copie cette référence, `Copy Image`
+  copie l'image elle-même, `Copy Text` copie le texte et `Clear` remplace son
+  contenu par un texte vide, dans la limite des permissions Clipboard du
+  navigateur.
 - **Références exactes** : le serveur construit et retourne le chemin ; le
   frontend le copie tel quel, sans jamais le reconstruire côté client. Le
   préfixe et le suffixe sont configurables, par exemple pour obtenir
@@ -364,7 +373,7 @@ veut déposer une image validée dans une zone.
 | GET | `/api/health` | sonde (public) |
 | GET | `/api/zones` | zones + compteurs |
 | GET | `/api/zones/{id}/images` | historique, plus récent d'abord |
-| POST | `/api/zones/{id}/images` | upload (multipart champ `image`, ou corps brut `image/*` / `application/octet-stream`) |
+| POST | `/api/zones/{id}/images` | upload (multipart champ `image` ; `preserve_name=1` conserve le nom du fichier glissé, ou corps brut `image/*` / `application/octet-stream`) |
 | GET | `/previews/{id}/{fichier}` | miniature (protégée) |
 
 Exemple :

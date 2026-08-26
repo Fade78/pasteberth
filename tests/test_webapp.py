@@ -112,6 +112,8 @@ class TestPublic(Base):
             status, headers, _ = self.req("GET", path)
             self.assertEqual(status, 200, path)
             self.assertTrue(headers["content-type"].startswith(ctype), path)
+            if path != "/static/favicon.svg":
+                self.assertEqual(headers["cache-control"], "no-store", path)
 
 
 class TestConfigurationProxyParDefaut(Base):
@@ -416,6 +418,47 @@ class TestUploadsFormats(Base):
                                    headers={"Content-Type": ctype})
         self.assertEqual(status, 201)
         self.assertRegex(json_of(resp)["filename"], FILENAME_RE)
+
+    def test_nom_du_fichier_glisse_et_ecrasement(self):
+        def upload(data):
+            body, ctype = build_multipart(
+                filename="rapport final.txt",
+                data=data,
+                content_type="text/plain",
+                extra_fields={"preserve_name": "1"},
+            )
+            return self.req(
+                "POST",
+                "/api/zones/default/images",
+                body=body,
+                headers={"Content-Type": ctype},
+            )
+
+        status, _, first = upload(b"version 1")
+        self.assertEqual(status, 201)
+        item = json_of(first)
+        self.assertEqual(item["filename"], "rapport final.txt")
+        self.assertEqual(item["kind"], "text")
+
+        status, _, second = upload(b"version 2")
+        self.assertEqual(status, 201)
+        replacement = json_of(second)
+        self.assertEqual(replacement["filename"], item["filename"])
+        self.assertEqual(replacement["size"], len(b"version 2"))
+        self.assertEqual(
+            replacement["preview_url"],
+            "/previews/default/rapport%20final.txt",
+        )
+
+        status, _, listed = self.req("GET", "/api/zones/default/images")
+        self.assertEqual(status, 200)
+        self.assertEqual([i["filename"] for i in json_of(listed)["images"]], [item["filename"]])
+        status, _, data = self.req(
+            "GET",
+            replacement["preview_url"],
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(data, b"version 2")
 
 
 class TestRejetsUploads(Base):

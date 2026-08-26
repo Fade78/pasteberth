@@ -13,6 +13,7 @@ import os
 import threading
 from contextlib import contextmanager
 from pathlib import Path
+from urllib.parse import quote
 
 from pasteberth.config import Config, ZoneConfig
 from pasteberth.content import classify
@@ -75,6 +76,7 @@ class ServiceError(Exception):
         "unknown_zone": 404,
         "unknown_image": 404,
         "empty_upload": 400,
+        "invalid_filename": 400,
         "invalid_image": 400,
         "unsupported_format": 415,
         "unsupported_media_type": 415,
@@ -143,6 +145,7 @@ class PasteService:
         data: bytes,
         declared_mime: str | None,
         filename_hint: str | None = None,
+        preserve_filename: bool = False,
     ) -> dict:
         zone = self._zone_cfg.get(zid)
         if zone is None:
@@ -154,7 +157,17 @@ class PasteService:
                 "too_large",
                 f"contenu trop grand ({len(data)} > {self.cfg.max_upload_bytes} octets)",
             )
-        if not mime_allowed(declared_mime):
+        target_filename = None
+        if preserve_filename:
+            if not filename_hint or not valid_filename(filename_hint):
+                raise ServiceError(
+                    "invalid_filename",
+                    "le nom du fichier glissé est invalide",
+                )
+            target_filename = filename_hint
+        # A drag-and-drop carries a real file name, so its declared MIME may be
+        # an arbitrary vendor type. Content classification remains authoritative.
+        if not mime_allowed(declared_mime) and target_filename is None:
             raise ServiceError(
                 "unsupported_media_type",
                 f"Content-Type déclaré refusé : {declared_mime!r}",
@@ -191,7 +204,7 @@ class PasteService:
                 self._space_locks[device].locked(),
             ):
                 dest.ensure_space(len(data), zone.min_free_percent)
-                stored = dest.save(data, info)
+                stored = dest.save(data, info, filename=target_filename)
                 deleted = dest.apply_retention(zone.retain, stored.filename)
         except StorageLowError as exc:
             raise ServiceError("storage_low", str(exc)) from exc
@@ -279,6 +292,8 @@ class PasteService:
             "format": item.fmt,
             "kind": item.kind,
             "mime": item.mime,
-            "preview_url": f"/previews/{zid}/{item.filename}",
+            "preview_url": (
+                f"/previews/{quote(zid, safe='')}/{quote(item.filename, safe='')}"
+            ),
             "reference": f"{zone.reference_prefix}{reference_path}{zone.reference_suffix}",
         }

@@ -80,6 +80,22 @@ async function dispatchDrop(page, selector) {
   }, ONE_PIXEL_PNG);
 }
 
+async function dispatchBinaryDrop(page, selector) {
+  await page.locator(selector).evaluate((element) => {
+    const file = new File([new Uint8Array([0, 1, 2, 3])], "archive.zip", {
+      type: "application/zip",
+    });
+    const dataTransfer = new DataTransfer();
+    dataTransfer.items.add(file);
+    const event = new DragEvent("drop", {
+      bubbles: true,
+      cancelable: true,
+      dataTransfer,
+    });
+    element.dispatchEvent(event);
+  });
+}
+
 test.beforeEach(async ({ request }) => {
   await resetServer(request);
 });
@@ -131,6 +147,11 @@ test("colle une image et ouvre son aperçu au clavier", async ({ page }) => {
   await expect(page.locator("#toast")).toContainText("Link copied");
   await defaultZone.getByRole("button", { name: "Copy image to the clipboard" }).click();
   await expect(page.locator("#toast")).toContainText("Image copied");
+  const imageName = await defaultZone.locator(".fname").textContent();
+  const imageDownloadPromise = page.waitForEvent("download");
+  await defaultZone.locator(".download-btn").click();
+  const imageDownload = await imageDownloadPromise;
+  expect(imageDownload.suggestedFilename()).toBe(imageName);
 
   await defaultZone.locator(".thumb-big").press("Enter");
   await expect(page.locator("#pv")).toBeVisible();
@@ -244,8 +265,28 @@ test("accepte le glisser-déposer sur une zone", async ({ page }) => {
 
   const secondary = page.locator('[data-zone="secondary"]');
   await expect(secondary.locator(".latest")).toBeVisible();
-  await expect(secondary.locator(".fname")).toHaveText(/\.png$/);
+  await expect(secondary.locator(".fname")).toHaveText("dropped.png");
   await expect(secondary.locator(".zone-select")).toHaveAttribute("aria-pressed", "true");
+});
+
+test("conserve le nom et propose le téléchargement pour un binaire déposé", async ({ page }) => {
+  await openApp(page);
+  await dispatchBinaryDrop(page, '.zone[data-zone="default"]');
+
+  const defaultZone = page.locator('[data-zone="default"]');
+  await expect(defaultZone.locator(".fname")).toHaveText("archive.zip");
+  await expect(defaultZone.locator(".download-btn")).toHaveText("Download ZIP");
+  await expect(defaultZone.locator(".download-btn")).toHaveAttribute(
+    "aria-label",
+    "Download ZIP",
+  );
+  const downloadPromise = page.waitForEvent("download");
+  await defaultZone.locator(".download-btn").click();
+  const download = await downloadPromise;
+  expect(download.suggestedFilename()).toBe("archive.zip");
+
+  await dispatchBinaryDrop(page, '.zone[data-zone="default"]');
+  await expect(defaultZone.locator(".thumb-wrap")).toHaveCount(1);
 });
 
 test("supprime une image depuis la carte", async ({ page }) => {  await openApp(page);
@@ -270,12 +311,28 @@ test("colle du texte et l'affiche", async ({ page }) => {
   const defaultZone = page.locator('[data-zone="default"]');
   await defaultZone.getByRole("button", { name: "Select zone Default" }).click();
 
-  await dispatchTextPaste(page, "hello world", "text/plain");
+  await dispatchTextPaste(page, "# hello world", "text/markdown");
 
   await expect(defaultZone.locator(".latest")).toBeVisible();
-  await expect(defaultZone.locator(".fname")).toHaveText(/\.txt$/);
+  await expect(defaultZone.locator(".fname")).toHaveText(/\.md$/);
+  await expect(defaultZone.locator(".dims")).not.toContainText("null");
+  await expect(defaultZone.locator(".index-title")).toHaveText("Content index");
+  await expect(defaultZone.locator(".thumb-content")).toHaveText("TXT");
+  await expect(defaultZone.locator(".copy-image-btn")).toHaveText("Copy Text");
+  await expect(defaultZone.locator(".copy-image-btn")).toHaveAttribute(
+    "aria-label",
+    "Copy Text to the clipboard",
+  );
+  await expect(defaultZone.locator(".download-btn")).toHaveText("Download MD");
+  const textName = await defaultZone.locator(".fname").textContent();
+  const textDownloadPromise = page.waitForEvent("download");
+  await defaultZone.locator(".download-btn").click();
+  const textDownload = await textDownloadPromise;
+  expect(textDownload.suggestedFilename()).toBe(textName);
   await defaultZone.locator(".file-box").click();
   await expect(page.locator("#pv")).toBeVisible();
-  await expect(page.locator("#pv-text")).toHaveText("hello world");
+  await expect(page.locator("#pv-text")).toHaveText("# hello world");
+  await expect(page.locator("#pv-copy-image")).toHaveText("Copy Text");
+  await expect(page.locator("#pv-download")).toHaveText("Download MD");
   await page.getByRole("button", { name: "Close" }).click();
 });

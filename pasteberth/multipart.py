@@ -1,8 +1,8 @@
 """Parser ``multipart/form-data`` minimal et borné (bibliothèque standard).
 
 Le corps est déjà plafonné en amont (max_upload_bytes) ; ce parser borne
-en plus le nombre de parties et la taille des en-têtes. Il n'utilise jamais
-le nom de fichier fourni par le client pour nommer quoi que ce soit.
+en plus le nombre de parties et la taille des en-têtes. Le nom de fichier est
+retourné comme indication ; la couche stockage le valide avant tout usage.
 """
 from __future__ import annotations
 

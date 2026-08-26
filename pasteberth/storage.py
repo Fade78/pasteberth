@@ -26,15 +26,16 @@ from pasteberth.images import (
     HARD_MAX_PIXELS,
     MAX_DIMENSION,
     ImageInfo,
-    extension_for,
+    mime_for,
 )
 from pasteberth.paths import first_symlink_component
 
 log = logging.getLogger("pasteberth.storage")
 
-_FILENAME_RE = re.compile(
+_GENERATED_FILENAME_RE = re.compile(
     r"^\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}_[0-9a-f]{6}\.[a-z0-9]{1,10}$"
 )
+_CLIENT_FILENAME_RE = re.compile(r"^[^/\\\x00\r\n]{1,200}$")
 _META_KEYS = {"filename", "created_at", "width", "height", "size", "format"}
 # kind/mime ajoutés en v1.0.3 ; les sidecars v1.0.1/v1.0.2 (6 clés) restent valides.
 _META_KEYS_NEW = _META_KEYS | {"kind", "mime"}
@@ -49,19 +50,35 @@ _O_NOFOLLOW = getattr(os, "O_NOFOLLOW", 0)
 
 
 def valid_filename(name: object) -> bool:
-    return isinstance(name, str) and bool(_FILENAME_RE.fullmatch(name))
+    if not isinstance(name, str) or not name.strip():
+        return False
+    if name in {".", "..", ".pasteberth.lock"}:
+        return False
+    if name.startswith((".pbmeta-", ".pbdata-", ".pbbackup-")):
+        return False
+    try:
+        if len(name.encode("utf-8")) > 240:
+            return False
+    except UnicodeEncodeError:
+        return False
+    return bool(_CLIENT_FILENAME_RE.fullmatch(name))
+
+
+def generated_filename(name: object) -> bool:
+    """Indique si un nom provient du générateur interne historique."""
+    return isinstance(name, str) and bool(_GENERATED_FILENAME_RE.fullmatch(name))
 
 
 @dataclass(frozen=True)
 class StoredImage:
     filename: str
     created_at: datetime  # timezone-aware UTC
-    width: int
-    height: int
+    width: int | None
+    height: int | None
     size: int
-    fmt: str
+    fmt: str | None
     kind: str = "image"  # "image" | "text" | "binary"
-    mime: str = "application/octet-stream"
+    mime: str = "image/png"
 
 
 @dataclass(frozen=True)
@@ -108,7 +125,7 @@ class Destination(ABC):
     """Interface pragmatique : future SshDestination => mêmes méthodes."""
 
     @abstractmethod
-    def save(self, data: bytes, info: ImageInfo) -> StoredImage: ...
+    def save(self, data: bytes, info: ImageInfo, filename: str | None = None) -> StoredImage: ...
 
     @abstractmethod
     def list(self) -> list[StoredImage]:
@@ -263,6 +280,25 @@ class LocalDestination(Destination):
 
     def _write_meta_atomic(self, directory_fd: int, meta: dict) -> None:
         target = meta["filename"] + ".json"
+        temp_name = self._write_meta_temp(directory_fd, meta)
+        try:
+            os.link(
+                temp_name,
+                target,
+                src_dir_fd=directory_fd,
+                dst_dir_fd=directory_fd,
+                follow_symlinks=False,
+            )
+            os.unlink(temp_name, dir_fd=directory_fd)
+            self._fsync_directory(directory_fd)
+        except BaseException:
+            try:
+                os.unlink(temp_name, dir_fd=directory_fd)
+            except OSError:
+                pass
+            raise
+
+    def _write_meta_temp(self, directory_fd: int, meta: dict) -> str:
         temp_name = f".pbmeta-{secrets.token_hex(12)}.tmp"
         fd = -1
         try:
@@ -277,15 +313,7 @@ class LocalDestination(Destination):
                 json.dump(meta, fh, ensure_ascii=False, separators=(",", ":"))
                 fh.flush()
                 os.fsync(fh.fileno())
-            os.link(
-                temp_name,
-                target,
-                src_dir_fd=directory_fd,
-                dst_dir_fd=directory_fd,
-                follow_symlinks=False,
-            )
-            os.unlink(temp_name, dir_fd=directory_fd)
-            self._fsync_directory(directory_fd)
+            return temp_name
         except BaseException:
             if fd >= 0:
                 try:
@@ -297,6 +325,144 @@ class LocalDestination(Destination):
             except OSError:
                 pass
             raise
+
+    def _write_data_temp(self, directory_fd: int, data: bytes) -> str:
+        temp_name = f".pbdata-{secrets.token_hex(12)}.tmp"
+        fd = -1
+        try:
+            fd = os.open(
+                temp_name,
+                os.O_WRONLY | os.O_CREAT | os.O_EXCL | _O_NOFOLLOW,
+                0o600,
+                dir_fd=directory_fd,
+            )
+            with os.fdopen(fd, "wb") as fh:
+                fd = -1
+                fh.write(data)
+                fh.flush()
+                os.fsync(fh.fileno())
+            return temp_name
+        except BaseException:
+            if fd >= 0:
+                try:
+                    os.close(fd)
+                except OSError:
+                    pass
+            try:
+                os.unlink(temp_name, dir_fd=directory_fd)
+            except OSError:
+                pass
+            raise
+
+    @staticmethod
+    def _entry_exists(directory_fd: int, name: str) -> bool:
+        try:
+            info = os.stat(name, dir_fd=directory_fd, follow_symlinks=False)
+        except FileNotFoundError:
+            return False
+        except OSError as exc:
+            raise DestinationError(f"inspection impossible de {name!r} : {exc}") from exc
+        if not stat.S_ISREG(info.st_mode):
+            raise DestinationError(f"fichier non régulier : {name!r}")
+        return True
+
+    def _save_named(self, directory_fd: int, data: bytes, info: ImageInfo, filename: str) -> StoredImage:
+        meta_name = self._meta_name(filename)
+        target_exists = self._entry_exists(directory_fd, filename)
+        meta_exists = self._entry_exists(directory_fd, meta_name)
+        if target_exists != meta_exists:
+            raise DestinationError(f"fichier et sidecar incohérents pour {filename!r}")
+        if target_exists:
+            self._require_owned(directory_fd, filename)
+
+        created_at = datetime.now(timezone.utc)
+        stored = StoredImage(
+            filename=filename,
+            created_at=created_at,
+            width=info.width,
+            height=info.height,
+            size=len(data),
+            fmt=info.fmt,
+            kind=info.kind,
+            mime=info.mime,
+        )
+        meta = {
+            "filename": filename,
+            "created_at": created_at.isoformat(timespec="microseconds"),
+            "width": stored.width,
+            "height": stored.height,
+            "size": stored.size,
+            "format": stored.fmt,
+            "kind": stored.kind,
+            "mime": stored.mime,
+        }
+        data_temp = self._write_data_temp(directory_fd, data)
+        try:
+            meta_temp = self._write_meta_temp(directory_fd, meta)
+        except BaseException:
+            try:
+                os.unlink(data_temp, dir_fd=directory_fd)
+            except OSError:
+                pass
+            raise
+        backup_data = f".pbbackup-{secrets.token_hex(12)}.data"
+        backup_meta = f".pbbackup-{secrets.token_hex(12)}.json"
+        data_backed = False
+        meta_backed = False
+        data_installed = False
+        meta_installed = False
+        try:
+            if target_exists:
+                os.rename(filename, backup_data, src_dir_fd=directory_fd, dst_dir_fd=directory_fd)
+                data_backed = True
+                os.rename(meta_name, backup_meta, src_dir_fd=directory_fd, dst_dir_fd=directory_fd)
+                meta_backed = True
+            os.rename(data_temp, filename, src_dir_fd=directory_fd, dst_dir_fd=directory_fd)
+            data_installed = True
+            os.rename(meta_temp, meta_name, src_dir_fd=directory_fd, dst_dir_fd=directory_fd)
+            meta_installed = True
+            self._fsync_directory(directory_fd)
+        except BaseException:
+            if meta_installed:
+                try:
+                    os.unlink(meta_name, dir_fd=directory_fd)
+                except OSError:
+                    pass
+            if data_installed:
+                try:
+                    os.unlink(filename, dir_fd=directory_fd)
+                except OSError:
+                    pass
+            if meta_backed:
+                try:
+                    os.rename(backup_meta, meta_name, src_dir_fd=directory_fd, dst_dir_fd=directory_fd)
+                except OSError:
+                    log.exception("restauration du sidecar impossible : %s", filename)
+            if data_backed:
+                try:
+                    os.rename(backup_data, filename, src_dir_fd=directory_fd, dst_dir_fd=directory_fd)
+                except OSError:
+                    log.exception("restauration du fichier impossible : %s", filename)
+            for temp_name in (data_temp, meta_temp):
+                try:
+                    os.unlink(temp_name, dir_fd=directory_fd)
+                except OSError:
+                    pass
+            raise
+        finally:
+            for temp_name in (data_temp, meta_temp):
+                try:
+                    os.unlink(temp_name, dir_fd=directory_fd)
+                except OSError:
+                    pass
+        for backup_name in (backup_data, backup_meta):
+            try:
+                os.unlink(backup_name, dir_fd=directory_fd)
+            except FileNotFoundError:
+                pass
+            except OSError:
+                log.warning("sauvegarde temporaire impossible à supprimer : %s", backup_name)
+        return stored
 
     # -- espace disque -----------------------------------------------------
 
@@ -336,13 +502,16 @@ class LocalDestination(Destination):
         except OSError as exc:
             raise DestinationError(f"lecture impossible de {self.directory} : {exc}") from exc
         for entry in entries:
-            if not (entry.name.startswith(".pbmeta-") or valid_filename(entry.name)):
+            if not (
+                entry.name.startswith((".pbmeta-", ".pbdata-", ".pbbackup-"))
+                or generated_filename(entry.name)
+            ):
                 continue
             try:
                 age = now - entry.stat(follow_symlinks=False).st_mtime
                 if age < _ORPHAN_GRACE_SECONDS:
                     continue
-                if valid_filename(entry.name) and (self.directory / (entry.name + ".json")).exists():
+                if generated_filename(entry.name) and (self.directory / (entry.name + ".json")).exists():
                     continue
                 entry_path = self.directory / entry.name
                 if entry.is_symlink():
@@ -354,8 +523,18 @@ class LocalDestination(Destination):
 
     # -- API Destination ---------------------------------------------------
 
-    def save(self, data: bytes, info: ImageInfo) -> StoredImage:
+    def save(
+        self,
+        data: bytes,
+        info: ImageInfo,
+        filename: str | None = None,
+    ) -> StoredImage:
         self._ensure_dir()
+        if filename is not None:
+            if not valid_filename(filename):
+                raise DestinationError(f"nom de fichier invalide : {filename!r}")
+            with self._directory_fd() as directory_fd:
+                return self._save_named(directory_fd, data, info, filename)
         ext = info.ext
         last_exc: Exception | None = None
         with self._directory_fd() as directory_fd:
@@ -471,7 +650,9 @@ class LocalDestination(Destination):
                     size = raw["size"]
                     fmt = raw["format"]
                     kind = raw.get("kind", "image")
-                    mime = raw.get("mime", "application/octet-stream")
+                    mime = raw.get("mime")
+                    if mime is None:
+                        mime = mime_for(fmt) if kind == "image" else "application/octet-stream"
                     if isinstance(size, bool) or not isinstance(size, int):
                         raise ValueError("types numériques invalides")
                     if kind == "image":

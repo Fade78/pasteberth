@@ -35,6 +35,7 @@
   const pvRef = document.getElementById("pv-ref");
   const pvCopy = document.getElementById("pv-copy");
   const pvCopyImage = document.getElementById("pv-copy-image");
+  const pvDownload = document.getElementById("pv-download");
   const pvClear = document.getElementById("pv-clear");
   const pvDelete = document.getElementById("pv-delete");
 
@@ -137,6 +138,7 @@
         internal: "Internal server error",
         unknown_zone: "Unknown zone",
         unknown_image: "Unknown image",
+        invalid_filename: "The dropped filename is invalid",
         empty_upload: "The upload is empty",
         invalid_image: "The image is invalid or corrupted",
         unsupported_format: "This image format is not supported",
@@ -254,6 +256,28 @@
 
   function kindLabel(kind) {
     return KIND_LABEL[kind] || "Content";
+  }
+
+  function fileTypeLabel(filename) {
+    const match = /\.([A-Za-z0-9]+)$/.exec(filename || "");
+    return match ? match[1].toUpperCase() : "FILE";
+  }
+
+  function contentActionLabel(item) {
+    return `Copy ${kindLabel(item.kind)}`;
+  }
+
+  function downloadLabel(filename) {
+    return `Download ${fileTypeLabel(filename)}`;
+  }
+
+  function downloadContent(previewUrl, filename) {
+    const link = document.createElement("a");
+    link.href = previewUrl;
+    link.download = filename || "download";
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
   }
 
   async function copyContent(kind, previewUrl) {
@@ -387,7 +411,7 @@
     if (zone.images.length === 0) {
       const hint = document.createElement("div");
       hint.className = "drop-hint";
-      hint.textContent = "Ctrl+V to paste an image here";
+      hint.textContent = "Ctrl+V to paste or drag a file here";
       el.appendChild(hint);
     } else {
       const selected = selectedItem(zone);
@@ -399,6 +423,15 @@
 
   function selectedItem(zone) {
     return zone.images.find(item => item.id === state.selectedByZone[zone.id]) || zone.images[0];
+  }
+
+  function itemForControl(control) {
+    const zoneEl = control.closest(".zone");
+    if (!zoneEl) return null;
+    const zone = state.zones.find(item => item.id === zoneEl.dataset.zone);
+    if (!zone) return null;
+    const itemId = control.closest("[data-item-id]")?.dataset.itemId;
+    return zone.images.find(item => item.id === itemId) || selectedItem(zone);
   }
 
   function itemMeta(item) {
@@ -413,7 +446,10 @@
     ref.textContent = item.reference;
     const dims = document.createElement("span");
     dims.className = "dims";
-    dims.textContent = `${item.width}×${item.height} · ${fmtBytes(item.size)} · ${fmtTime(item.created_at)}`;
+    const sizeInfo = `${fmtBytes(item.size)} · ${fmtTime(item.created_at)}`;
+    dims.textContent = item.kind === "image" && item.width != null && item.height != null
+      ? `${item.width}×${item.height} · ${sizeInfo}`
+      : `${kindLabel(item.kind)} · ${sizeInfo}`;
     meta.append(fname, ref, dims);
     return meta;
   }
@@ -421,6 +457,7 @@
   function renderLatest(zoneId, item) {
     const card = document.createElement("div");
     card.className = "latest";
+    card.dataset.itemId = item.id;
     const right = document.createElement("div");
     right.className = "latest-right";
     right.appendChild(itemMeta(item));
@@ -432,22 +469,42 @@
     const imageCopy = document.createElement("button");
     imageCopy.type = "button";
     imageCopy.className = "copy-image-btn";
-    imageCopy.textContent = `Copy ${kindLabel(item.kind)}`;
-    imageCopy.setAttribute("aria-label", `Copy ${kindLabel(item.kind)} to the clipboard`);
+    const actionLabel = contentActionLabel(item);
+    imageCopy.textContent = actionLabel;
+    imageCopy.setAttribute(
+      "aria-label",
+      `${actionLabel} to the clipboard`,
+    );
     imageCopy.dataset.preview = item.preview_url;
     imageCopy.dataset.kind = item.kind;
+    imageCopy.dataset.filename = item.filename;
+    const download = document.createElement("button");
+    download.type = "button";
+    download.className = "download-btn";
+    download.textContent = downloadLabel(item.filename);
+    download.setAttribute("aria-label", downloadLabel(item.filename));
+    download.dataset.preview = item.preview_url;
+    download.dataset.filename = item.filename;
     const clear = document.createElement("button");
     clear.type = "button";
     clear.className = "clear-btn";
     clear.textContent = "Clear";
     clear.setAttribute("aria-label", "Clear the clipboard");
-    const zoom = document.createElement("button");
-    zoom.type = "button";
-    zoom.className = "zoom-btn";
-    zoom.textContent = "Zoom";
-    zoom.setAttribute("aria-label", "Enlarge the image");
-    zoom.dataset.ref = item.reference;
-    zoom.dataset.preview = item.preview_url;
+    let zoom = null;
+    if (item.kind !== "binary") {
+      zoom = document.createElement("button");
+      zoom.type = "button";
+      zoom.className = "zoom-btn";
+      zoom.textContent = item.kind === "image" ? "Zoom" : "Preview";
+      zoom.setAttribute(
+        "aria-label",
+        item.kind === "image" ? "Enlarge the image" : "Preview the text",
+      );
+      zoom.dataset.ref = item.reference;
+      zoom.dataset.preview = item.preview_url;
+      zoom.dataset.kind = item.kind;
+      zoom.dataset.filename = item.filename;
+    }
     const del = document.createElement("button");
     del.type = "button";
     del.className = "delete-btn";
@@ -457,11 +514,16 @@
     del.dataset.filename = item.filename;
     const actions = document.createElement("div");
     actions.className = "latest-actions";
-    actions.append(btn, imageCopy, clear, zoom, del);
+    actions.append(btn);
+    if (item.kind !== "binary") actions.append(imageCopy);
+    actions.append(download, clear);
+    if (zoom) actions.append(zoom);
+    actions.append(del);
     right.appendChild(actions);
     if (item.kind === "image") {
       const img = document.createElement("img");
       img.className = "thumb-big";
+      img.dataset.itemId = item.id;
       setPreviewSource(img, item.preview_url);
       img.alt = "latest image";
       img.loading = "lazy";
@@ -472,6 +534,7 @@
     } else {
       const box = document.createElement("div");
       box.className = "file-box";
+      box.dataset.itemId = item.id;
       box.textContent = item.kind === "text" ? "TXT" : "FILE";
       box.tabIndex = 0;
       box.setAttribute("role", "button");
@@ -486,7 +549,7 @@
     index.className = "history-index";
     const title = document.createElement("div");
     title.className = "index-title";
-    title.textContent = "Image index";
+    title.textContent = items.every(item => item.kind === "image") ? "Image index" : "Content index";
     const row = document.createElement("div");
     row.className = "thumbs";
     row.setAttribute("role", "list");
@@ -499,12 +562,20 @@
       wrap.setAttribute("aria-label", `Select ${item.filename}`);
       wrap.title = `${item.filename} — ${fmtDateTime(item.created_at)}`;
       wrap.dataset.itemId = item.id;
-      const img = document.createElement("img");
-      img.className = "thumb";
-      setPreviewSource(img, item.preview_url);
-      img.alt = item.filename;
-      img.loading = "lazy";
-      wrap.appendChild(img);
+      if (item.kind === "image") {
+        const img = document.createElement("img");
+        img.className = "thumb";
+        setPreviewSource(img, item.preview_url);
+        img.alt = item.filename;
+        img.loading = "lazy";
+        wrap.appendChild(img);
+      } else {
+        const label = document.createElement("span");
+        label.className = "thumb-content";
+        label.textContent = item.kind === "text" ? "TXT" : fileTypeLabel(item.filename);
+        label.setAttribute("aria-hidden", "true");
+        wrap.appendChild(label);
+      }
       row.appendChild(wrap);
     }
     index.append(title, row);
@@ -610,7 +681,7 @@
 
   // ------------------------------------------------------------- upload
 
-  async function upload(zoneId, file) {
+  async function upload(zoneId, file, { preserveName = false } = {}) {
     if (!file) return;
     const zoneEl = grid.querySelector(`[data-zone="${CSS.escape(zoneId)}"]`);
     if (zoneEl) zoneEl.classList.add("busy");
@@ -618,15 +689,18 @@
     if (activeRefreshController) activeRefreshController.abort();
     try {
       const fd = new FormData();
-      // Le nom du fichier est conservé pour les drops (extension binaire) ;
-      // le serveur ne l'utilise jamais pour nommer quoi que ce soit.
+      // Le serveur conserve le nom seulement pour les fichiers déposés.
       fd.append("image", file, file.name || "clipboard");
+      if (preserveName) fd.append("preserve_name", "1");
       const item = await api(`/api/zones/${encodeURIComponent(zoneId)}/images`,
         { method: "POST", body: fd });
       refreshGeneration += 1;
       if (activeRefreshController) activeRefreshController.abort();
       const zone = state.zones.find(z => z.id === zoneId);
       if (zone) {
+        // A drag-and-drop can replace an existing stored name. Do not show a
+        // second history entry for the same server-side item.
+        zone.images = zone.images.filter(existing => existing.id !== item.id);
         zone.images.unshift(item);
         if (zone.images.length > zone.retain) zone.images.length = zone.retain;
         state.selectedByZone[zoneId] = item.id;
@@ -722,6 +796,11 @@
       copyLink(copyBtn.dataset.ref);
       return;
     }
+    const downloadBtn = event.target.closest(".download-btn");
+    if (downloadBtn && downloadBtn.dataset.preview) {
+      downloadContent(downloadBtn.dataset.preview, downloadBtn.dataset.filename);
+      return;
+    }
     const copyImageBtn = event.target.closest(".copy-image-btn");
     if (copyImageBtn && copyImageBtn.dataset.preview) {
       copyContent(copyImageBtn.dataset.kind, copyImageBtn.dataset.preview);
@@ -734,7 +813,9 @@
     }
     const zoomBtn = event.target.closest(".zoom-btn");
     if (zoomBtn && zoomBtn.dataset.preview) {
-      openPreview(zoomBtn.dataset.preview, zoomBtn.dataset.ref);
+      const item = itemForControl(zoomBtn);
+      if (item && item.kind === "image") openPreview(item.preview_url, item.reference, item.filename);
+      else if (item) openContentPreview(item);
       return;
     }
     const deleteBtn = event.target.closest(".delete-btn");
@@ -751,16 +832,15 @@
     }
     const bigThumb = event.target.closest(".thumb-big");
     if (bigThumb) {
-      const zoneEl = bigThumb.closest(".zone");
-      const zone = state.zones.find(z => z.id === zoneEl.dataset.zone);
-      if (zone && zone.images[0]) openPreview(zone.images[0].preview_url, zone.images[0].reference);
+      const item = itemForControl(bigThumb);
+      if (item && item.kind === "image") openPreview(item.preview_url, item.reference, item.filename);
+      else if (item) openContentPreview(item);
       return;
     }
     const fileBox = event.target.closest(".file-box");
     if (fileBox) {
-      const zoneEl = fileBox.closest(".zone");
-      const zone = state.zones.find(z => z.id === zoneEl.dataset.zone);
-      if (zone && zone.images[0]) openContentPreview(zone.images[0]);
+      const item = itemForControl(fileBox);
+      if (item) openContentPreview(item);
       return;
     }
     const zoneCard = event.target.closest(".zone");
@@ -772,17 +852,16 @@
     const bigThumb = event.target.closest(".thumb-big");
     if (bigThumb) {
       event.preventDefault();
-      const zoneEl = bigThumb.closest(".zone");
-      const zone = state.zones.find(z => z.id === zoneEl.dataset.zone);
-      if (zone && zone.images[0]) openPreview(zone.images[0].preview_url, zone.images[0].reference);
+      const item = itemForControl(bigThumb);
+      if (item && item.kind === "image") openPreview(item.preview_url, item.reference, item.filename);
+      else if (item) openContentPreview(item);
       return;
     }
     const fileBox = event.target.closest(".file-box");
     if (fileBox) {
       event.preventDefault();
-      const zoneEl = fileBox.closest(".zone");
-      const zone = state.zones.find(z => z.id === zoneEl.dataset.zone);
-      if (zone && zone.images[0]) openContentPreview(zone.images[0]);
+      const item = itemForControl(fileBox);
+      if (item) openContentPreview(item);
       return;
     }
     const zoneSelect = event.target.closest(".zone-select");
@@ -812,7 +891,7 @@
     setActive(zoneCard.dataset.zone);
     const file = event.dataTransfer && event.dataTransfer.files && event.dataTransfer.files[0];
     if (!file) return;
-    upload(zoneCard.dataset.zone, file);
+    upload(zoneCard.dataset.zone, file, { preserveName: true });
   });
 
   document.addEventListener("keydown", (event) => {
@@ -828,12 +907,26 @@
     }
   });
 
-  function openPreview(url, reference) {
+  function setPreviewCopyLabel(kind) {
+    const label = `Copy ${kindLabel(kind)}`;
+    pvCopyImage.textContent = label;
+    pvCopyImage.setAttribute("aria-label", `${label} to the clipboard`);
+  }
+
+  function openPreview(url, reference, filename) {
+    const storedFilename = filename || decodeURIComponent(url.split("/").pop());
     setPreviewSource(pvImg, url);
+    pvImg.hidden = false;
+    pvText.hidden = true;
     pvRef.textContent = reference;
+    setPreviewCopyLabel("image");
+    pvDownload.textContent = downloadLabel(storedFilename);
+    pvDownload.setAttribute("aria-label", downloadLabel(storedFilename));
+    pvDownload.dataset.preview = url;
+    pvDownload.dataset.filename = storedFilename;
     pvCopyImage.dataset.preview = url;
     pvCopyImage.dataset.kind = "image";
-    pvDelete.dataset.filename = url.split("/").pop();
+    pvDelete.dataset.filename = storedFilename;
     if (typeof pv.showModal === "function") pv.showModal();
     else pv.setAttribute("open", "");
   }
@@ -847,6 +940,13 @@
   }
 
   async function openContentPreview(item) {
+    setPreviewCopyLabel(item.kind);
+    pvRef.textContent = item.reference;
+    pvDownload.textContent = downloadLabel(item.filename);
+    pvDownload.setAttribute("aria-label", downloadLabel(item.filename));
+    pvDownload.dataset.preview = item.preview_url;
+    pvDownload.dataset.filename = item.filename;
+    pvDelete.dataset.filename = item.filename;
     pvCopyImage.dataset.preview = item.preview_url;
     pvCopyImage.dataset.kind = item.kind;
     if (item.kind === "text") {
@@ -864,12 +964,7 @@
       return;
     }
     // Binaire : téléchargement direct (Content-Disposition: attachment).
-    const a = document.createElement("a");
-    a.href = item.preview_url;
-    a.download = item.filename;
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
+    downloadContent(item.preview_url, item.filename);
   }
   function closePreview() {
     if (typeof pv.close === "function") pv.close();
@@ -880,6 +975,7 @@
   }
   pvCopy.addEventListener("click", () => copyLink(pvRef.textContent));
   pvCopyImage.addEventListener("click", () => copyContent(pvCopyImage.dataset.kind, pvCopyImage.dataset.preview));
+  pvDownload.addEventListener("click", () => downloadContent(pvDownload.dataset.preview, pvDownload.dataset.filename));
   pvClear.addEventListener("click", clearClipboard);
   pvDelete.addEventListener("click", () => {
     const zoneId = state.zones.find(z => z.images.some(i => i.id === pvDelete.dataset.filename));
