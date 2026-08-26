@@ -402,6 +402,22 @@ class TestRejetsUploads(Base):
         self.assertEqual(status, 500)
         self.assertTrue(headers["content-type"].startswith("application/json"))
         self.assertEqual(json_of(body)["error"]["code"], "destination_error")
+        status, headers, body = self.req("GET", "/api/zones")
+        self.assertEqual(status, 500)
+        self.assertTrue(headers["content-type"].startswith("application/json"))
+        self.assertEqual(json_of(body)["error"]["code"], "destination_error")
+
+    def test_verrou_destination_non_regulier_reste_une_erreur_json(self):
+        import os
+
+        lock = self.zones_dirs["default"] / ".pasteberth.lock"
+        lock.unlink()
+        os.mkfifo(lock)
+        self.addCleanup(lock.unlink)
+        status, headers, body = self.req("GET", "/api/zones/default/images")
+        self.assertEqual(status, 500)
+        self.assertTrue(headers["content-type"].startswith("application/json"))
+        self.assertEqual(json_of(body)["error"]["code"], "destination_error")
 
 
 class TestZonesEtPreviews(Base):

@@ -156,6 +156,9 @@ def make_handler(cfg: Config, service: PasteService, sessions: SessionStore,
                  limiter: LoginRateLimiter) -> type[BaseHTTPRequestHandler]:
     """Construit la classe de handler avec les dépendances injectées."""
     upload_memory = BodyMemoryBudget(_UPLOAD_MEMORY_BUDGET)
+    preview_slots = threading.BoundedSemaphore(
+        max(1, _UPLOAD_MEMORY_BUDGET // cfg.max_upload_bytes)
+    )
 
     class PasteberthHandler(BaseHTTPRequestHandler):
         server_version = "Pasteberth"
@@ -785,7 +788,12 @@ def make_handler(cfg: Config, service: PasteService, sessions: SessionStore,
         def _h_zones(self) -> None:
             if not self._require_auth_api():
                 return
-            self._json(200, service.overview())
+            try:
+                overview = service.overview()
+            except ServiceError as exc:
+                self._error(exc.status, exc.code, str(exc))
+                return
+            self._json(200, overview)
 
         def _h_zone_images(self, zid: str) -> None:
             if not self._require_auth_api():
@@ -859,16 +867,27 @@ def make_handler(cfg: Config, service: PasteService, sessions: SessionStore,
         def _h_preview(self, zid: str, filename: str) -> None:
             if not self._require_auth_api():
                 return
-            try:
-                data, mime = service.preview(zid, filename)
-            except ServiceError as exc:
-                self._error(exc.status, exc.code, str(exc))
+            if not preview_slots.acquire(blocking=False):
+                self._error(
+                    503,
+                    "preview_busy",
+                    "trop de previews sont actuellement servies",
+                    extra_headers=[("Retry-After", "1")],
+                )
                 return
-            self._finish(
-                200,
-                mime,
-                data,
-                cache_control="no-store",
-            )
+            try:
+                try:
+                    data, mime = service.preview(zid, filename)
+                except ServiceError as exc:
+                    self._error(exc.status, exc.code, str(exc))
+                    return
+                self._finish(
+                    200,
+                    mime,
+                    data,
+                    cache_control="no-store",
+                )
+            finally:
+                preview_slots.release()
 
     return PasteberthHandler

@@ -212,9 +212,15 @@ class PasteService:
             raise ServiceError("unknown_image", "nom de fichier invalide")
         try:
             with self._locks[zid], self._destinations[zid].operation_lock(exclusive=False):
-                known = {item.filename for item in self._destinations[zid].list()}
-                if filename not in known:
+                known = {
+                    item.filename: item
+                    for item in self._destinations[zid].list()
+                }
+                item = known.get(filename)
+                if item is None:
                     raise ServiceError("unknown_image", "fichier inconnu dans cette zone")
+                if item.size > self.cfg.max_upload_bytes:
+                    raise ServiceError("too_large", "preview trop grande à servir")
                 data = self._destinations[zid].read(filename)
         except ServiceError:
             raise

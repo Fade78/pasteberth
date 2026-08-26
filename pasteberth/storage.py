@@ -173,10 +173,19 @@ class LocalDestination(Destination):
     def operation_lock(self, *, exclusive: bool):
         """Verrouille les opérations même entre processus du même utilisateur."""
         lock_path = self.directory / ".pasteberth.lock"
+        fd = -1
         try:
             fd = os.open(lock_path, os.O_RDWR | os.O_CREAT | _O_NOFOLLOW, 0o600)
+            if not stat.S_ISREG(os.fstat(fd).st_mode):
+                os.close(fd)
+                fd = -1
+                raise DestinationError(f"verrou non régulier : {lock_path}")
             os.chmod(lock_path, 0o600)
+        except DestinationError:
+            raise
         except OSError as exc:
+            if fd >= 0:
+                os.close(fd)
             raise DestinationError(f"verrouillage impossible de {self.directory} : {exc}") from exc
         try:
             fcntl.flock(fd, fcntl.LOCK_EX if exclusive else fcntl.LOCK_SH)

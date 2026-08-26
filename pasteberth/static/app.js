@@ -144,6 +144,7 @@
         storage_low: "Not enough disk space",
         retention_error: "Image retention failed",
         destination_error: "The image destination is unavailable",
+        preview_busy: "Too many previews are currently being served",
         rate_limited: "Too many attempts; try again later",
         upload_busy: "Too many uploads are currently in memory",
       };
