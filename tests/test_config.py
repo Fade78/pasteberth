@@ -112,8 +112,11 @@ class TestParsing(unittest.TestCase):
         self.assertEqual(cfg.zones["plain"].reference_prefix, "")
 
     def test_allowed_hosts(self):
-        cfg = make_cfg(self.tmp, allowed_hosts='["pasteberth.example", "[::1]"]')
-        self.assertEqual(cfg.allowed_hosts, ("pasteberth.example", "::1"))
+        cfg = make_cfg(
+            self.tmp,
+            allowed_hosts='["pasteberth.example", "[::1]", "2001:0db8::1"]',
+        )
+        self.assertEqual(cfg.allowed_hosts, ("pasteberth.example", "::1", "2001:db8::1"))
 
         with self.assertRaises(ConfigError):
             make_cfg(self.tmp, allowed_hosts='["https://pasteberth.example"]')

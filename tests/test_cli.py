@@ -93,6 +93,21 @@ class TestErreursDemarrage(unittest.TestCase):
         self.assertIn("erreur de destination", proc.stderr)
         self.assertNotIn("Traceback", proc.stderr)
 
+    def test_parent_destination_inaccessible_retourne_une_erreur_propre(self):
+        parent = self.tmp / "private"
+        parent.mkdir()
+        parent.chmod(0)
+        self.addCleanup(lambda: parent.chmod(0o700))
+        cfg = write_config(
+            self.tmp,
+            zones=[{"id": "default", "directory": str(parent / "images")}],
+        )
+        for command in ("serve", "audit"):
+            with self.subTest(command=command):
+                proc = run_cli([command, "--config", str(cfg)])
+                self.assertEqual(proc.returncode, 2)
+                self.assertNotIn("Traceback", proc.stderr + proc.stdout)
+
 
 class TestPasswd(unittest.TestCase):
     def setUp(self):

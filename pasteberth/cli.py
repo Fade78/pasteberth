@@ -237,7 +237,11 @@ def _audit_zone(cfg, zone) -> tuple[list[str], list[str]]:
     errors: list[str] = []
     warnings: list[str] = []
     path = zone.directory
-    symlink = first_symlink_component(path)
+    try:
+        symlink = first_symlink_component(path)
+    except OSError as exc:
+        errors.append(f"zone {zone.id}: inspection impossible ({exc})")
+        return errors, warnings
     if symlink is not None:
         errors.append(f"zone {zone.id}: lien symbolique refusé : {symlink}")
         return errors, warnings

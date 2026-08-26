@@ -126,7 +126,12 @@ class LocalDestination(Destination):
             self.reconcile()
 
     def _ensure_dir(self) -> None:
-        symlink = first_symlink_component(self.directory)
+        try:
+            symlink = first_symlink_component(self.directory)
+        except OSError as exc:
+            raise DestinationError(
+                f"inspection impossible de {self.directory} : {exc}"
+            ) from exc
         if symlink is not None:
             raise DestinationError(f"chemin zone symbolique refusé : {symlink}")
         if self.directory.is_dir():

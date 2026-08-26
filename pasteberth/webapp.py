@@ -492,6 +492,7 @@ def make_handler(cfg: Config, service: PasteService, sessions: SessionStore,
                 return
             self._route_path = path
             if "\x00" in path or "\\" in path:
+                self.close_connection = True
                 self._error(400, "invalid_request", "requête invalide")
                 return
             for method, pattern, name in _ROUTES:

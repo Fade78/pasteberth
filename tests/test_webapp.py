@@ -657,7 +657,9 @@ class TestOriginCSRF(Base):
 class TestAllowedHosts(Base):
     auth = True
     password = PASSWORD
-    config_kwargs = {"allowed_hosts": '["pasteberth.example", "127.0.0.1"]'}
+    config_kwargs = {
+        "allowed_hosts": '["pasteberth.example", "127.0.0.1", "2001:0db8::1"]',
+    }
 
     def test_hote_public_configure_accepte_origin_correspondante(self):
         body, ctype = build_multipart(data=make_png())
@@ -668,6 +670,20 @@ class TestAllowedHosts(Base):
             headers={
                 "Host": "pasteberth.example",
                 "Origin": "http://pasteberth.example",
+                "Content-Type": ctype,
+            },
+        )
+        self.assertEqual(status, 201)
+
+    def test_hote_ipv6_noncanonique_est_compare_normalise(self):
+        body, ctype = build_multipart(data=make_png())
+        status, _, _ = self.req(
+            "POST",
+            "/api/zones/default/images",
+            body=body,
+            headers={
+                "Host": f"[2001:db8::1]:{self.server.port}",
+                "Origin": f"http://[2001:db8::1]:{self.server.port}",
                 "Content-Type": ctype,
             },
         )
@@ -739,6 +755,44 @@ class TestRequestFraming(Base):
         self.assertEqual(response.count("http/1.1 400"), 1)
         self.assertNotIn("http/1.1 200", response)
         self.assertIn("connection: close", response)
+
+    def test_cibles_get_invalides_ferment_la_connexion(self):
+        import socket
+
+        pipelined = b"GET /api/health HTTP/1.1\r\nHost: localhost\r\n\r\n"
+        for target in (b"/%ff", b"/\\bad", b"/\x00"):
+            with self.subTest(target=target):
+                request_bytes = (
+                    b"GET " + target + b" HTTP/1.1\r\n"
+                    b"Host: localhost\r\n\r\n"
+                    + pipelined
+                )
+                with socket.create_connection(("127.0.0.1", self.server.port), timeout=5) as sock:
+                    sock.sendall(request_bytes)
+                    sock.shutdown(socket.SHUT_WR)
+                    response = self._read_all(sock).decode("latin-1").lower()
+                self.assertNotIn("http/1.1 200", response)
+                self.assertIn("connection: close", response)
+
+    def test_transfer_encoding_est_refuse(self):
+        import socket
+
+        for headers in (
+            b"Transfer-Encoding: chunked\r\n",
+            b"Content-Length: 0\r\nTransfer-Encoding: chunked\r\n",
+        ):
+            with self.subTest(headers=headers):
+                request_bytes = (
+                    b"POST /api/zones/default/images HTTP/1.1\r\n"
+                    b"Host: localhost\r\n"
+                    + headers
+                    + b"\r\n"
+                )
+                with socket.create_connection(("127.0.0.1", self.server.port), timeout=5) as sock:
+                    sock.sendall(request_bytes)
+                    sock.shutdown(socket.SHUT_WR)
+                    response = self._read_all(sock).decode("latin-1")
+                self.assertTrue(response.startswith("HTTP/1.1 400"), response[:60])
 
     def test_http_10_et_connection_close_restent_fermes(self):
         import socket

@@ -357,7 +357,7 @@ def _parse_allowed_hosts(raw: object) -> tuple[str, ...]:
         if host.startswith("[") and host.endswith("]"):
             host = host[1:-1]
         try:
-            ipaddress.ip_address(host)
+            host = str(ipaddress.ip_address(host)).lower()
         except ValueError:
             if (
                 len(host) > 253
@@ -600,7 +600,12 @@ def prepare_directories(cfg: Config) -> None:
     """Crée/vérifie les répertoires des zones au démarrage (échec rapide)."""
     seen: dict[tuple[int, int], str] = {}
     for zone in cfg.zones.values():
-        symlink = first_symlink_component(zone.directory)
+        try:
+            symlink = first_symlink_component(zone.directory)
+        except OSError as exc:
+            raise ConfigError(
+                f"zone '{zone.id}': impossible d'inspecter {zone.directory} ({exc})"
+            ) from exc
         if symlink is not None:
             raise ConfigError(
                 f"zone '{zone.id}': le chemin contient un lien symbolique : {symlink}"
