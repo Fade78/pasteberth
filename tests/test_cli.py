@@ -257,6 +257,25 @@ class TestConfigurationDepot(unittest.TestCase):
         self.assertIn("permissions non privées", proc.stdout)
         self.assertIn("Audit prêt avec", proc.stdout)
 
+    def test_audit_permissions_group_writable_avertit_aussi(self):
+        # Feature: un mode group-writable (0o775) avertit mais n'échoue pas,
+        # sinon l'opérateur contourne la protection (chmod 777, stockage hors zone).
+        target = self.tmp / "shared"
+        target.mkdir(mode=0o775)
+        os.chmod(target, 0o775)
+        with socket.socket() as probe:
+            probe.bind(("127.0.0.1", 0))
+            port = probe.getsockname()[1]
+        cfg = write_config(
+            self.tmp,
+            port=port,
+            zones=[{"id": "shared", "directory": str(target)}],
+        )
+        proc = run_cli(["audit", "--config", str(cfg)])
+        self.assertEqual(proc.returncode, 1)
+        self.assertIn("permissions non privées", proc.stdout)
+        self.assertIn("Audit prêt avec", proc.stdout)
+
     def test_audit_auth_sans_hash_echoue(self):
         cfg = write_config(self.tmp, auth_enabled=True)
         proc = run_cli(["audit", "--config", str(cfg)])

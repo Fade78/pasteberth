@@ -219,9 +219,8 @@ images are valuable. An external path can be specified manually in
 `config.toml`.
 
 Zones must be distinct, writable target directories. Private mode `0700` is
-recommended; group/other-writable modes are rejected, while group/other-readable
-or executable modes produce an audit warning and can be used for controlled
-sharing between multiple users. Each zone refuses a new upload if the free space expected after writing would fall below
+recommended; a more open mode produces an audit warning but does not prevent
+startup, allowing controlled sharing between multiple users. Each zone refuses a new upload if the free space expected after writing would fall below
 `min_free_percent` (default `2.0`). The measurement applies to the directory's
 filesystem, not just the folder; multiple zones can therefore share a
 filesystem, but then they also share its free-space reserve.
@@ -407,7 +406,7 @@ therefore reload the history before blindly retrying.
   Pasteberth's exact capture naming (`YYYY-MM-DD_HH-MM-SS_<6hex>.<ext>`) that
   lack a sidecar and are older than one hour are removed during startup
   reconciliation (crash recovery); other personal files are never touched.
-- Writable target directories reject group/other write bits; private mode
+- Writable target directories warn on non-private modes; private mode
   (`0700`) is recommended. Private images/sidecars (`0600`), symbolic links
   refused, and temporary files
   reconciled after a crash. Read-only shared directory modes are warned about.

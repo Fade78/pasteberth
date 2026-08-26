@@ -44,8 +44,8 @@ session_ttl_hours = 72            # server-side session lifetime
 # color             : zone background (#RRGGBB); text contrast is calculated
 # create_directory  : create the directory if missing (default true)
 # min_free_percent  : minimum filesystem free space before upload (default 2 %)
-# Group/other-writable modes are rejected; group/other-readable or executable
-# modes produce an audit warning. Mode 0700 is recommended.
+# Non-private modes produce an audit warning but do not prevent startup.
+# Mode 0700 is recommended.
 
 [[zones]]
 id = "default"

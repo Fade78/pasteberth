@@ -126,6 +126,10 @@ class LocalDestination(Destination):
             self.reconcile()
 
     def _ensure_dir(self) -> None:
+        # Feature: on n'inspecte plus les permissions ici — les répertoires
+        # partagés sont acceptés (avertissement au démarrage via config.py).
+        # Refuser au runtime casserait les zones partagées légitimes et
+        # pousserait à contourner la protection.
         try:
             symlink = first_symlink_component(self.directory)
         except OSError as exc:
@@ -135,16 +139,6 @@ class LocalDestination(Destination):
         if symlink is not None:
             raise DestinationError(f"chemin zone symbolique refusé : {symlink}")
         if self.directory.is_dir():
-            try:
-                mode = self.directory.stat().st_mode & 0o777
-            except OSError as exc:
-                raise DestinationError(
-                    f"inspection impossible de {self.directory} : {exc}"
-                ) from exc
-            if mode & 0o022:
-                raise DestinationError(
-                    f"permissions d'écriture non privées sur {self.directory} ({oct(mode)})"
-                )
             return
         if self.create_directory:
             try:

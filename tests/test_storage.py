@@ -177,6 +177,15 @@ class TestRepertoires(unittest.TestCase):
         dest = LocalDestination(target)
         self.assertTrue(dest.save(make_png(), INFO(1, 1)).filename)
 
+    def test_repertoire_group_writable_accepte(self):
+        # Feature: un mode group-writable est accepté au runtime (warning au
+        # démarrage seulement). Refuser au runtime casserait les zones partagées.
+        target = self.tmp / "shared"
+        target.mkdir(mode=0o775)
+        os.chmod(target, 0o775)
+        dest = LocalDestination(target)
+        self.assertTrue(dest.save(make_png(), INFO(1, 1)).filename)
+
     def test_sans_creation_refuse(self):
         target = self.tmp / "absent"
         # Échec immédiat : la destination refuse un répertoire inexistant

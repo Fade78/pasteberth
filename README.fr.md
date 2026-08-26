@@ -222,10 +222,9 @@ si les images ont de la valeur. Un chemin externe peut être indiqué
 manuellement dans `config.toml`.
 
 Les zones doivent être des répertoires cibles distincts et accessibles en écriture.
-Le mode privé `0700` est recommandé ; les modes inscriptibles par le groupe ou les
-autres sont refusés, tandis que les modes lisibles ou exécutables par eux produisent
-un avertissement d'audit et peuvent servir au partage contrôlé entre plusieurs
-utilisateurs. Chaque zone refuse un nouvel upload si l'espace libre prévu après écriture passerait
+Le mode privé `0700` est recommandé ; un mode plus ouvert produit un avertissement
+à l'audit mais n'empêche pas le démarrage, ce qui permet un partage contrôlé entre
+plusieurs utilisateurs. Chaque zone refuse un nouvel upload si l'espace libre prévu après écriture passerait
 sous `min_free_percent` (défaut `2.0`). La mesure porte sur le filesystem du
 répertoire, pas sur le seul dossier ; plusieurs zones peuvent donc partager un
 filesystem, mais elles partagent alors aussi sa réserve d'espace.
@@ -414,7 +413,7 @@ client doit donc recharger l'historique avant de retenter aveuglément.
   (`AAAA-MM-JJ_HH-MM-SS_<6hex>.<ext>`) sans sidecar et âgés de plus d'une heure
   sont supprimés lors de la réconciliation au démarrage (récupération après
   crash) ; les autres fichiers personnels ne sont jamais touchés.
-- Les répertoires cibles inscriptibles refusent les bits d'écriture groupe/autres ;
+- Les répertoires cibles inscriptibles avertissent en cas de mode non privé ;
   le mode privé (`0700`) est recommandé. Images/sidecars privés (`0600`), liens
   symboliques refusés et réconciliation des temporaires après crash. Les modes
   partagés en lecture seule sont signalés.

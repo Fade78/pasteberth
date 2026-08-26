@@ -633,11 +633,10 @@ def prepare_directories(cfg: Config) -> None:
             )
         try:
             mode = zone.directory.stat().st_mode & 0o777
-            if mode & 0o022:
-                raise ConfigError(
-                    f"zone '{zone.id}': permissions d'écriture non privées sur "
-                    f"{zone.directory} ({oct(mode)}) ; écriture groupe/autres refusée"
-                )
+            # Feature: les répertoires partagés (group/other read ou write) sont
+            # acceptés avec un avertissement, pas refusés. Refuser pousserait les
+            # opérateurs à contourner la protection (chmod 777, désactivation du
+            # service, stockage hors zone). Le 0700 reste recommandé.
             if mode & 0o077:
                 log.warning(
                     "zone '%s': permissions non privées sur %s (%s) ; "

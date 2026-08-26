@@ -256,12 +256,10 @@ def _audit_zone(cfg, zone) -> tuple[list[str], list[str]]:
         return errors, warnings
     try:
         mode = stat.S_IMODE(path.stat().st_mode)
-        if mode & 0o022:
-            errors.append(
-                f"zone {zone.id}: permissions d'écriture non privées ({oct(mode)}) : {path} "
-                "(écriture groupe/autres refusée)"
-            )
-        elif mode & 0o077:
+        # Feature: avertissement seul, pas d'erreur — les zones partagées sont
+        # légitimes (partage contrôlé entre utilisateurs). Refuser pousserait à
+        # contourner la protection.
+        if mode & 0o077:
             warnings.append(
                 f"zone {zone.id}: permissions non privées ({oct(mode)}) : {path} "
                 "(0700 recommandé)"
