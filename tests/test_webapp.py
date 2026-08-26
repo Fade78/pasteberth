@@ -247,6 +247,58 @@ class TestAuthentification(Base):
         )
         self.assertEqual(status, 413)
 
+    def test_reset_reseau_pendant_login_libere_le_slot(self):
+        import socket
+        import struct
+
+        sockets = []
+        try:
+            for index in range(4):
+                sock = socket.create_connection(("127.0.0.1", self.server.port), timeout=5)
+                sockets.append(sock)
+                sock.sendall(
+                    b"POST /login HTTP/1.1\r\n"
+                    b"Host: localhost\r\n"
+                    + f"X-Forwarded-For: 203.0.113.{index + 1}\r\n".encode()
+                    + b"Content-Length: 100\r\n"
+                    b"Content-Type: application/x-www-form-urlencoded\r\n\r\n"
+                )
+
+            deadline = time.monotonic() + 2
+            while time.monotonic() < deadline:
+                with self.server.limiter._lock:
+                    in_flight = sum(entry[3] for entry in self.server.limiter._state.values())
+                if in_flight == 4:
+                    break
+                time.sleep(0.01)
+            self.assertEqual(in_flight, 4)
+
+            for sock in sockets:
+                sock.setsockopt(socket.SOL_SOCKET, socket.SO_LINGER, struct.pack("ii", 1, 0))
+                sock.close()
+            sockets.clear()
+
+            deadline = time.monotonic() + 2
+            while time.monotonic() < deadline:
+                with self.server.limiter._lock:
+                    in_flight = sum(entry[3] for entry in self.server.limiter._state.values())
+                if in_flight == 0:
+                    break
+                time.sleep(0.01)
+            self.assertEqual(in_flight, 0)
+
+            status, _, _ = request(
+                self.server.port,
+                "POST",
+                "/login",
+                body=f"password={PASSWORD}".encode(),
+                headers={"Content-Type": "application/x-www-form-urlencoded"},
+            )
+            self.assertEqual(status, 303)
+        finally:
+            for sock in sockets:
+                sock.close()
+
     def test_cookie_forge_rejete(self):
         forged = "pb_session=AQAAANBBB_forged-token-value"
         status, _, _ = self.req("GET", "/api/zones", cookie=forged)

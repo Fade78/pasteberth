@@ -517,7 +517,10 @@ def make_handler(cfg: Config, service: PasteService, sessions: SessionStore,
             remaining = length
             try:
                 while remaining > 0:
-                    chunk = self.rfile.read(min(remaining, 65536))
+                    try:
+                        chunk = self.rfile.read(min(remaining, 65536))
+                    except OSError as exc:
+                        raise ClientAbort() from exc
                     if not chunk:
                         raise ClientAbort()
                     chunks.append(chunk)
@@ -692,18 +695,16 @@ def make_handler(cfg: Config, service: PasteService, sessions: SessionStore,
                     extra_headers=[("Retry-After", str(int(retry_after) + 1))],
                 )
                 return
-            try:
-                body, _ = self._read_body(16 * 1024)
-            except BodyTooLarge:
-                self.close_connection = True
-                self._error(413, "too_large", "corps de login trop grand")
-                limiter.release(ip)
-                return
-            except ClientAbort:
-                limiter.release(ip)
-                raise
             released = False
             try:
+                try:
+                    body, _ = self._read_body(16 * 1024)
+                except BodyTooLarge:
+                    self.close_connection = True
+                    self._error(413, "too_large", "corps de login trop grand")
+                    return
+                except ClientAbort:
+                    raise
                 password = ""
                 ctype = (self.headers.get("Content-Type") or "").lower()
                 if "multipart/form-data" in ctype:
