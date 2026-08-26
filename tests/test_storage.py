@@ -49,6 +49,19 @@ class TestSauvegarde(Base):
         names = {s.filename for s in self.save(20)}
         self.assertEqual(len(names), 20)
 
+    def test_sidecar_ancien_sans_kind_mime_accepte(self):
+        # Compatibilité : les sidecars v1.0.1/v1.0.2 (6 clés) restent lisibles.
+        stored = self.save()[0]
+        meta = json.loads((self.dir / (stored.filename + ".json")).read_text())
+        del meta["kind"]
+        del meta["mime"]
+        (self.dir / (stored.filename + ".json")).write_text(json.dumps(meta))
+        items = self.dest.list()
+        self.assertEqual(len(items), 1)
+        self.assertEqual(items[0].kind, "image")
+        self.assertEqual(items[0].mime, "application/octet-stream")
+        self.assertEqual(len(self.dest.read(stored.filename)), len(make_png(2, 2)))
+
     def test_collision_forcee_resolue(self):
         import itertools
 

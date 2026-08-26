@@ -35,7 +35,13 @@ log = logging.getLogger("pasteberth.storage")
 _FILENAME_RE = re.compile(
     r"^\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}_[0-9a-f]{6}\.[a-z0-9]{1,10}$"
 )
-_META_KEYS = {"filename", "created_at", "width", "height", "size", "format", "kind", "mime"}
+_META_KEYS = {"filename", "created_at", "width", "height", "size", "format"}
+# kind/mime ajoutés en v1.0.3 ; les sidecars v1.0.1/v1.0.2 (6 clés) restent valides.
+_META_KEYS_NEW = _META_KEYS | {"kind", "mime"}
+
+
+def _meta_keys_ok(raw: dict) -> bool:
+    return set(raw) in (_META_KEYS, _META_KEYS_NEW)
 _SPACE_MARGIN_BYTES = 64 * 1024
 _ORPHAN_GRACE_SECONDS = 3600.0
 _O_DIRECTORY = getattr(os, "O_DIRECTORY", 0)
@@ -238,7 +244,7 @@ class LocalDestination(Destination):
             with os.fdopen(fd, "r", encoding="utf-8") as fh:
                 fd = -1
                 raw = json.load(fh)
-            if not isinstance(raw, dict) or set(raw) != _META_KEYS or raw.get("filename") != filename:
+            if not isinstance(raw, dict) or not _meta_keys_ok(raw) or raw.get("filename") != filename:
                 raise DestinationError(f"sidecar invalide pour {filename!r}")
         except FileNotFoundError as exc:
             raise UnknownImageError(f"fichier inconnu de Pasteberth : {filename!r}") from exc
@@ -436,7 +442,7 @@ class LocalDestination(Destination):
                 except (OSError, ValueError, UnicodeError, DestinationError):
                     log.warning("sidecar illisible, ignoré : %s", entry.name)
                     continue
-                if not isinstance(raw, dict) or set(raw) != _META_KEYS:
+                if not isinstance(raw, dict) or not _meta_keys_ok(raw):
                     log.warning("sidecar invalide, ignoré : %s", entry.name)
                     continue
                 filename = raw.get("filename")
