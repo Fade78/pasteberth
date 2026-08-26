@@ -269,6 +269,10 @@ def make_handler(cfg: Config, service: PasteService, sessions: SessionStore,
                 or parsed.fragment
             ):
                 return None
+            try:
+                return str(ipaddress.ip_address(hostname)).lower()
+            except ValueError:
+                pass
             return hostname.lower().rstrip(".")
 
         def _host_allowed(self) -> bool:
@@ -296,12 +300,24 @@ def make_handler(cfg: Config, service: PasteService, sessions: SessionStore,
             m = re.fullmatch(r"([^@]*@)?(\[[^\]]+\]|[^:]+)(?::(\d+))?", netloc)
             if not m:
                 return netloc
+            userinfo = m.group(1) or ""
             host_part = m.group(2)
             port = m.group(3)
             default_port = "443" if scheme.lower() == "https" else "80"
+            try:
+                address = ipaddress.ip_address(host_part.strip("[]"))
+            except ValueError:
+                host_part = host_part.rstrip(".")
+            else:
+                host_part = str(address).lower()
+                if address.version == 6:
+                    host_part = f"[{host_part}]"
+            normalized = userinfo + host_part
             if port == default_port:
-                return host_part
-            return netloc
+                return normalized
+            if port:
+                normalized += f":{port}"
+            return normalized
 
         def _origin_allowed(self) -> bool:
             """CSRF : si le navigateur fournit Origin/Referer, il doit correspondre."""
@@ -319,9 +335,34 @@ def make_handler(cfg: Config, service: PasteService, sessions: SessionStore,
                         return fetch_site == "same-origin"
                     # Clients non-navigateurs (curl, scripts) : autorisés.
                     return True
-                parsed = urllib.parse.urlsplit(referer)
+                try:
+                    parsed = urllib.parse.urlsplit(referer)
+                    if (
+                        not parsed.scheme
+                        or not parsed.netloc
+                        or parsed.username is not None
+                        or parsed.password is not None
+                    ):
+                        return False
+                    parsed.port  # Validate a possible port before accepting the referer.
+                except ValueError:
+                    return False
                 origin = f"{parsed.scheme}://{parsed.netloc}"
-            got = urllib.parse.urlsplit(origin)
+            try:
+                got = urllib.parse.urlsplit(origin)
+                if (
+                    not got.scheme
+                    or not got.netloc
+                    or got.username is not None
+                    or got.password is not None
+                    or got.path
+                    or got.query
+                    or got.fragment
+                ):
+                    return False
+                got.port  # Validate a possible port before accepting the origin.
+            except ValueError:
+                return False
             got_scheme = got.scheme.lower()
             got_origin = f"{got_scheme}://{self._normalize_netloc(got.netloc, got_scheme)}"
             return got_origin == self._expected_origin()
@@ -422,6 +463,13 @@ def make_handler(cfg: Config, service: PasteService, sessions: SessionStore,
             get_all = getattr(self.headers, "get_all", None)
             content_lengths = get_all("Content-Length", []) if get_all else []
             transfer_encodings = get_all("Transfer-Encoding", []) if get_all else []
+            connection_values = get_all("Connection", []) if get_all else []
+            if any(
+                token.strip().lower() == "close"
+                for value in connection_values
+                for token in value.split(",")
+            ):
+                self.close_connection = True
             if len(content_lengths) > 1 or transfer_encodings:
                 self.close_connection = True
                 self._error(400, "invalid_request", "ambiguous request framing")
@@ -483,6 +531,10 @@ def make_handler(cfg: Config, service: PasteService, sessions: SessionStore,
             self._t_start = time.monotonic()
             self._route_path = self.path.split("?")[0]
             if not self._validate_request_framing():
+                return
+            if re.search(r"%(?![0-9A-Fa-f]{2})", self.path):
+                self.close_connection = True
+                self._error(400, "invalid_request", "encodage de chemin invalide")
                 return
             try:
                 path = urllib.parse.unquote(self.path.split("?")[0], errors="strict")

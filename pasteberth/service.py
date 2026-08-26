@@ -162,23 +162,23 @@ class PasteService:
         dest = self._destinations[zid]
         try:
             device = dest.device_id
-        except DestinationError as exc:
+        except (DestinationError, OSError) as exc:
             raise ServiceError("destination_error", str(exc)) from exc
-        with (
-            self._locks[zid],
-            dest.operation_lock(exclusive=True),
-            self._space_locks[device].locked(),
-        ):
-            try:
+        try:
+            with (
+                self._locks[zid],
+                dest.operation_lock(exclusive=True),
+                self._space_locks[device].locked(),
+            ):
                 dest.ensure_space(len(data), zone.min_free_percent)
                 stored = dest.save(data, info)
                 deleted = dest.apply_retention(zone.retain, stored.filename)
-            except StorageLowError as exc:
-                raise ServiceError("storage_low", str(exc)) from exc
-            except RetentionError as exc:
-                raise ServiceError("retention_error", str(exc)) from exc
-            except DestinationError as exc:
-                raise ServiceError("destination_error", str(exc)) from exc
+        except StorageLowError as exc:
+            raise ServiceError("storage_low", str(exc)) from exc
+        except RetentionError as exc:
+            raise ServiceError("retention_error", str(exc)) from exc
+        except (DestinationError, OSError) as exc:
+            raise ServiceError("destination_error", str(exc)) from exc
         log.info(
             "upload zone=%s fichier=%s %dx%d %d octets (rétention : %d supprimé(s))",
             zid,
@@ -195,11 +195,11 @@ class PasteService:
     def history(self, zid: str) -> list[dict]:
         if zid not in self._zone_cfg:
             raise ServiceError("unknown_zone", f"zone inconnue : {zid}")
-        with self._locks[zid], self._destinations[zid].operation_lock(exclusive=False):
-            try:
+        try:
+            with self._locks[zid], self._destinations[zid].operation_lock(exclusive=False):
                 items = self._destinations[zid].list()
-            except DestinationError as exc:
-                raise ServiceError("destination_error", str(exc)) from exc
+        except (DestinationError, OSError) as exc:
+            raise ServiceError("destination_error", str(exc)) from exc
         return [self.item_payload(zid, item) for item in items]
 
     # --------------------------------------------------------------- preview
@@ -210,18 +210,18 @@ class PasteService:
             raise ServiceError("unknown_zone", f"zone inconnue : {zid}")
         if not valid_filename(filename):
             raise ServiceError("unknown_image", "nom de fichier invalide")
-        with self._locks[zid], self._destinations[zid].operation_lock(exclusive=False):
-            try:
+        try:
+            with self._locks[zid], self._destinations[zid].operation_lock(exclusive=False):
                 known = {item.filename for item in self._destinations[zid].list()}
                 if filename not in known:
                     raise ServiceError("unknown_image", "fichier inconnu dans cette zone")
                 data = self._destinations[zid].read(filename)
-            except ServiceError:
-                raise
-            except UnknownImageError as exc:
-                raise ServiceError("unknown_image", str(exc)) from exc
-            except DestinationError as exc:
-                raise ServiceError("destination_error", str(exc)) from exc
+        except ServiceError:
+            raise
+        except UnknownImageError as exc:
+            raise ServiceError("unknown_image", str(exc)) from exc
+        except (DestinationError, OSError) as exc:
+            raise ServiceError("destination_error", str(exc)) from exc
         # Format déduit de l'extension, elle-même générée côté serveur.
         ext = filename.rsplit(".", 1)[-1]
         fmt = {"png": "png", "jpg": "jpeg", "webp": "webp"}[ext]

@@ -633,6 +633,11 @@ def prepare_directories(cfg: Config) -> None:
             )
         try:
             mode = zone.directory.stat().st_mode & 0o777
+            if mode & 0o022:
+                raise ConfigError(
+                    f"zone '{zone.id}': permissions d'écriture non privées sur "
+                    f"{zone.directory} ({oct(mode)}) ; 0700 est requis"
+                )
             if mode & 0o077:
                 log.warning(
                     "zone '%s': permissions non privées sur %s (%s) ; "

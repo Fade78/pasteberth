@@ -80,6 +80,20 @@ class TestErreursDemarrage(unittest.TestCase):
         self.assertEqual(proc.returncode, 2)
         self.assertIn("hash scrypt valide", proc.stderr)
 
+    def test_fichier_passwd_non_utf8_refuse_sans_traceback(self):
+        password_file = self.tmp / "passwd"
+        password_file.write_bytes(b"\xff\n")
+        password_file.chmod(0o600)
+        cfg = write_config(
+            self.tmp,
+            auth_enabled=True,
+            password_file=str(password_file),
+        )
+        proc = run_cli(["serve", "--config", str(cfg)])
+        self.assertEqual(proc.returncode, 2)
+        self.assertIn("erreur de configuration", proc.stderr)
+        self.assertNotIn("Traceback", proc.stderr)
+
     def test_destination_inaccessible_retourne_une_erreur_propre(self):
         zone = self.tmp / "default-images"
         zone.mkdir()
@@ -88,10 +102,11 @@ class TestErreursDemarrage(unittest.TestCase):
             self.tmp,
             zones=[{"id": "default", "directory": str(zone)}],
         )
-        proc = run_cli(["serve", "--config", str(cfg)])
-        self.assertEqual(proc.returncode, 2)
-        self.assertIn("erreur de destination", proc.stderr)
-        self.assertNotIn("Traceback", proc.stderr)
+        for command in ("serve", "audit"):
+            with self.subTest(command=command):
+                proc = run_cli([command, "--config", str(cfg)])
+                self.assertEqual(proc.returncode, 2)
+                self.assertNotIn("Traceback", proc.stderr + proc.stdout)
 
     def test_parent_destination_inaccessible_retourne_une_erreur_propre(self):
         parent = self.tmp / "private"

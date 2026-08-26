@@ -33,8 +33,9 @@ def address_family_for(host: str) -> int:
 
 
 class PasteberthServer(ThreadingHTTPServer):
-    daemon_threads = True
-    block_on_close = False
+    # Let server_close() drain active handlers before the process exits.
+    daemon_threads = False
+    block_on_close = True
     allow_reuse_address = True
     request_queue_size = 32
     max_active_requests = 64

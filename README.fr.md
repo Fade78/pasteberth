@@ -375,7 +375,8 @@ curl -b cookies.txt -F image=@capture.png \
 
 Formats : PNG, JPEG, WebP — déterminés par le **contenu** (magic bytes +
 structure), jamais par le MIME déclaré. Refus : vide, trop grand, format
-inconnu, conteneur incomplet ou image corrompue. Les noms sont générés côté serveur
+inconnu, conteneur incomplet ou structurellement malformé. La décompression des
+pixels reste à la charge du navigateur/harness. Les noms sont générés côté serveur
 (`AAAA-MM-JJ_HH-MM-SS_<6 hex>.ext`, création `O_EXCL` : zéro écrasement).
 Un espace libre sous le seuil renvoie `507 storage_low`. Une erreur de
 rétention renvoie `503 retention_error` après la création de l'image ; le
@@ -401,8 +402,10 @@ client doit donc recharger l'historique avant de retenter aveuglément.
 - Seuls les fichiers dotés d'un sidecar Pasteberth peuvent être lus ou
   supprimés ; vos fichiers personnels dans les répertoires cibles ne sont
   jamais touchés.
-- Répertoires privés recommandés (`0700`), images/sidecars privés (`0600`), liens
-  symboliques refusés et réconciliation des temporaires après crash.
+- Répertoires privés requis pour un service qui écrit (`0700`), images/sidecars
+  privés (`0600`), liens symboliques refusés et réconciliation des temporaires
+  après crash. Les modes partagés en lecture seule sont signalés ; les
+  répertoires accessibles en écriture au groupe/autres sont refusés.
 - Validation structurelle complète des PNG/JPEG/WebP, budget de dimensions et
   de pixels, et refus des conteneurs tronqués.
 - Rétention sous verrou par zone : ordre déterministe, uploads concurrents
@@ -417,12 +420,12 @@ npm run test:all              # Python + navigateur en parallèle
 # ciblé : npm run test:e2e
 ```
 
-La suite couvre : validation images (PNG/JPEG/WebP, corruption, spoofing),
+La suite couvre : validation images (PNG/JPEG/WebP, corruption structurelle, spoofing),
 configuration & politique de démarrage, stockage/rétention/ownership,
 auth/sessions/anti-bruteforce, parser multipart, intégration HTTP complète
 (auth, CSRF/Origin, proxys, en-têtes, fuite de secret), concurrence
 (uploads parallèles même/multi zones, lecteurs pendant écritures),
-CLI (passwd, refus de configuration dangereuse), contrats frontend, et cinq
+CLI (passwd, refus de configuration dangereuse), contrats frontend, et six
 scénarios navigateur Playwright sur un serveur Pasteberth réel : chargement et
 sélection clavier, collage sans zone, upload/aperçu, sélection dans l'index et
 glisser-déposer.

@@ -370,7 +370,8 @@ curl -b cookies.txt -F image=@capture.png \
 
 Formats: PNG, JPEG, WebP — determined by **content** (magic bytes + structure),
 never by the declared MIME type. Rejections: empty, too large, unknown format,
-incomplete container, or corrupted image. Names are generated server-side
+incomplete or structurally malformed container. Pixel decompression remains the
+browser/harness responsibility. Names are generated server-side
 (`YYYY-MM-DD_HH-MM-SS_<6 hex>.ext`, creation with `O_EXCL`: no overwriting).
 Free space below the threshold returns `507 storage_low`. A retention error
 returns `503 retention_error` after the image is created; the client must
@@ -395,8 +396,10 @@ therefore reload the history before blindly retrying.
   `[A-Za-z0-9._-]` + history membership required).
 - Only files with a Pasteberth sidecar can be read or deleted; your personal
   files in the target directories are never touched.
-- Private directories recommended (`0700`), private images/sidecars (`0600`),
-  symbolic links refused, and temporary files reconciled after a crash.
+- Private directories required for writable service use (`0700`), private
+  images/sidecars (`0600`), symbolic links refused, and temporary files
+  reconciled after a crash. Read-only shared directory modes are warned about;
+  group/other-writable directories are refused.
 - Complete structural validation of PNG/JPEG/WebP, dimensions and pixel budget,
   and rejection of truncated containers.
 - Retention under a per-zone lock: deterministic ordering, safe concurrent
@@ -411,12 +414,12 @@ npm run test:all              # Python + browser in parallel
 # targeted: npm run test:e2e
 ```
 
-The suite covers: image validation (PNG/JPEG/WebP, corruption, spoofing),
+The suite covers: image validation (PNG/JPEG/WebP, structural corruption, spoofing),
 configuration & startup policy, storage/retention/ownership,
 auth/sessions/anti-brute-force, multipart parser, full HTTP integration
 (auth, CSRF/Origin, proxies, headers, secret leakage), concurrency
 (parallel uploads in the same/multiple zones, readers during writes),
-CLI (passwd, refusal of dangerous configuration), frontend contracts, and five
+CLI (passwd, refusal of dangerous configuration), frontend contracts, and six
 Playwright browser scenarios on a real Pasteberth server: loading and keyboard
 selection, paste without a zone, upload/preview, selection in the index, and
 drag and drop.

@@ -393,6 +393,16 @@ class TestRejetsUploads(Base):
         self.assertEqual(status_code, 507)
         self.assertEqual(json_of(body)["error"]["code"], "storage_low")
 
+    def test_verrou_destination_inaccessible_reste_une_erreur_json(self):
+        lock = self.zones_dirs["default"] / ".pasteberth.lock"
+        lock.unlink()
+        lock.symlink_to(self.tmp / "outside-lock")
+        self.addCleanup(lock.unlink)
+        status, headers, body = self.req("GET", "/api/zones/default/images")
+        self.assertEqual(status, 500)
+        self.assertTrue(headers["content-type"].startswith("application/json"))
+        self.assertEqual(json_of(body)["error"]["code"], "destination_error")
+
 
 class TestZonesEtPreviews(Base):
     """(#9)(#10) zones inconnues, traversées de chemin."""
@@ -576,6 +586,11 @@ class TestOriginCSRF(Base):
     def test_hote_ipv6_loopback_normalise(self):
         handler = self.server.httpd.RequestHandlerClass
         self.assertEqual(handler._host_name("::1"), "::1")
+        self.assertEqual(handler._host_name("[2001:0db8::1]:443"), "2001:db8::1")
+        self.assertEqual(
+            handler._normalize_netloc("[2001:0db8::1]:80", "http"),
+            "[2001:db8::1]",
+        )
         body, ctype = build_multipart(data=make_png())
         status, _, _ = self.req(
             "POST",
@@ -628,6 +643,27 @@ class TestOriginCSRF(Base):
             "/api/zones/default/images",
             body=body,
             headers={"Content-Type": ctype, "Origin": "null"},
+        )
+        self.assertEqual(status, 403)
+        self.assertEqual(json_of(response)["error"]["code"], "forbidden_origin")
+
+    def test_origin_malformee_ou_avec_chemin_refusee_sans_erreur_interne(self):
+        for origin in ("http://[invalid", f"http://127.0.0.1:{self.server.port}/path"):
+            with self.subTest(origin=origin):
+                status, _, body = self._post(origin)
+                self.assertEqual(status, 403)
+                self.assertEqual(json_of(body)["error"]["code"], "forbidden_origin")
+
+    def test_referer_malforme_refuse_proprement(self):
+        body, ctype = build_multipart(data=make_png())
+        status, _, response = self.req(
+            "POST",
+            "/api/zones/default/images",
+            body=body,
+            headers={
+                "Content-Type": ctype,
+                "Referer": "http://[invalid",
+            },
         )
         self.assertEqual(status, 403)
         self.assertEqual(json_of(response)["error"]["code"], "forbidden_origin")
@@ -760,7 +796,7 @@ class TestRequestFraming(Base):
         import socket
 
         pipelined = b"GET /api/health HTTP/1.1\r\nHost: localhost\r\n\r\n"
-        for target in (b"/%ff", b"/\\bad", b"/\x00"):
+        for target in (b"/%ff", b"/%ZZ", b"/\\bad", b"/\x00"):
             with self.subTest(target=target):
                 request_bytes = (
                     b"GET " + target + b" HTTP/1.1\r\n"
@@ -773,6 +809,23 @@ class TestRequestFraming(Base):
                     response = self._read_all(sock).decode("latin-1").lower()
                 self.assertNotIn("http/1.1 200", response)
                 self.assertIn("connection: close", response)
+
+    def test_connection_close_dans_une_liste_de_tokens_ferme(self):
+        import socket
+
+        request_bytes = (
+            b"GET /api/health HTTP/1.1\r\n"
+            b"Host: localhost\r\n"
+            b"Connection: keep-alive, close\r\n\r\n"
+            b"GET /api/health HTTP/1.1\r\n"
+            b"Host: localhost\r\n\r\n"
+        )
+        with socket.create_connection(("127.0.0.1", self.server.port), timeout=5) as sock:
+            sock.sendall(request_bytes)
+            sock.shutdown(socket.SHUT_WR)
+            response = self._read_all(sock).decode("latin-1").lower()
+        self.assertEqual(response.count("http/1.1 200"), 1)
+        self.assertIn("connection: close", response)
 
     def test_transfer_encoding_est_refuse(self):
         import socket

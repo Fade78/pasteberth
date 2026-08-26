@@ -256,7 +256,12 @@ def _audit_zone(cfg, zone) -> tuple[list[str], list[str]]:
         return errors, warnings
     try:
         mode = stat.S_IMODE(path.stat().st_mode)
-        if mode & 0o077:
+        if mode & 0o022:
+            errors.append(
+                f"zone {zone.id}: permissions d'écriture non privées ({oct(mode)}) : {path} "
+                "(0700 requis)"
+            )
+        elif mode & 0o077:
             warnings.append(
                 f"zone {zone.id}: permissions non privées ({oct(mode)}) : {path} "
                 "(0700 recommandé)"
@@ -265,6 +270,21 @@ def _audit_zone(cfg, zone) -> tuple[list[str], list[str]]:
         errors.append(f"zone {zone.id}: inspection impossible ({exc})")
     if not os.access(path, os.W_OK | os.X_OK):
         errors.append(f"zone {zone.id}: répertoire non accessible en écriture : {path}")
+    lock_path = path / ".pasteberth.lock"
+    try:
+        lock_stat = lock_path.lstat()
+    except FileNotFoundError:
+        lock_stat = None
+    except OSError as exc:
+        errors.append(f"zone {zone.id}: inspection du verrou impossible ({exc})")
+        lock_stat = None
+    if lock_stat is not None:
+        if stat.S_ISLNK(lock_stat.st_mode):
+            errors.append(f"zone {zone.id}: le verrou est un lien symbolique : {lock_path}")
+        elif not stat.S_ISREG(lock_stat.st_mode):
+            errors.append(f"zone {zone.id}: le verrou n'est pas un fichier régulier : {lock_path}")
+        elif not os.access(lock_path, os.R_OK | os.W_OK):
+            errors.append(f"zone {zone.id}: verrou non accessible en lecture/écriture : {lock_path}")
     try:
         usage = shutil.disk_usage(path)
         free_percent = usage.free * 100.0 / usage.total if usage.total else 0.0

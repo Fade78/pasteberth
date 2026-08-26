@@ -109,7 +109,7 @@ def load_password_hash(path: Path) -> str | None:
         raw = path.read_text(encoding="utf-8").strip()
     except FileNotFoundError:
         return None
-    except OSError as exc:
+    except (OSError, UnicodeError) as exc:
         raise RuntimeError(f"lecture impossible de {path} : {exc}") from exc
     return raw.splitlines()[0] if raw else None
 

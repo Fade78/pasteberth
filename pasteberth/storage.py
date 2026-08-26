@@ -135,6 +135,16 @@ class LocalDestination(Destination):
         if symlink is not None:
             raise DestinationError(f"chemin zone symbolique refusé : {symlink}")
         if self.directory.is_dir():
+            try:
+                mode = self.directory.stat().st_mode & 0o777
+            except OSError as exc:
+                raise DestinationError(
+                    f"inspection impossible de {self.directory} : {exc}"
+                ) from exc
+            if mode & 0o022:
+                raise DestinationError(
+                    f"permissions d'écriture non privées sur {self.directory} ({oct(mode)})"
+                )
             return
         if self.create_directory:
             try:

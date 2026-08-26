@@ -44,6 +44,14 @@ class TestHash(unittest.TestCase):
             self.assertTrue(verify_password(PASSWORD, loaded))
             self.assertIsNone(load_password_hash(Path(tmp) / "absent"))
 
+    def test_fichier_passwd_non_utf8_retourne_une_erreur_propre(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "passwd"
+            path.write_bytes(b"\xff\n")
+            path.chmod(0o600)
+            with self.assertRaises(RuntimeError):
+                load_password_hash(path)
+
     def test_changement_corrige_un_mode_trop_ouvert(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "passwd"

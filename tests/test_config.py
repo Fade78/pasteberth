@@ -345,6 +345,16 @@ class TestRepertoires(unittest.TestCase):
         prepare_directories(cfg)
         self.assertEqual(stat.S_IMODE(target.stat().st_mode), 0o755)
 
+    def test_repertoire_permissions_ecriture_non_privees_refusees(self):
+        target = self.tmp / "group-writable"
+        target.mkdir(mode=0o775)
+        os.chmod(target, 0o775)
+        cfg = load_config(
+            write_config(self.tmp, zones=[{"id": "x", "directory": str(target)}])
+        )
+        with self.assertRaisesRegex(ConfigError, "écriture non privées"):
+            prepare_directories(cfg)
+
     def test_lien_symbolique_parent_refuse(self):
         target = self.tmp / "outside"
         target.mkdir(mode=0o700)
