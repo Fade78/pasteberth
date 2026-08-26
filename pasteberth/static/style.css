@@ -379,6 +379,17 @@ code, kbd {
 
 .toast.error { border-color: var(--danger); color: #ffd7d3; }
 
+/* A native modal dialog sits above the document's regular stacking contexts. */
+dialog#pv > .toast {
+  position: fixed;
+  bottom: 26px;
+  z-index: 1;
+  background: #263342;
+  color: #f3f6fa;
+  border-color: rgba(255, 255, 255, 0.3);
+  font-weight: 600;
+}
+
 .copy-fallback {
   position: fixed;
   left: -9999px;

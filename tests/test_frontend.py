@@ -85,6 +85,7 @@ class TestContratsFrontend(unittest.TestCase):
         self.assertIn('className = "copy-image-btn"', self.app_js)
         self.assertIn('id="pv-clear"', self.index_html)
         self.assertIn('id="pv-copy-image"', self.index_html)
+        self.assertIn('id="pv-toast"', self.index_html)
 
     def test_version_dans_le_branding(self):
         self.assertIn("brand-version", self.index_html)

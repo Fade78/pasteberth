@@ -28,6 +28,7 @@
   const statusText = document.getElementById("status-text");
   const logoutForm = document.getElementById("logout-form");
   const toastEl = document.getElementById("toast");
+  const pvToastEl = document.getElementById("pv-toast");
   const pv = document.getElementById("pv");
   const pvImg = document.getElementById("pv-img");
   const pvRef = document.getElementById("pv-ref");
@@ -94,11 +95,17 @@
   }
 
   function toast(message, kind = "info") {
-    toastEl.textContent = message;
-    toastEl.className = "toast " + kind;
-    toastEl.hidden = false;
+    const target = pv.open ? pvToastEl : toastEl;
+    const other = pv.open ? toastEl : pvToastEl;
+    target.textContent = message;
+    target.className = "toast " + kind;
+    target.hidden = false;
+    other.hidden = true;
     clearTimeout(state.toastTimer);
-    state.toastTimer = setTimeout(() => { toastEl.hidden = true; }, 2600);
+    state.toastTimer = setTimeout(() => {
+      toastEl.hidden = true;
+      pvToastEl.hidden = true;
+    }, 2600);
   }
 
   async function api(path, options) {

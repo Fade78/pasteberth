@@ -98,13 +98,18 @@ test("colle une image et ouvre son aperçu au clavier", async ({ page }) => {
   await defaultZone.locator(".thumb-big").press("Enter");
   await expect(page.locator("#pv")).toBeVisible();
   await expect(page.locator("#pv-ref")).toHaveText(reference);
+  await page.locator("#pv-copy").click();
+  await expect(page.locator("#pv-toast")).toBeVisible();
+  await expect(page.locator("#pv-toast")).toContainText("Link copied");
+  await page.locator("#pv-copy-image").click();
+  await expect(page.locator("#pv-toast")).toContainText("Image copied");
   await page.getByRole("button", { name: "Close" }).click();
   await expect(page.locator("#pv")).not.toBeVisible();
 
   await defaultZone.getByRole("button", { name: "Enlarge the image" }).click();
   await expect(page.locator("#pv")).toBeVisible();
   await page.locator("#pv-clear").click();
-  await expect(page.locator("#toast")).toContainText("Clipboard cleared");
+  await expect(page.locator("#pv-toast")).toContainText("Clipboard cleared");
   await page.getByRole("button", { name: "Close" }).click();
 });
 
