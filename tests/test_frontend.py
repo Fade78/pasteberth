@@ -90,6 +90,13 @@ class TestContratsFrontend(unittest.TestCase):
         self.assertIn('id="pv-copy-image"', self.index_html)
         self.assertIn('id="pv-toast"', self.index_html)
 
+    def test_suppression_image_disponible(self):
+        self.assertIn("function deleteImage", self.app_js)
+        self.assertIn('className = "delete-btn"', self.app_js)
+        self.assertIn('id="pv-delete"', self.index_html)
+        self.assertIn('method: "DELETE"', self.app_js)
+        self.assertIn("window.confirm", self.app_js)
+
     def test_reconciliation_apres_erreur_et_dialogue_legacy(self):
         self.assertIn('err.code === "retention_error"', self.app_js)
         self.assertIn("await refresh()", self.app_js)

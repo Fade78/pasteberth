@@ -237,3 +237,21 @@ test("accepte le glisser-déposer sur une zone", async ({ page }) => {
   await expect(secondary.locator(".fname")).toHaveText(/\.png$/);
   await expect(secondary.locator(".zone-select")).toHaveAttribute("aria-pressed", "true");
 });
+
+test("supprime une image depuis la carte", async ({ page }) => {
+  await openApp(page);
+  const defaultZone = page.locator('[data-zone="default"]');
+  await defaultZone.getByRole("button", { name: "Select zone Default" }).click();
+  await dispatchPaste(page);
+  await expect(defaultZone.locator(".latest")).toBeVisible();
+  const filename = await defaultZone.locator(".fname").textContent();
+
+  page.on("dialog", (dialog) => dialog.accept());
+  await defaultZone.getByRole("button", { name: "Delete this image from the disk" }).click();
+
+  await expect(defaultZone.locator(".latest")).toHaveCount(0);
+  await expect(defaultZone.locator(".drop-hint")).toBeVisible();
+  const response = await page.request.get(`/api/zones/default/images`);
+  const payload = await response.json();
+  expect(payload.images.some(i => i.filename === filename)).toBe(false);
+});

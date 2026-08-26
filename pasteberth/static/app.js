@@ -35,6 +35,7 @@
   const pvCopy = document.getElementById("pv-copy");
   const pvCopyImage = document.getElementById("pv-copy-image");
   const pvClear = document.getElementById("pv-clear");
+  const pvDelete = document.getElementById("pv-delete");
 
   // ------------------------------------------------------------- utilities
 
@@ -341,7 +342,7 @@
       el.appendChild(hint);
     } else {
       const selected = selectedItem(zone);
-      el.appendChild(renderLatest(selected));
+      el.appendChild(renderLatest(zone.id, selected));
       el.appendChild(renderThumbs(zone.images, selected.id));
     }
     return el;
@@ -368,7 +369,7 @@
     return meta;
   }
 
-  function renderLatest(item) {
+  function renderLatest(zoneId, item) {
     const card = document.createElement("div");
     card.className = "latest";
     const img = document.createElement("img");
@@ -405,9 +406,16 @@
     zoom.setAttribute("aria-label", "Enlarge the image");
     zoom.dataset.ref = item.reference;
     zoom.dataset.preview = item.preview_url;
+    const del = document.createElement("button");
+    del.type = "button";
+    del.className = "delete-btn";
+    del.textContent = "Delete";
+    del.setAttribute("aria-label", "Delete this image from the disk");
+    del.dataset.zone = zoneId;
+    del.dataset.filename = item.filename;
     const actions = document.createElement("div");
     actions.className = "latest-actions";
-    actions.append(btn, imageCopy, clear, zoom);
+    actions.append(btn, imageCopy, clear, zoom, del);
     right.appendChild(actions);
     card.append(img, right);
     return card;
@@ -594,6 +602,23 @@
     return null;
   }
 
+  async function deleteImage(zoneId, filename) {
+    if (!window.confirm(`Delete ${filename} from the disk?`)) return;
+    try {
+      await api(`/api/zones/${encodeURIComponent(zoneId)}/images/${encodeURIComponent(filename)}`,
+        { method: "DELETE" });
+      const zone = state.zones.find(z => z.id === zoneId);
+      if (zone) {
+        zone.images = zone.images.filter(item => item.id !== filename);
+        if (state.selectedByZone[zoneId] === filename) delete state.selectedByZone[zoneId];
+        rerenderZone(zoneId);
+      }
+      toast(`Deleted ${filename}`);
+    } catch (err) {
+      toast(err.message, "error");
+    }
+  }
+
   // ------------------------------------------------------------- events
 
   window.addEventListener("paste", (event) => {
@@ -636,6 +661,11 @@
     const zoomBtn = event.target.closest(".zoom-btn");
     if (zoomBtn && zoomBtn.dataset.preview) {
       openPreview(zoomBtn.dataset.preview, zoomBtn.dataset.ref);
+      return;
+    }
+    const deleteBtn = event.target.closest(".delete-btn");
+    if (deleteBtn && deleteBtn.dataset.filename) {
+      deleteImage(deleteBtn.dataset.zone, deleteBtn.dataset.filename);
       return;
     }
     const thumbWrap = event.target.closest(".thumb-wrap");
@@ -717,6 +747,7 @@
     setPreviewSource(pvImg, url);
     pvRef.textContent = reference;
     pvCopyImage.dataset.preview = url;
+    pvDelete.dataset.filename = url.split("/").pop();
     if (typeof pv.showModal === "function") pv.showModal();
     else pv.setAttribute("open", "");
   }
@@ -732,6 +763,13 @@
   pvCopy.addEventListener("click", () => copyLink(pvRef.textContent));
   pvCopyImage.addEventListener("click", () => copyImage(pvCopyImage.dataset.preview));
   pvClear.addEventListener("click", clearClipboard);
+  pvDelete.addEventListener("click", () => {
+    const zoneId = state.zones.find(z => z.images.some(i => i.id === pvDelete.dataset.filename));
+    if (zoneId) {
+      closePreview();
+      deleteImage(zoneId.id, pvDelete.dataset.filename);
+    }
+  });
   document.getElementById("pv-close").addEventListener("click", closePreview);
   pv.addEventListener("click", (event) => { if (event.target === pv) closePreview(); });
   pv.addEventListener("close", () => { setPreviewSource(pvImg, ""); });

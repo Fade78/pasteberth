@@ -264,7 +264,7 @@ code, kbd {
 
 /* ------------------------------------------------------------ buttons */
 
-.copy-btn, .copy-image-btn, .clear-btn, .zoom-btn {
+.copy-btn, .copy-image-btn, .clear-btn, .zoom-btn, .delete-btn {
   align-self: flex-start;
   background: rgba(127, 127, 127, 0.22);
   color: var(--fg, var(--text));
@@ -276,19 +276,21 @@ code, kbd {
   cursor: pointer;
 }
 
-.copy-btn:hover, .copy-image-btn:hover, .clear-btn:hover, .zoom-btn:hover {
+.copy-btn:hover, .copy-image-btn:hover, .clear-btn:hover, .zoom-btn:hover, .delete-btn:hover {
   background: rgba(127, 127, 127, 0.34);
 }
-.copy-btn:active, .copy-image-btn:active, .clear-btn:active, .zoom-btn:active {
+.copy-btn:active, .copy-image-btn:active, .clear-btn:active, .zoom-btn:active, .delete-btn:active {
   transform: translateY(1px);
 }
 
 .clear-btn { color: #ffd7d3; }
+.delete-btn { color: #ffb4ab; }
 
 .copy-btn:focus-visible,
 .copy-image-btn:focus-visible,
 .clear-btn:focus-visible,
 .zoom-btn:focus-visible,
+.delete-btn:focus-visible,
 .thumb-wrap:focus-visible,
 .zone-select:focus-visible,
 .thumb-big:focus-visible,
@@ -428,7 +430,7 @@ dialog#pv::backdrop { background: rgba(4, 6, 9, 0.66); }
 
 .pv-bar .ref { flex: 1; min-width: 200px; }
 .pv-actions { display: flex; gap: 8px; }
-.pv-actions .copy-btn, .pv-actions .copy-image-btn, .pv-actions .clear-btn { margin-top: 0; }
+.pv-actions .copy-btn, .pv-actions .copy-image-btn, .pv-actions .clear-btn, .pv-actions .delete-btn { margin-top: 0; }
 
 /* ---------------------------------------------------------------- footer */
 

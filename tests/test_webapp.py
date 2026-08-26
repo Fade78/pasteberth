@@ -304,6 +304,11 @@ class TestAuthentification(Base):
         status, _, _ = self.req("GET", "/api/zones", cookie=forged)
         self.assertEqual(status, 401)
 
+    def test_suppression_sans_auth_401(self):
+        status, _, _ = self.req("DELETE", "/api/zones/default/images/2026-01-01_00-00-00_abcdef.png",
+                                cookie=None)
+        self.assertEqual(status, 401)
+
 
 class TestPreviewsConcurrence(Base):
     auth = True
@@ -619,6 +624,29 @@ class TestReferenceFormatee(Base):
 
 class TestRetentionAPI(Base):
     """(#12)(#13)(#19)(#20) rétention par API et indépendance des zones."""
+
+    def test_suppression_image_par_api(self):
+        body, ctype = build_multipart(data=make_png())
+        status, _, resp = self.req("POST", "/api/zones/default/images", body=body,
+                                   headers={"Content-Type": ctype})
+        self.assertEqual(status, 201)
+        item = json_of(resp)
+        filename = item["filename"]
+        self.assertTrue((self.zones_dirs["default"] / filename).exists())
+
+        status, _, resp = self.req("DELETE", f"/api/zones/default/images/{filename}")
+        self.assertEqual(status, 200)
+        self.assertEqual(json_of(resp)["deleted"], filename)
+        self.assertFalse((self.zones_dirs["default"] / filename).exists())
+        self.assertFalse((self.zones_dirs["default"] / (filename + ".json")).exists())
+
+        status, _, resp = self.req("GET", "/api/zones/default/images")
+        self.assertNotIn(filename, [i["filename"] for i in json_of(resp)["images"]])
+
+    def test_suppression_image_inconnue_404(self):
+        status, _, resp = self.req("DELETE", "/api/zones/default/images/2026-01-01_00-00-00_abcdef.png")
+        self.assertEqual(status, 404)
+        self.assertEqual(json_of(resp)["error"]["code"], "unknown_image")
 
     def test_depassement_retain_default3(self):
         saved = []

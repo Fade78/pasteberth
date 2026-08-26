@@ -204,6 +204,21 @@ class PasteService:
 
     # --------------------------------------------------------------- preview
 
+    def delete(self, zid: str, filename: str) -> None:
+        """Supprime une image connue (fichier + sidecar) de la zone."""
+        if zid not in self._zone_cfg:
+            raise ServiceError("unknown_zone", f"zone inconnue : {zid}")
+        if not valid_filename(filename):
+            raise ServiceError("unknown_image", "nom de fichier invalide")
+        try:
+            with self._locks[zid], self._destinations[zid].operation_lock(exclusive=True):
+                self._destinations[zid].delete(filename)
+        except UnknownImageError as exc:
+            raise ServiceError("unknown_image", str(exc)) from exc
+        except (DestinationError, OSError) as exc:
+            raise ServiceError("destination_error", str(exc)) from exc
+        log.info("suppression zone=%s fichier=%s", zid, filename)
+
     def preview(self, zid: str, filename: str) -> tuple[bytes, str]:
         """Contenu binaire + MIME ; n'accepte que les fichiers connus."""
         if zid not in self._zone_cfg:

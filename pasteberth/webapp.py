@@ -50,6 +50,7 @@ _ROUTES: tuple[tuple[str, re.Pattern, str], ...] = tuple(
         ("GET", r"^/api/zones$", "h_zones"),
         ("GET", rf"^/api/zones/{_ZONE_RE}/images$", "h_zone_images"),
         ("POST", rf"^/api/zones/{_ZONE_RE}/images$", "h_zone_upload"),
+        ("DELETE", rf"^/api/zones/{_ZONE_RE}/images/{_FILENAME_RE}$", "h_zone_delete"),
         ("GET", rf"^/previews/{_ZONE_RE}/{_FILENAME_RE}$", "h_preview"),
         ("POST", r"^/login$", "h_login_post"),
         ("POST", r"^/logout$", "h_logout"),
@@ -555,7 +556,7 @@ def make_handler(cfg: Config, service: PasteService, sessions: SessionStore,
                     continue
                 match = pattern.match(path)
                 if match:
-                    if method == "POST" and not self._origin_allowed():
+                    if method in ("POST", "DELETE") and not self._origin_allowed():
                         log.warning(
                             "origine refusée %s depuis %s",
                             self.headers.get("Origin") or self.headers.get("Referer"),
@@ -863,6 +864,16 @@ def make_handler(cfg: Config, service: PasteService, sessions: SessionStore,
             finally:
                 upload_memory.release(reservation)
             self._json(201, item)
+
+        def _h_zone_delete(self, zid: str, filename: str) -> None:
+            if not self._require_auth_api():
+                return
+            try:
+                service.delete(zid, filename)
+            except ServiceError as exc:
+                self._error(exc.status, exc.code, str(exc))
+                return
+            self._json(200, {"deleted": filename})
 
         def _h_preview(self, zid: str, filename: str) -> None:
             if not self._require_auth_api():
