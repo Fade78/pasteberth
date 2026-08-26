@@ -35,7 +35,7 @@ capture ──▶ browser ── HTTPS ──▶ Pasteberth ──▶ captures/<
 The browser **never** needs to access the returned path. This is the path seen
 by the harness, on the machine where Pasteberth runs.
 
-The current version is `1.0.1`.
+The current version is `1.0.2`.
 
 ---
 
@@ -157,6 +157,7 @@ desired zones and paths. The file remains ignored by Git.
 | `max_upload_size` | `"20MiB"` | per-upload limit (20 MiB by default, 50 MiB maximum) |
 | `max_image_pixels` | `25000000` | decoding budget (25 MP by default, 50 MP maximum) |
 | `trusted_proxies` | loopback | only these peers may set `X-Forwarded-*` |
+| `allowed_hosts` | `[]` | hostnames accepted by browser Origin/Referer checks; required behind a public reverse proxy |
 | `allow_unauthenticated_local` | `false` | explicit opt-in for anonymous loopback/proxy mode |
 | `allow_unauthenticated_remote` | `false` | explicit unlock (discouraged) |
 | `allow_insecure_http_remote` | `false` | separate opt-in for non-loopback HTTP (private network only) |

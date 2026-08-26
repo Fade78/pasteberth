@@ -128,6 +128,7 @@ def write_config(
     max_upload_size: str = "20MiB",
     max_image_pixels: int | None = None,
     trusted_proxies: str | None = '["127.0.0.1", "::1"]',
+    allowed_hosts: str | None = None,
     allow_unauthenticated_local: bool | None = True,
     allow_unauthenticated_remote: bool | None = None,
     allow_insecure_http_remote: bool | None = None,
@@ -155,6 +156,8 @@ def write_config(
         lines.append(f"max_image_pixels = {max_image_pixels}")
     if trusted_proxies is not None:
         lines.append(f"trusted_proxies = {trusted_proxies}")
+    if allowed_hosts is not None:
+        lines.append(f"allowed_hosts = {allowed_hosts}")
     if allow_unauthenticated_local is not None:
         lines.append(
             f"allow_unauthenticated_local = {str(allow_unauthenticated_local).lower()}"

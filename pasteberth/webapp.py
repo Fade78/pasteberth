@@ -246,6 +246,40 @@ def make_handler(cfg: Config, service: PasteService, sessions: SessionStore,
             host = self.headers.get("Host", "").strip()
             return host[:253] if host else "localhost"
 
+        @staticmethod
+        def _host_name(netloc: str) -> str | None:
+            try:
+                parsed = urllib.parse.urlsplit("//" + netloc.strip())
+                hostname = parsed.hostname
+                parsed.port  # Validate a possible port before accepting the host.
+            except ValueError:
+                return None
+            if (
+                not hostname
+                or parsed.username is not None
+                or parsed.password is not None
+                or parsed.path
+                or parsed.query
+                or parsed.fragment
+            ):
+                return None
+            return hostname.lower().rstrip(".")
+
+        def _host_allowed(self) -> bool:
+            host_name = self._host_name(self._host())
+            if host_name is None:
+                return False
+            if cfg.allowed_hosts:
+                return host_name in cfg.allowed_hosts
+            listen_name = self._host_name(cfg.listen_address)
+            if listen_name in (None, "0.0.0.0", "::"):
+                return False
+            if host_name == listen_name:
+                return True
+            if listen_name in ("127.0.0.1", "::1", "localhost"):
+                return host_name in ("127.0.0.1", "::1", "localhost")
+            return False
+
         def _expected_origin(self) -> str:
             scheme = self._scheme()
             return f"{scheme}://{self._normalize_netloc(self._host(), scheme)}"
@@ -265,6 +299,8 @@ def make_handler(cfg: Config, service: PasteService, sessions: SessionStore,
 
         def _origin_allowed(self) -> bool:
             """CSRF : si le navigateur fournit Origin/Referer, il doit correspondre."""
+            if not self._host_allowed():
+                return False
             origin = self.headers.get("Origin")
             opaque_origin = bool(origin and origin.strip().lower() == "null")
             if opaque_origin:
@@ -333,6 +369,8 @@ def make_handler(cfg: Config, service: PasteService, sessions: SessionStore,
             self.send_header("Content-Type", ctype)
             self.send_header("Content-Length", str(len(body)))
             self.send_header("Cache-Control", cache_control)
+            if self.close_connection:
+                self.send_header("Connection", "close")
             for key, value in self._security_headers():
                 self.send_header(key, value)
             for key, value in extra_headers or []:
@@ -365,13 +403,31 @@ def make_handler(cfg: Config, service: PasteService, sessions: SessionStore,
                 self._json(status, {"error": {"code": code, "message": message}}, **kwargs)
             else:
                 body = (
-                    f"<!doctype html><html lang=\"fr\"><meta charset=\"utf-8\">"
+                    f"<!doctype html><html lang=\"en\"><meta charset=\"utf-8\">"
                     f"<title>{status}</title><body><h1>{html.escape(str(status))}</h1>"
                     f"<p>{html.escape(message)}</p></body></html>".encode("utf-8")
                 )
                 self._finish(status, "text/html; charset=utf-8", body, **kwargs)
 
         # ------------------------------------------------------------- lecture
+
+        def _validate_request_framing(self) -> bool:
+            self.close_connection = self.command != "GET"
+            content_lengths = self.headers.get_all("Content-Length", [])
+            transfer_encodings = self.headers.get_all("Transfer-Encoding", [])
+            if len(content_lengths) > 1 or transfer_encodings:
+                self.close_connection = True
+                self._error(400, "invalid_request", "ambiguous request framing")
+                return False
+            if content_lengths:
+                value = content_lengths[0].strip()
+                if not value.isdigit():
+                    self.close_connection = True
+                    self._error(400, "invalid_request", "invalid Content-Length")
+                    return False
+            if self.headers.get("Content-Length") is not None:
+                self.close_connection = True
+            return True
 
         def _read_body(
             self,
@@ -424,6 +480,8 @@ def make_handler(cfg: Config, service: PasteService, sessions: SessionStore,
                 self._error(400, "invalid_request", "encodage de chemin invalide")
                 return
             self._route_path = path
+            if not self._validate_request_framing():
+                return
             if "\x00" in path or "\\" in path:
                 self._error(400, "invalid_request", "requête invalide")
                 return
@@ -577,6 +635,7 @@ def make_handler(cfg: Config, service: PasteService, sessions: SessionStore,
             except ClientAbort:
                 limiter.release(ip)
                 raise
+            released = False
             try:
                 password = ""
                 ctype = (self.headers.get("Content-Type") or "").lower()
@@ -607,16 +666,19 @@ def make_handler(cfg: Config, service: PasteService, sessions: SessionStore,
 
                 stored_hash = load_password_hash(cfg.password_file())
                 if password and verify_password(password, stored_hash):
-                    limiter.register_success(ip)
+                    limiter.complete(ip, success=True)
+                    released = True
                     log.info("connexion réussie (%s)", ip)
                     self._do_login_success()
                 else:
                     time.sleep(0.5)
-                    limiter.register_failure(ip)
+                    limiter.complete(ip, success=False)
+                    released = True
                     log.warning("échec de connexion (%s)", ip)
                     self._render_login(401, "Incorrect password.")
             finally:
-                limiter.release(ip)
+                if not released:
+                    limiter.release(ip)
 
         # Connexion réussie : redirection + cookie de session sur la même réponse.
         def _do_login_success(self) -> None:
@@ -738,7 +800,7 @@ def make_handler(cfg: Config, service: PasteService, sessions: SessionStore,
                 200,
                 mime,
                 data,
-                cache_control="private, max-age=3600",
+                cache_control="no-store",
             )
 
     return PasteberthHandler

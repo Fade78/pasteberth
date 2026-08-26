@@ -190,6 +190,28 @@
     return ok;
   }
 
+  async function toPng(blob) {
+    if (blob.type === "image/png") return blob;
+    if (typeof createImageBitmap !== "function") throw new Error("image conversion unavailable");
+    const bitmap = await createImageBitmap(blob);
+    try {
+      const canvas = document.createElement("canvas");
+      canvas.width = bitmap.width;
+      canvas.height = bitmap.height;
+      const context = canvas.getContext("2d");
+      if (!context) throw new Error("canvas unavailable");
+      context.drawImage(bitmap, 0, 0);
+      return await new Promise((resolve, reject) => {
+        canvas.toBlob((result) => {
+          if (result) resolve(result);
+          else reject(new Error("PNG conversion failed"));
+        }, "image/png");
+      });
+    } finally {
+      if (typeof bitmap.close === "function") bitmap.close();
+    }
+  }
+
   async function copyImage(previewUrl) {
     if (
       !navigator.clipboard
@@ -208,7 +230,8 @@
       if (!response.ok) throw new Error("preview unavailable");
       const blob = await response.blob();
       if (!/^image\//.test(blob.type)) throw new Error("not an image");
-      await navigator.clipboard.write([new ClipboardItem({ [blob.type]: blob })]);
+      const png = await toPng(blob);
+      await navigator.clipboard.write([new ClipboardItem({ "image/png": png })]);
       toast("Image copied");
       return true;
     } catch (_) {
@@ -500,7 +523,12 @@
     } catch (err) {
       if (err.status === 413) toast("Image is too large for this server", "error");
       else if (err.status === 507) toast("Not enough disk space for this upload", "error");
-      else toast(err.message, "error");
+      else {
+        if (err.code === "retention_error") {
+          try { await refresh(); } catch (_) { /* keep the original error visible */ }
+        }
+        toast(err.message, "error");
+      }
     } finally {
       if (zoneEl) zoneEl.classList.remove("busy");
     }
@@ -644,11 +672,19 @@
     else pv.setAttribute("open", "");
   }
 
+  function closePreview() {
+    if (typeof pv.close === "function") pv.close();
+    else {
+      pv.removeAttribute("open");
+      pvImg.src = "";
+    }
+  }
+
   pvCopy.addEventListener("click", () => copyLink(pvRef.textContent));
   pvCopyImage.addEventListener("click", () => copyImage(pvCopyImage.dataset.preview));
   pvClear.addEventListener("click", clearClipboard);
-  document.getElementById("pv-close").addEventListener("click", () => pv.close());
-  pv.addEventListener("click", (event) => { if (event.target === pv) pv.close(); });
+  document.getElementById("pv-close").addEventListener("click", closePreview);
+  pv.addEventListener("click", (event) => { if (event.target === pv) closePreview(); });
   pv.addEventListener("close", () => { pvImg.src = ""; });
 
   document.addEventListener("visibilitychange", () => {

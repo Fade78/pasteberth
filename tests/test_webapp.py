@@ -56,6 +56,7 @@ class Base(unittest.TestCase):
             password=self.password,
             max_upload_size=self.config_kwargs.get("max_upload_size", "20MB"),
             trusted_proxies=self.config_kwargs.get("trusted_proxies", '["127.0.0.1", "::1"]'),
+            allowed_hosts=self.config_kwargs.get("allowed_hosts"),
         )
         self.tmp = tmp
         self.server = LiveServer(cfg_path)
@@ -144,7 +145,7 @@ class TestModeAnonymeLoopback(Base):
         self.assertEqual(status, 200)
         self.assertEqual(data, png)
         self.assertEqual(headers["content-type"], "image/png")
-        self.assertEqual(headers["cache-control"], "private, max-age=3600")
+        self.assertEqual(headers["cache-control"], "no-store")
 
 
 class TestAuthentification(Base):
@@ -175,6 +176,9 @@ class TestAuthentification(Base):
                                    headers={"Content-Type": ctype})
         self.assertEqual(status, 201)
         url = json_of(resp)["preview_url"]
+        status, headers, _ = self.req("GET", url)
+        self.assertEqual(status, 200)
+        self.assertEqual(headers["cache-control"], "no-store")
         status, _, _ = self.req("GET", url, cookie=None)
         self.assertEqual(status, 401)
 
@@ -618,6 +622,88 @@ class TestOriginCSRF(Base):
                                 headers={"Content-Type": ctype,
                                          "Referer": "https://evil.example/page"})
         self.assertEqual(status, 403)
+
+    def test_hote_inconnu_refuse_meme_avec_origine_correspondante(self):
+        body, ctype = build_multipart(data=make_png())
+        status, _, _ = self.req(
+            "POST",
+            "/api/zones/default/images",
+            body=body,
+            headers={
+                "Host": "attacker.example",
+                "Origin": "http://attacker.example",
+                "Content-Type": ctype,
+            },
+        )
+        self.assertEqual(status, 403)
+
+
+class TestAllowedHosts(Base):
+    auth = True
+    password = PASSWORD
+    config_kwargs = {"allowed_hosts": '["pasteberth.example", "127.0.0.1"]'}
+
+    def test_hote_public_configure_accepte_origin_correspondante(self):
+        body, ctype = build_multipart(data=make_png())
+        status, _, _ = self.req(
+            "POST",
+            "/api/zones/default/images",
+            body=body,
+            headers={
+                "Host": "pasteberth.example",
+                "Origin": "http://pasteberth.example",
+                "Content-Type": ctype,
+            },
+        )
+        self.assertEqual(status, 201)
+
+
+class TestRequestFraming(Base):
+    auth = True
+    password = PASSWORD
+
+    @staticmethod
+    def _read_all(sock):
+        chunks = []
+        while True:
+            chunk = sock.recv(4096)
+            if not chunk:
+                return b"".join(chunks)
+            chunks.append(chunk)
+
+    def test_corps_refuse_non_lu_sur_401_et_connexion_fermee(self):
+        import socket
+
+        pipelined = b"GET /api/health HTTP/1.1\r\nHost: localhost\r\n\r\n"
+        request_bytes = (
+            b"POST /api/zones/default/images HTTP/1.1\r\n"
+            b"Host: localhost\r\n"
+            + f"Content-Length: {len(pipelined)}\r\n".encode()
+            + b"Content-Type: application/octet-stream\r\n\r\n"
+            + pipelined
+        )
+        with socket.create_connection(("127.0.0.1", self.server.port), timeout=5) as sock:
+            sock.sendall(request_bytes)
+            sock.shutdown(socket.SHUT_WR)
+            response = self._read_all(sock).decode("latin-1").lower()
+        self.assertEqual(response.count("http/1.1 401"), 1)
+        self.assertNotIn("http/1.1 200", response)
+        self.assertIn("connection: close", response)
+
+    def test_content_length_duplique_refuse(self):
+        import socket
+
+        request_bytes = (
+            b"POST /api/zones/default/images HTTP/1.1\r\n"
+            b"Host: localhost\r\n"
+            b"Content-Length: 0\r\n"
+            b"Content-Length: 0\r\n\r\n"
+        )
+        with socket.create_connection(("127.0.0.1", self.server.port), timeout=5) as sock:
+            sock.sendall(request_bytes)
+            sock.shutdown(socket.SHUT_WR)
+            response = self._read_all(sock).decode("latin-1")
+        self.assertTrue(response.startswith("HTTP/1.1 400"), response[:60])
 
 
 class TestProxysConfiance(Base):

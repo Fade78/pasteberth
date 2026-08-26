@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import ipaddress
 import logging
+import math
 import os
 import re
 import socket
@@ -53,7 +54,12 @@ def parse_size(value: object) -> int:
     if isinstance(value, bool) or not isinstance(value, (int, float, str)):
         raise ConfigError(f"taille invalide : {value!r}")
     if isinstance(value, (int, float)):
-        n = int(value)
+        if isinstance(value, float) and not math.isfinite(value):
+            raise ConfigError(f"taille invalide : {value!r}")
+        try:
+            n = int(value)
+        except (ValueError, OverflowError) as exc:
+            raise ConfigError(f"taille invalide : {value!r}") from exc
     else:
         m = re.fullmatch(r"\s*(\d+(?:\.\d+)?)\s*([A-Za-z]*)\s*", value)
         if not m:
@@ -61,7 +67,10 @@ def parse_size(value: object) -> int:
         unit = m.group(2).upper()
         if unit not in _SIZE_UNITS:
             raise ConfigError(f"unité de taille inconnue : {m.group(2)!r}")
-        n = int(float(m.group(1)) * _SIZE_UNITS[unit])
+        try:
+            n = int(float(m.group(1)) * _SIZE_UNITS[unit])
+        except (ValueError, OverflowError) as exc:
+            raise ConfigError(f"taille invalide : {value!r}") from exc
     if n <= 0:
         raise ConfigError(f"la taille doit être positive : {value!r}")
     return n
@@ -118,6 +127,7 @@ class Config:
     max_upload_bytes: int
     max_image_pixels: int
     trusted_proxies: tuple[ipaddress.IPv4Network | ipaddress.IPv6Network, ...]
+    allowed_hosts: tuple[str, ...]
     allow_unauthenticated_local: bool
     allow_unauthenticated_remote: bool
     allow_insecure_http_remote: bool
@@ -334,6 +344,32 @@ def _parse_trusted_proxies(raw: object, warnings: list[str]) -> tuple:
     return tuple(networks)
 
 
+def _parse_allowed_hosts(raw: object) -> tuple[str, ...]:
+    if raw is None:
+        return ()
+    if not isinstance(raw, list) or not all(isinstance(v, str) for v in raw):
+        raise ConfigError("'allowed_hosts' doit être une liste de noms d'hôte")
+    hosts: list[str] = []
+    for item in raw:
+        host = item.strip().lower().rstrip(".")
+        if not host:
+            raise ConfigError("'allowed_hosts' ne peut pas contenir de valeur vide")
+        if host.startswith("[") and host.endswith("]"):
+            host = host[1:-1]
+        try:
+            ipaddress.ip_address(host)
+        except ValueError:
+            if (
+                len(host) > 253
+                or not re.fullmatch(r"[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?", host)
+                or ".." in host
+            ):
+                raise ConfigError(f"'allowed_hosts': nom d'hôte invalide {item!r}")
+        if host not in hosts:
+            hosts.append(host)
+    return tuple(hosts)
+
+
 def load_config(path: Path) -> Config:
     """Charge, valide et retourne la configuration."""
     path = Path(path)
@@ -353,6 +389,7 @@ def load_config(path: Path) -> Config:
         data,
         {"listen_address", "port", "max_upload_size", "trusted_proxies",
          "max_image_pixels",
+         "allowed_hosts",
          "allow_unauthenticated_local", "allow_unauthenticated_remote",
          "allow_insecure_http_remote", "auth", "tls",
          "zones", "log_level"},
@@ -384,6 +421,7 @@ def load_config(path: Path) -> Config:
         )
 
     trusted_proxies = _parse_trusted_proxies(data.get("trusted_proxies"), warnings)
+    allowed_hosts = _parse_allowed_hosts(data.get("allowed_hosts"))
     allow_unauth_local = _get_bool(
         data, "allow_unauthenticated_local", "config", default=False
     )
@@ -416,6 +454,7 @@ def load_config(path: Path) -> Config:
         max_upload_bytes=max_upload_bytes,
         max_image_pixels=max_image_pixels,
         trusted_proxies=trusted_proxies,
+        allowed_hosts=allowed_hosts,
         allow_unauthenticated_local=allow_unauth_local,
         allow_unauthenticated_remote=allow_unauth_remote,
         allow_insecure_http_remote=allow_insecure_http_remote,
@@ -499,6 +538,7 @@ def build_default_config() -> Config:
             ipaddress.ip_network("127.0.0.1/32"),
             ipaddress.ip_network("::1/128"),
         ),
+        allowed_hosts=(),
         allow_unauthenticated_local=True,
         allow_unauthenticated_remote=False,
         allow_insecure_http_remote=False,

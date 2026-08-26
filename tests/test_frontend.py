@@ -33,6 +33,8 @@ class TestContratsFrontend(unittest.TestCase):
         self.assertIn("navigator.clipboard.writeText", self.app_js)
         self.assertIn("navigator.clipboard.write", self.app_js)
         self.assertIn("function copyImage", self.app_js)
+        self.assertIn("function toPng", self.app_js)
+        self.assertIn('"image/png"', self.app_js)
         self.assertIn("execCommand(\"copy\")", self.app_js.replace("'", '"'))
 
     def test_effacement_clipboard(self):
@@ -86,6 +88,12 @@ class TestContratsFrontend(unittest.TestCase):
         self.assertIn('id="pv-clear"', self.index_html)
         self.assertIn('id="pv-copy-image"', self.index_html)
         self.assertIn('id="pv-toast"', self.index_html)
+
+    def test_reconciliation_apres_erreur_et_dialogue_legacy(self):
+        self.assertIn('err.code === "retention_error"', self.app_js)
+        self.assertIn("await refresh()", self.app_js)
+        self.assertIn("function closePreview", self.app_js)
+        self.assertIn('pv.removeAttribute("open")', self.app_js)
 
     def test_version_dans_le_branding(self):
         self.assertIn("brand-version", self.index_html)

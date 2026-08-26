@@ -40,7 +40,7 @@ class TestVersion(unittest.TestCase):
     def test_version(self):
         proc = run_cli(["--version"])
         self.assertEqual(proc.returncode, 0)
-        self.assertIn("pasteberth", proc.stdout)
+        self.assertIn("pasteberth 1.0.2", proc.stdout)
 
 
 class TestErreursDemarrage(unittest.TestCase):
@@ -79,6 +79,19 @@ class TestErreursDemarrage(unittest.TestCase):
         proc = run_cli(["serve", "--config", str(cfg)])
         self.assertEqual(proc.returncode, 2)
         self.assertIn("hash scrypt valide", proc.stderr)
+
+    def test_destination_inaccessible_retourne_une_erreur_propre(self):
+        zone = self.tmp / "default-images"
+        zone.mkdir()
+        (zone / ".pasteberth.lock").symlink_to(self.tmp / "outside")
+        cfg = write_config(
+            self.tmp,
+            zones=[{"id": "default", "directory": str(zone)}],
+        )
+        proc = run_cli(["serve", "--config", str(cfg)])
+        self.assertEqual(proc.returncode, 2)
+        self.assertIn("erreur de destination", proc.stderr)
+        self.assertNotIn("Traceback", proc.stderr)
 
 
 class TestPasswd(unittest.TestCase):
@@ -165,6 +178,7 @@ class TestConfigurationDepot(unittest.TestCase):
         self.assertEqual(stat.S_IMODE(target.stat().st_mode), 0o600)
         content = target.read_text(encoding="utf-8")
         self.assertIn('id = "default"', content)
+        self.assertIn("allowed_hosts = []", content)
         self.assertIn("storage/default", content)
         self.assertIn("configuration générée", proc.stdout)
 

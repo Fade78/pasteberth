@@ -148,6 +148,18 @@ class TestRateLimiter(unittest.TestCase):
         self.assertEqual(limiter.acquire("10.0.0.2"), 0.0)
         limiter.release("10.0.0.2")
 
+    def test_completion_met_a_jour_le_resultat_et_libere_atomiquement(self):
+        limiter = LoginRateLimiter()
+        ip = "10.0.0.4"
+        for _ in range(LoginRateLimiter.THRESHOLD - 1):
+            limiter.register_failure(ip)
+        self.assertEqual(limiter.acquire(ip), 0.0)
+        limiter.complete(ip, success=False)
+        self.assertGreaterEqual(limiter.retry_after(ip), 25.0)
+        limiter.register_success(ip)
+        self.assertEqual(limiter.acquire(ip), 0.0)
+        limiter.complete(ip, success=True)
+
     def test_nombre_ips_suivi_borne(self):
         limiter = LoginRateLimiter()
         limiter.MAX_TRACKED_IPS = 2

@@ -290,6 +290,35 @@ class LoginRateLimiter:
         if release_slot:
             self._expensive_slots.release()
 
+    def complete(self, ip: str, *, success: bool) -> None:
+        """Finish a costly check while updating its result atomically."""
+        release_slot = False
+        with self._lock:
+            entry = self._state.get(ip)
+            if entry is None or entry[3] < 1:
+                return
+            now = time.monotonic()
+            if success:
+                fails = 0
+                until = 0.0
+            else:
+                fails = int(entry[0]) + 1
+                delay = 0.0
+                if fails >= self.THRESHOLD:
+                    delay = min(
+                        self.BASE_DELAY * (2 ** (fails - self.THRESHOLD)), self.MAX_DELAY
+                    )
+                until = now + delay if delay else 0.0
+            entry[0] = float(fails)
+            entry[1] = until
+            entry[2] = now
+            entry[3] = max(0.0, entry[3] - 1.0)
+            release_slot = True
+            if entry[3] == 0 and entry[0] == 0 and entry[1] <= now:
+                self._state.pop(ip, None)
+        if release_slot:
+            self._expensive_slots.release()
+
     def retry_after(self, ip: str) -> float:
         with self._lock:
             now = time.monotonic()

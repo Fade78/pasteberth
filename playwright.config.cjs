@@ -4,6 +4,9 @@ const browserName = process.env.E2E_BROWSER || "chromium";
 const device = browserName === "firefox"
   ? devices["Desktop Firefox"]
   : devices["Desktop Chrome"];
+const permissions = browserName === "chromium"
+  ? ["clipboard-read", "clipboard-write"]
+  : [];
 
 module.exports = defineConfig({
   testDir: "./tests/e2e",
@@ -22,7 +25,7 @@ module.exports = defineConfig({
     browserName,
     baseURL: "http://127.0.0.1:8876",
     headless: true,
-    permissions: ["clipboard-read", "clipboard-write"],
+    permissions,
     screenshot: "only-on-failure",
     trace: "retain-on-failure",
     video: "retain-on-failure",

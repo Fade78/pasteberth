@@ -44,6 +44,7 @@ from pasteberth.config import (
 )
 from pasteberth.paths import first_symlink_component
 from pasteberth.service import PasteService
+from pasteberth.storage import DestinationError
 
 
 def _setup_logging(level: str) -> None:
@@ -116,7 +117,11 @@ def _cmd_serve(args: argparse.Namespace) -> int:
         log.error("%s", exc)
         return 2
 
-    service = PasteService(cfg)
+    try:
+        service = PasteService(cfg)
+    except (DestinationError, OSError) as exc:
+        log.error("pasteberth : erreur de destination\n  %s", exc)
+        return 2
     sessions = SessionStore(
         cfg.auth.session_ttl_hours * 3600,
         password_file=cfg.password_file() if cfg.auth.enabled else None,
@@ -154,29 +159,30 @@ def _config_arg(args: argparse.Namespace) -> str | None:
 
 def _generated_config_text(root: Path) -> str:
     storage = (root / "storage" / "default").as_posix()
-    return f'''# Configuration locale de Pasteberth.
-# Ce fichier est volontairement hors Git et peut être modifié manuellement.
+    return f'''# Pasteberth local configuration.
+# This file is intentionally outside Git and can be edited manually.
 
 listen_address = "127.0.0.1"
 port = 8765
 max_upload_size = "20MiB"
 max_image_pixels = 25000000
 trusted_proxies = ["127.0.0.1", "::1"]
+allowed_hosts = []
 allow_unauthenticated_local = false
 allow_unauthenticated_remote = false
-# HTTP non-loopback est refusé par défaut ; utilisez un reverse proxy HTTPS.
+# Non-loopback HTTP is refused by default; use an HTTPS reverse proxy.
 allow_insecure_http_remote = false
 log_level = "INFO"
 
 [tls]
 enabled = false
-# certificate = "/chemin/absolu/cert.pem"
-# private_key = "/chemin/absolu/key.pem"
+# certificate = "/absolute/path/to/cert.pem"
+# private_key = "/absolute/path/to/key.pem"
 
 [auth]
 enabled = true
 session_ttl_hours = 72
-# password_file = "/chemin/absolu/vers/passwd"
+# password_file = "/absolute/path/to/passwd"
 
 [[zones]]
 id = "default"

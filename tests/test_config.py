@@ -33,7 +33,10 @@ class TestTailles(unittest.TestCase):
         self.assertEqual(parse_size("1GB"), 1024**3)
 
     def test_invalides(self):
-        for bad in ["", "abc", "12ZB", "-5MB", "0", "1.2.3MB", True, None]:
+        for bad in [
+            "", "abc", "12ZB", "-5MB", "0", "1.2.3MB", True, None,
+            float("nan"), float("inf"),
+        ]:
             with self.assertRaises(ConfigError):
                 parse_size(bad)
 
@@ -107,6 +110,13 @@ class TestParsing(unittest.TestCase):
             )
         )
         self.assertEqual(cfg.zones["plain"].reference_prefix, "")
+
+    def test_allowed_hosts(self):
+        cfg = make_cfg(self.tmp, allowed_hosts='["pasteberth.example", "[::1]"]')
+        self.assertEqual(cfg.allowed_hosts, ("pasteberth.example", "::1"))
+
+        with self.assertRaises(ConfigError):
+            make_cfg(self.tmp, allowed_hosts='["https://pasteberth.example"]')
 
     def test_defauts_reels_auth_et_proxy(self):
         path = self.tmp / "minimal.toml"
