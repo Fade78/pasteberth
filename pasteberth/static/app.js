@@ -250,6 +250,54 @@
     return ok;
   }
 
+  const KIND_LABEL = { image: "Image", text: "Text", binary: "Bin" };
+
+  function kindLabel(kind) {
+    return KIND_LABEL[kind] || "Content";
+  }
+
+  async function copyContent(kind, previewUrl) {
+    if (kind === "image") return copyImage(previewUrl);
+    if (kind === "text") {
+      try {
+        const response = await fetchPreview(previewUrl, {
+          credentials: "same-origin",
+          headers: { Accept: "text/plain" },
+        });
+        if (!response.ok) throw new Error("preview unavailable");
+        const text = await response.text();
+        const ok = await writeClipboard(text);
+        if (ok) toast("Text copied");
+        else toast("Could not copy the text to the clipboard", "error");
+        return ok;
+      } catch (_) {
+        toast("Could not copy the text to the clipboard", "error");
+        return false;
+      }
+    }
+    if (
+      !navigator.clipboard
+      || typeof navigator.clipboard.write !== "function"
+      || typeof ClipboardItem === "undefined"
+      || window.isSecureContext === false
+    ) {
+      toast("Binary copying is not supported by this browser", "error");
+      return false;
+    }
+    try {
+      const response = await fetchPreview(previewUrl, { credentials: "same-origin" });
+      if (!response.ok) throw new Error("preview unavailable");
+      const blob = await response.blob();
+      const type = blob.type || "application/octet-stream";
+      await navigator.clipboard.write([new ClipboardItem({ [type]: blob })]);
+      toast("Bin copied");
+      return true;
+    } catch (_) {
+      toast("Could not copy the binary to the clipboard", "error");
+      return false;
+    }
+  }
+
   function shortRef(ref) {
     const name = ref.split("/").pop();
     return name.length > 40 ? name.slice(0, 37) + "…" : name;
@@ -384,9 +432,10 @@
     const imageCopy = document.createElement("button");
     imageCopy.type = "button";
     imageCopy.className = "copy-image-btn";
-    imageCopy.textContent = "Copy image";
-    imageCopy.setAttribute("aria-label", "Copy image to the clipboard");
+    imageCopy.textContent = `Copy ${kindLabel(item.kind)}`;
+    imageCopy.setAttribute("aria-label", `Copy ${kindLabel(item.kind)} to the clipboard`);
     imageCopy.dataset.preview = item.preview_url;
+    imageCopy.dataset.kind = item.kind;
     const clear = document.createElement("button");
     clear.type = "button";
     clear.className = "clear-btn";
@@ -675,7 +724,7 @@
     }
     const copyImageBtn = event.target.closest(".copy-image-btn");
     if (copyImageBtn && copyImageBtn.dataset.preview) {
-      copyImage(copyImageBtn.dataset.preview);
+      copyContent(copyImageBtn.dataset.kind, copyImageBtn.dataset.preview);
       return;
     }
     const clearBtn = event.target.closest(".clear-btn");
@@ -783,6 +832,7 @@
     setPreviewSource(pvImg, url);
     pvRef.textContent = reference;
     pvCopyImage.dataset.preview = url;
+    pvCopyImage.dataset.kind = "image";
     pvDelete.dataset.filename = url.split("/").pop();
     if (typeof pv.showModal === "function") pv.showModal();
     else pv.setAttribute("open", "");
@@ -797,6 +847,8 @@
   }
 
   async function openContentPreview(item) {
+    pvCopyImage.dataset.preview = item.preview_url;
+    pvCopyImage.dataset.kind = item.kind;
     if (item.kind === "text") {
       try {
         const response = await fetchPreview(item.preview_url, {
@@ -827,7 +879,7 @@
     }
   }
   pvCopy.addEventListener("click", () => copyLink(pvRef.textContent));
-  pvCopyImage.addEventListener("click", () => copyImage(pvCopyImage.dataset.preview));
+  pvCopyImage.addEventListener("click", () => copyContent(pvCopyImage.dataset.kind, pvCopyImage.dataset.preview));
   pvClear.addEventListener("click", clearClipboard);
   pvDelete.addEventListener("click", () => {
     const zoneId = state.zones.find(z => z.images.some(i => i.id === pvDelete.dataset.filename));

@@ -118,6 +118,13 @@ class TestContratsFrontend(unittest.TestCase):
         self.assertIn("file.name || \"clipboard\"", self.app_js)
         self.assertNotIn("Only images are accepted", self.app_js)
 
+    def test_bouton_copie_par_kind(self):
+        self.assertIn("KIND_LABEL", self.app_js)
+        self.assertIn("Copy ${kindLabel(item.kind)}", self.app_js)
+        self.assertIn("function copyContent", self.app_js)
+        self.assertIn("Text copied", self.app_js)
+        self.assertIn("Bin copied", self.app_js)
+
     def test_preview_texte_et_binaire(self):
         self.assertIn("function openTextPreview", self.app_js)
         self.assertIn("function openContentPreview", self.app_js)
