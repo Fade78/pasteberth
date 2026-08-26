@@ -219,9 +219,9 @@ images are valuable. An external path can be specified manually in
 `config.toml`.
 
 Zones must be distinct, writable target directories. Private mode `0700` is
-recommended; a more open mode produces an audit warning but does not prevent
-startup, allowing controlled sharing between multiple users. Each zone refuses
-a new upload if the free space expected after writing would fall below
+recommended; group/other-writable modes are rejected, while group/other-readable
+or executable modes produce an audit warning and can be used for controlled
+sharing between multiple users. Each zone refuses a new upload if the free space expected after writing would fall below
 `min_free_percent` (default `2.0`). The measurement applies to the directory's
 filesystem, not just the folder; multiple zones can therefore share a
 filesystem, but then they also share its free-space reserve.

@@ -253,6 +253,20 @@
     return name.length > 40 ? name.slice(0, 37) + "…" : name;
   }
 
+  function setPreviewSource(img, url) {
+    let retries = 0;
+    const maxRetries = 3;
+    img.addEventListener("error", () => {
+      if (retries >= maxRetries) return;
+      retries += 1;
+      window.setTimeout(() => {
+        const separator = url.includes("?") ? "&" : "?";
+        img.src = `${url}${separator}preview_retry=${retries}`;
+      }, retries * 1000);
+    });
+    img.src = url;
+  }
+
   // ------------------------------------------------------------- rendering
 
   function applyZoneColors(el, color) {
@@ -325,7 +339,7 @@
     card.className = "latest";
     const img = document.createElement("img");
     img.className = "thumb-big";
-    img.src = item.preview_url;
+    setPreviewSource(img, item.preview_url);
     img.alt = "latest image";
     img.loading = "lazy";
     img.tabIndex = 0;
@@ -385,7 +399,7 @@
       wrap.dataset.itemId = item.id;
       const img = document.createElement("img");
       img.className = "thumb";
-      img.src = item.preview_url;
+      setPreviewSource(img, item.preview_url);
       img.alt = item.filename;
       img.loading = "lazy";
       wrap.appendChild(img);

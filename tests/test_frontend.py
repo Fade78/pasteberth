@@ -96,6 +96,11 @@ class TestContratsFrontend(unittest.TestCase):
         self.assertIn("function closePreview", self.app_js)
         self.assertIn('pv.removeAttribute("open")', self.app_js)
 
+    def test_previews_reessaient_les_reponses_temporaires(self):
+        self.assertIn("function setPreviewSource", self.app_js)
+        self.assertIn("preview_retry", self.app_js)
+        self.assertIn("maxRetries = 3", self.app_js)
+
     def test_version_dans_le_branding(self):
         self.assertIn("brand-version", self.index_html)
         self.assertIn("__PASTEBERTH_VERSION__", self.index_html)

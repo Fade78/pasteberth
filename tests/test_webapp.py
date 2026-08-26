@@ -4,6 +4,7 @@ import json
 import logging
 import re
 import tempfile
+import threading
 import time
 import unittest
 from pathlib import Path
@@ -247,7 +248,7 @@ class TestAuthentification(Base):
         )
         self.assertEqual(status, 413)
 
-    def test_reset_reseau_pendant_login_libere_le_slot(self):
+    def test_reset_reseau_pendant_login_ne_reserve_pas_de_slot(self):
         import socket
         import struct
 
@@ -269,9 +270,8 @@ class TestAuthentification(Base):
                 with self.server.limiter._lock:
                     in_flight = sum(entry[3] for entry in self.server.limiter._state.values())
                 if in_flight == 4:
-                    break
+                    self.fail("un corps de login incomplet ne doit pas réserver de slot")
                 time.sleep(0.01)
-            self.assertEqual(in_flight, 4)
 
             for sock in sockets:
                 sock.setsockopt(socket.SOL_SOCKET, socket.SO_LINGER, struct.pack("ii", 1, 0))
@@ -303,6 +303,57 @@ class TestAuthentification(Base):
         forged = "pb_session=AQAAANBBB_forged-token-value"
         status, _, _ = self.req("GET", "/api/zones", cookie=forged)
         self.assertEqual(status, 401)
+
+
+class TestPreviewsConcurrence(Base):
+    auth = True
+    password = PASSWORD
+    config_kwargs = {"max_upload_size": "50MiB"}
+
+    def test_preview_busy_est_temporaire(self):
+        body, ctype = build_multipart(data=make_png())
+        status, _, response = self.req(
+            "POST",
+            "/api/zones/default/images",
+            body=body,
+            headers={"Content-Type": ctype},
+        )
+        self.assertEqual(status, 201)
+        preview_url = json_of(response)["preview_url"]
+
+        active = 0
+        active_lock = threading.Lock()
+        both_active = threading.Event()
+        release = threading.Event()
+        results = []
+        original_preview = self.server.service.preview
+
+        def blocked_preview(*args):
+            nonlocal active
+            with active_lock:
+                active += 1
+                if active == 2:
+                    both_active.set()
+            self.assertTrue(release.wait(2))
+            return original_preview(*args)
+
+        def fetch_preview():
+            results.append(self.req("GET", preview_url))
+
+        with mock.patch.object(self.server.service, "preview", side_effect=blocked_preview):
+            threads = [threading.Thread(target=fetch_preview) for _ in range(2)]
+            for thread in threads:
+                thread.start()
+            self.assertTrue(both_active.wait(2))
+            status, headers, _ = self.req("GET", preview_url)
+            self.assertEqual(status, 503)
+            self.assertEqual(headers["retry-after"], "1")
+            release.set()
+            for thread in threads:
+                thread.join(timeout=5)
+                self.assertFalse(thread.is_alive())
+
+        self.assertEqual([item[0] for item in results], [200, 200])
 
 
 class TestUploadsFormats(Base):

@@ -168,6 +168,7 @@ def write_config(
         lines.append(
             f"allow_insecure_http_remote = {str(allow_insecure_http_remote).lower()}"
         )
+    lines.append('log_level = "WARNING"')
     if tls_enabled or tls_certificate is not None or tls_private_key is not None:
         lines.extend(
             [
@@ -180,7 +181,6 @@ def write_config(
             lines.append(f'certificate = "{tls_certificate}"')
         if tls_private_key is not None:
             lines.append(f'private_key = "{tls_private_key}"')
-    lines.append('log_level = "WARNING"')
     lines.append("")
     lines.append("[auth]")
     lines.append(f"enabled = {str(auth_enabled).lower()}")

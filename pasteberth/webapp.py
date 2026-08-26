@@ -686,15 +686,7 @@ def make_handler(cfg: Config, service: PasteService, sessions: SessionStore,
                 self._redirect("/")
                 return
             ip = self._client_ip()
-            retry_after = limiter.acquire(ip)
-            if retry_after > 0:
-                self._json(
-                    429,
-                    {"error": {"code": "rate_limited",
-                               "message": "too many attempts, try again later"}},
-                    extra_headers=[("Retry-After", str(int(retry_after) + 1))],
-                )
-                return
+            acquired = False
             released = False
             try:
                 try:
@@ -732,6 +724,16 @@ def make_handler(cfg: Config, service: PasteService, sessions: SessionStore,
                         values = {}
                     password = values.get("password", [""])[0]
 
+                retry_after = limiter.acquire(ip)
+                if retry_after > 0:
+                    self._json(
+                        429,
+                        {"error": {"code": "rate_limited",
+                                   "message": "too many attempts, try again later"}},
+                        extra_headers=[("Retry-After", str(int(retry_after) + 1))],
+                    )
+                    return
+                acquired = True
                 stored_hash = load_password_hash(cfg.password_file())
                 if password and verify_password(password, stored_hash):
                     limiter.complete(ip, success=True)
@@ -745,7 +747,7 @@ def make_handler(cfg: Config, service: PasteService, sessions: SessionStore,
                     log.warning("échec de connexion (%s)", ip)
                     self._render_login(401, "Incorrect password.")
             finally:
-                if not released:
+                if acquired and not released:
                     limiter.release(ip)
 
         # Connexion réussie : redirection + cookie de session sur la même réponse.
