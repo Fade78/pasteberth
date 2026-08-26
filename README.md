@@ -403,8 +403,10 @@ therefore reload the history before blindly retrying.
   `Referrer-Policy: no-referrer`, `Cache-Control: no-store` on the UI/API.
 - Previews and API require the session; a filename cannot traverse (strict
   `[A-Za-z0-9._-]` + history membership required).
-- Only files with a Pasteberth sidecar can be read or deleted; your personal
-  files in the target directories are never touched.
+- Only files with a Pasteberth sidecar can be read or deleted. Files matching
+  Pasteberth's exact capture naming (`YYYY-MM-DD_HH-MM-SS_<6hex>.<ext>`) that
+  lack a sidecar and are older than one hour are removed during startup
+  reconciliation (crash recovery); other personal files are never touched.
 - Writable target directories reject group/other write bits; private mode
   (`0700`) is recommended. Private images/sidecars (`0600`), symbolic links
   refused, and temporary files

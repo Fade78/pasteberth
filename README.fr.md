@@ -410,8 +410,10 @@ client doit donc recharger l'historique avant de retenter aveuglément.
 - Previews et API exigent la session ; un nom de fichier ne peut pas
   traverser (`[A-Za-z0-9._-]` strict + appartenance à l'historique requis).
 - Seuls les fichiers dotés d'un sidecar Pasteberth peuvent être lus ou
-  supprimés ; vos fichiers personnels dans les répertoires cibles ne sont
-  jamais touchés.
+  supprimés. Les fichiers nommés exactement comme une capture Pasteberth
+  (`AAAA-MM-JJ_HH-MM-SS_<6hex>.<ext>`) sans sidecar et âgés de plus d'une heure
+  sont supprimés lors de la réconciliation au démarrage (récupération après
+  crash) ; les autres fichiers personnels ne sont jamais touchés.
 - Les répertoires cibles inscriptibles refusent les bits d'écriture groupe/autres ;
   le mode privé (`0700`) est recommandé. Images/sidecars privés (`0600`), liens
   symboliques refusés et réconciliation des temporaires après crash. Les modes
