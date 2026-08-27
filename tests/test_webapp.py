@@ -426,6 +426,13 @@ class TestUploadsFormats(Base):
         self.assertEqual(item["mime"], "text/html")
         self.assertTrue(item["filename"].endswith(".html"))
 
+    def test_preview_html_telechargee_en_piece_jointe(self):
+        status, item = self._upload_raw("default", b"<p>hello</p>", "text/html")
+        self.assertEqual(status, 201)
+        status, headers, data = self.req("GET", item["preview_url"])
+        self.assertEqual(status, 200)
+        self.assertIn("attachment", headers.get("content-disposition", ""))
+
     def test_nom_du_fichier_glisse_et_ecrasement(self):
         def upload(data):
             body, ctype = build_multipart(

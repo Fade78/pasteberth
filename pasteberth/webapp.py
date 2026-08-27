@@ -916,7 +916,10 @@ def make_handler(cfg: Config, service: PasteService, sessions: SessionStore,
                     self._error(exc.status, exc.code, str(exc))
                     return
                 extra = []
-                if mime == "application/octet-stream":
+                if mime in ("application/octet-stream", "text/html"):
+                    # Pièce jointe : l'HTML stocké ne doit jamais être rendu
+                    # same-origin par navigation directe (défense en profondeur,
+                    # la CSP bloque déjà les scripts inline).
                     fallback = "".join(
                         char if 32 <= ord(char) < 127 and char not in {'"', "\\"} else "_"
                         for char in filename
