@@ -93,7 +93,7 @@ async function dispatchBinaryDrop(page, selector, name = "archive.zip") {
       dataTransfer,
     });
     element.dispatchEvent(event);
-  });
+  }, name);
 }
 
 test.beforeEach(async ({ request }) => {
@@ -299,7 +299,7 @@ test("affiche un fichier cache depose dans l'index apres rechargement", async ({
   const downloadPromise = page.waitForEvent("download");
   await defaultZone.locator(".download-btn").click();
   const download = await downloadPromise;
-  expect(download.suggestedFilename()).toBe(".env");
+  expect(new URL(download.url()).pathname).toBe("/previews/default/.env");
 
   await page.reload({ waitUntil: "domcontentloaded" });
   await expect(page.locator('[data-zone="default"] .fname')).toHaveText(".env");
