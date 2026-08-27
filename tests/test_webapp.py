@@ -460,6 +460,21 @@ class TestUploadsFormats(Base):
         self.assertEqual(status, 200)
         self.assertEqual(data, b"version 2")
 
+    def test_nom_glisse_sur_fichier_etranger_conflit_409(self):
+        foreign = self.zones_dirs["default"] / "notes.txt"
+        foreign.write_bytes(b"foreign")
+        body, ctype = build_multipart(
+            filename="notes.txt",
+            data=b"new content",
+            content_type="text/plain",
+            extra_fields={"preserve_name": "1"},
+        )
+        status, _, resp = self.req("POST", "/api/zones/default/images",
+                                   body=body, headers={"Content-Type": ctype})
+        self.assertEqual(status, 409)
+        self.assertEqual(json_of(resp)["error"]["code"], "storage_conflict")
+        self.assertEqual(foreign.read_bytes(), b"foreign")
+
 
 class TestRejetsUploads(Base):
     """(#4)(#5)(#6)(#7)(#8)."""

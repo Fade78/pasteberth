@@ -147,6 +147,7 @@
         payload_too_large: "The upload is too large",
         storage_low: "Not enough disk space",
         retention_error: "Image retention failed",
+        storage_conflict: "Name taken by an unmanaged file",
         destination_error: "The image destination is unavailable",
         preview_busy: "Too many previews are currently being served",
         rate_limited: "Too many attempts; try again later",

@@ -25,6 +25,7 @@ from pasteberth.storage import (
     DestinationError,
     LocalDestination,
     RetentionError,
+    StorageConflictError,
     StorageLowError,
     StoredImage,
     UnknownImageError,
@@ -83,6 +84,7 @@ class ServiceError(Exception):
         "too_large": 413,
         "storage_low": 507,
         "retention_error": 503,
+        "storage_conflict": 409,
         "destination_error": 500,
     }
 
@@ -210,6 +212,8 @@ class PasteService:
             raise ServiceError("storage_low", str(exc)) from exc
         except RetentionError as exc:
             raise ServiceError("retention_error", str(exc)) from exc
+        except StorageConflictError as exc:
+            raise ServiceError("storage_conflict", str(exc)) from exc
         except (DestinationError, OSError) as exc:
             raise ServiceError("destination_error", str(exc)) from exc
         log.info(

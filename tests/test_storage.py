@@ -13,6 +13,7 @@ from pasteberth.storage import (
     DestinationError,
     LocalDestination,
     RetentionError,
+    StorageConflictError,
     StorageLowError,
     valid_filename,
 )
@@ -105,9 +106,15 @@ class TestSauvegarde(Base):
             ext=".zip",
         )
 
-        with self.assertRaises(DestinationError):
+        with self.assertRaises(StorageConflictError):
             self.dest.save(b"replacement", info, filename=foreign.name)
         self.assertEqual(foreign.read_bytes(), b"foreign")
+
+    def test_sidecar_sans_fichier_refuse_en_remplacement(self):
+        stored = self.save()[0]
+        (self.dir / stored.filename).unlink()
+        with self.assertRaises(StorageConflictError):
+            self.dest.save(b"new", INFO(), filename=stored.filename)
 
 
 class TestListe(Base):

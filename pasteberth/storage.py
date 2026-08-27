@@ -113,6 +113,10 @@ class StorageLowError(DestinationError):
         )
 
 
+class StorageConflictError(DestinationError):
+    """Le nom cible existe sans sidecar cohérent (fichier étranger)."""
+
+
 class RetentionError(DestinationError):
     """Au moins une suppression de rétention a échoué."""
 
@@ -371,7 +375,9 @@ class LocalDestination(Destination):
         target_exists = self._entry_exists(directory_fd, filename)
         meta_exists = self._entry_exists(directory_fd, meta_name)
         if target_exists != meta_exists:
-            raise DestinationError(f"fichier et sidecar incohérents pour {filename!r}")
+            raise StorageConflictError(
+                f"fichier et sidecar incohérents pour {filename!r}"
+            )
         if target_exists:
             self._require_owned(directory_fd, filename)
 
