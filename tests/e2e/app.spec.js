@@ -80,9 +80,9 @@ async function dispatchDrop(page, selector) {
   }, ONE_PIXEL_PNG);
 }
 
-async function dispatchBinaryDrop(page, selector) {
-  await page.locator(selector).evaluate((element) => {
-    const file = new File([new Uint8Array([0, 1, 2, 3])], "archive.zip", {
+async function dispatchBinaryDrop(page, selector, name = "archive.zip") {
+  await page.locator(selector).evaluate((element, name) => {
+    const file = new File([new Uint8Array([0, 1, 2, 3])], name, {
       type: "application/zip",
     });
     const dataTransfer = new DataTransfer();
@@ -287,6 +287,23 @@ test("conserve le nom et propose le téléchargement pour un binaire déposé", 
 
   await dispatchBinaryDrop(page, '.zone[data-zone="default"]');
   await expect(defaultZone.locator(".thumb-wrap")).toHaveCount(1);
+});
+
+test("affiche un fichier cache depose dans l'index apres rechargement", async ({ page }) => {
+  await openApp(page);
+  await dispatchBinaryDrop(page, '.zone[data-zone="default"]', ".env");
+
+  const defaultZone = page.locator('[data-zone="default"]');
+  await expect(defaultZone.locator(".fname")).toHaveText(".env");
+  await expect(defaultZone.locator(".download-btn")).toHaveText("Download ENV");
+  const downloadPromise = page.waitForEvent("download");
+  await defaultZone.locator(".download-btn").click();
+  const download = await downloadPromise;
+  expect(download.suggestedFilename()).toBe(".env");
+
+  await page.reload({ waitUntil: "domcontentloaded" });
+  await expect(page.locator('[data-zone="default"] .fname')).toHaveText(".env");
+  await expect(page.locator('[data-zone="default"] .thumb-content')).toHaveText("ENV");
 });
 
 test("supprime une image depuis la carte", async ({ page }) => {  await openApp(page);

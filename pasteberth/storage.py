@@ -612,7 +612,10 @@ class LocalDestination(Destination):
 
         with self._directory_fd() as directory_fd:
             for entry in entries:
-                if not entry.name.endswith(".json") or entry.name.startswith("."):
+                # Les noms à point des fichiers déposés sont légitimes ; les
+                # sidecars internes (.pbbackup-*.json) sont exclus par le
+                # contrôle de cohérence du nom ci-dessous.
+                if not entry.name.endswith(".json"):
                     continue
                 try:
                     fd = self._open_file(directory_fd, entry.name, os.O_RDONLY)

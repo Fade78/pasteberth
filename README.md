@@ -244,7 +244,8 @@ budget extension.
 For a dropped file, `preserve_name=1` can retain its original filename. Names
 are limited to 200 characters and 240 UTF-8 bytes; `/`, `\`, NUL, CR/LF, `.`,
 `..`, `.pasteberth.lock`, and Pasteberth's temporary prefixes are reserved or
-rejected. An invalid name returns `400`.
+rejected. An invalid name returns `400`. Names starting with a dot, such as
+`.env`, are supported and appear in the history.
 
 ## Password
 

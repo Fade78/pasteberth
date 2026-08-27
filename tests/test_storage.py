@@ -145,6 +145,39 @@ class TestRetention(Base):
         self.assertEqual({i.filename for i in self.dest.list()}, {saved[-1]})
 
 
+class TestDotfiles(Base):
+    def test_fichier_point_visible_dans_l_historique(self):
+        info = ImageInfo(fmt=None, width=None, height=None, kind="binary",
+                         mime="application/octet-stream", ext=".txt")
+        stored = self.dest.save(b"secret", info, filename=".notes.txt")
+        self.assertEqual([i.filename for i in self.dest.list()], [".notes.txt"])
+        self.assertEqual(self.dest.read(".notes.txt"), b"secret")
+        self.assertTrue((self.dir / (stored.filename + ".json")).is_file())
+
+    def test_fichier_point_compte_en_retention(self):
+        info = ImageInfo(fmt=None, width=None, height=None, kind="binary",
+                         mime="application/octet-stream", ext=".txt")
+        self.dest.save(b"old", info, filename=".a.txt")
+        self.dest.save(b"new", info, filename=".b.txt")
+        deleted = self.dest.apply_retention(1)
+        self.assertEqual(deleted, [".a.txt"])
+        self.assertEqual([i.filename for i in self.dest.list()], [".b.txt"])
+
+    def test_backup_interne_crash_reste_invisible(self):
+        stored = self.save()[0]
+        meta = json.loads((self.dir / (stored.filename + ".json")).read_text())
+        backup = self.dir / ".pbbackup-cafebabe1234567890abcdef.json"
+        backup.write_text(json.dumps(meta))
+        self.assertEqual([i.filename for i in self.dest.list()], [stored.filename])
+        self.assertTrue(backup.exists())
+
+    def test_verrou_et_temporaires_non_json_ignores(self):
+        (self.dir / ".pasteberth.lock").write_bytes(b"x")
+        (self.dir / ".pbmeta-cafebabe1234567890abcdef.tmp").write_text("{}")
+        (self.dir / ".pbdata-cafebabe1234567890abcdef.tmp").write_bytes(b"x")
+        self.assertEqual(self.dest.list(), [])
+
+
 class TestOwnership(Base):
     def test_fichier_etranger_jamais_touche(self):
         stranger = self.dir / "vacation_photo.png"
