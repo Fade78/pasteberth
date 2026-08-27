@@ -355,9 +355,3 @@ class LoginRateLimiter:
             entry[2] = time.monotonic()
             if entry[3] == 0:
                 self._state.pop(ip, None)
-
-    def prune(self) -> None:
-        """Oublie les IPs sans activité récente (appelé périodiquement)."""
-        now = time.monotonic()
-        with self._lock:
-            self._prune_locked(now)
