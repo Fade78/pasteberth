@@ -387,3 +387,16 @@ test("colle un presse-papiers mixte en un seul document html", async ({ page }) 
   expect(body).toContain("hello mixed world");
   expect(body).toContain("data:image/png;base64,");
 });
+
+test("colle une image avec un texte vide comme image simple", async ({ page }) => {
+  await openApp(page);
+  const defaultZone = page.locator('[data-zone="default"]');
+  await defaultZone.getByRole("button", { name: "Select zone Default" }).click();
+
+  await dispatchMixedPaste(page, "   ");
+
+  await expect(defaultZone.locator(".latest")).toBeVisible();
+  await expect(defaultZone.locator(".fname")).toHaveText(/\.png$/);
+  await expect(defaultZone.locator(".copy-image-btn")).toHaveText("Copy Image");
+  await expect(defaultZone.locator(".thumb-wrap")).toHaveCount(1);
+});

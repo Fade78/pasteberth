@@ -316,11 +316,27 @@
       }
     }
     if (waits.length) await Promise.all(waits);
+    // Texte absent ou vide : un collage d'image reste une image simple.
+    let hasText = false;
+    for (const part of slots) {
+      if (part && part.kind === "text" && part.text.trim()) {
+        hasText = true;
+        break;
+      }
+    }
+    if (!hasText) {
+      const image = slots.find(part => part && part.kind === "image");
+      if (image) {
+        upload(zoneId, image.blob);
+        return;
+      }
+      toast("The clipboard does not contain an image or text");
+      return;
+    }
     const chunks = [];
     for (const part of slots) {
       if (!part) continue;
       if (part.kind === "text") {
-        if (!part.text.trim()) continue;
         chunks.push(`<pre>${escapeHtmlText(part.text)}</pre>`);
       } else {
         try {
@@ -862,8 +878,11 @@
     let imageItem = null;
     let hasPlainText = false;
     for (const item of items) {
-      if (item.kind === "file" && /^image\//.test(item.type)) imageItem = item;
-      else if (item.kind === "string" && item.type === "text/plain") hasPlainText = true;
+      if (item.kind === "file" && /^image\//.test(item.type)) {
+        if (!imageItem) imageItem = item;
+      } else if (item.kind === "string" && item.type === "text/plain") {
+        hasPlainText = true;
+      }
     }
     if (imageItem && hasPlainText) {
       event.preventDefault();

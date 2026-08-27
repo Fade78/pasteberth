@@ -492,3 +492,6 @@ corresponding Playwright browser is installed.
 - Single-password authentication in V1; filesystem permissions can nevertheless
   organize multiple zones or users.
 - TLS delegated to the reverse proxy or terminated directly by Pasteberth.
+- Mixed pastes are serialized as HTML with base64-embedded images (~33% larger
+  than the raw image); very large screenshots can hit `max_upload_size` where
+  an image-only upload would fit.
