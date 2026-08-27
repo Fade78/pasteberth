@@ -110,10 +110,10 @@ class TestSauvegarde(Base):
             self.dest.save(b"replacement", info, filename=foreign.name)
         self.assertEqual(foreign.read_bytes(), b"foreign")
 
-    def test_sidecar_sans_fichier_refuse_en_remplacement(self):
+    def test_sidecar_orphelin_refuse_en_remplacement(self):
         stored = self.save()[0]
         (self.dir / stored.filename).unlink()
-        with self.assertRaises(StorageConflictError):
+        with self.assertRaisesRegex(DestinationError, "orphelin"):
             self.dest.save(b"new", INFO(), filename=stored.filename)
 
 

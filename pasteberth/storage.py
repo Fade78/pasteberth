@@ -374,10 +374,14 @@ class LocalDestination(Destination):
         meta_name = self._meta_name(filename)
         target_exists = self._entry_exists(directory_fd, filename)
         meta_exists = self._entry_exists(directory_fd, meta_name)
-        if target_exists != meta_exists:
+        if target_exists and not meta_exists:
+            # Fichier étranger : jamais écrasé, conflit côté client (409).
             raise StorageConflictError(
-                f"fichier et sidecar incohérents pour {filename!r}"
+                f"fichier etranger present sans sidecar : {filename!r}"
             )
+        if meta_exists and not target_exists:
+            # Sidecar orphelin : état interne incohérent, pas un conflit client.
+            raise DestinationError(f"sidecar orphelin sans fichier : {filename!r}")
         if target_exists:
             self._require_owned(directory_fd, filename)
 
