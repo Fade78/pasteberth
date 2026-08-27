@@ -9,6 +9,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from pasteberth import __version__
 from pasteberth.auth import load_password_hash, verify_password
 from pasteberth.cli import _network_warning
 from pasteberth.config import load_config
@@ -40,7 +41,7 @@ class TestVersion(unittest.TestCase):
     def test_version(self):
         proc = run_cli(["--version"])
         self.assertEqual(proc.returncode, 0)
-        self.assertIn("pasteberth 1.0.2", proc.stdout)
+        self.assertIn(f"pasteberth {__version__}", proc.stdout)
 
 
 class TestErreursDemarrage(unittest.TestCase):

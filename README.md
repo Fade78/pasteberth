@@ -34,7 +34,7 @@ capture ──▶ browser ── HTTPS ──▶ Pasteberth ──▶ captures/<
 The browser **never** needs to access the returned path. This is the path seen
 by the harness, on the machine where Pasteberth runs.
 
-The current version is `1.0.2`.
+The current version is `1.0.3`.
 
 ---
 
