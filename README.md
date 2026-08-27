@@ -1,22 +1,21 @@
-[English](README.md) | [Français](README.fr.md)
-
 # Pasteberth
 
 **The bridge between a graphical clipboard and a CLI/TUI harness that cannot
-easily receive images.**
+easily receive desktop content.**
 
 Pasteberth is designed first and foremost for harnesses that work in a
 terminal — OpenCode and similar tools. These tools are very good at reading a
 file on their machine, but they do not always have access to the workstation's
-graphical clipboard, nor a convenient way to receive a screenshot.
+graphical clipboard, nor a convenient way to receive an image, text, or file.
 
 Pasteberth therefore keeps the transfer deliberately simple: the browser
-receives the image, the server writes it to the filesystem of the harness
-machine, then returns the exact path to paste into the terminal.
+receives clipboard content or a dropped file, the server writes it to the
+filesystem of the harness machine, then returns the exact path to paste into
+the terminal.
 
-You take a screenshot on your workstation, paste it (Ctrl+V) into the area for
-the right project in your browser, and retrieve a filesystem reference ready to
-paste into the harness:
+You take a screenshot or copy content on your workstation, paste it (Ctrl+V)
+into the area for the right project in your browser, or drop a file there, and
+retrieve a filesystem reference ready to paste into the harness:
 
 ```
 @/absolute/path/to/PasteBerth/captures/project-alpha/example.png
@@ -60,13 +59,13 @@ The current version is `1.0.2`.
 Pasteberth is useful when the two sides of the work are not in the same
 environment:
 
-- the screenshot is taken in a graphical environment, possibly on another
-  workstation;
+- an image, text, or file is produced in a graphical environment, possibly on
+  another workstation;
 - the harness works in a terminal or a remote session;
-- the harness can read the filesystem on its machine, but cannot receive an
-  image directly from the graphical clipboard;
-- you want to keep a few captures per project without creating a general-purpose
-  image-sharing service.
+- the harness can read the filesystem on its machine, but cannot receive
+  clipboard content directly from the graphical workstation;
+- you want to keep a few contents per project without creating a
+  general-purpose file-sharing service.
 
 Pasteberth is not public storage, a CDN, or a synchronization tool between
 users. It is a local, targeted gateway between a graphical interface and a
@@ -84,10 +83,13 @@ terminal process.
 - **Selected content panel**: after an upload, the new content is selected at
   the top with its name, reference, and a matching content action: `Copy Image`
   or `Copy Text` where relevant, plus `Download EXT` for every type. `Copy link`,
-  `Clear`, and `Preview`/`Zoom` remain available according to the content.
+  `Clear`, and image/text `Preview`/`Zoom` remain available according to the
+  content; binary files are downloaded directly.
 - **Content index**: the items at the bottom form the zone's complete history,
-  newest first. Images have thumbnails; text and files have a type marker. Click
-  an item to select it in the upper panel; the selected item is marked.
+  newest first. Images are shown in thumbnail slots backed by the server's
+  preview URL; the server does not generate resized thumbnails. Text and files
+  have a type marker. Click an item to select it in the upper panel; the
+  selected item is marked.
 - **Clipboard**: after an upload, Pasteberth tries to copy the exact reference
   to the clipboard. `Copy link` copies that reference, `Copy Image` copies the
   image itself, `Copy Text` copies text, and `Clear` replaces the clipboard
@@ -96,22 +98,23 @@ terminal process.
 - **Exact references**: the server builds and returns the path; the frontend
   copies it as-is, never reconstructing it client-side. The prefix and suffix
   are configurable, for example to obtain `` `/path/image.png` ``.
-- **Circular retention per zone** (`retain = N`): beyond N images, the oldest
-  ones are deleted — only files created by Pasteberth with their JSON sidecar.
-- **Persistent page**: intended to remain open for hours; thumbnails come from
-  the server, no Blob URL accumulates, and the history is resynchronized every
-  45 seconds and when returning to the tab.
+- **Circular retention per zone** (`retain = N`): beyond N stored contents, the
+  oldest entries are deleted — only files created by Pasteberth with their JSON
+  sidecar.
+- **Persistent page**: intended to remain open for hours; image previews come
+  from the server, no Blob URL accumulates, and the history is resynchronized
+  every 45 seconds and when returning to the tab.
 
-For OpenCode's `@` selector to find images directly, place the zone in the
+For OpenCode's `@` selector to find stored images or files directly, place the zone in the
 workspace opened by OpenCode, or open a workspace that contains both the
 project and the capture directory. Otherwise, the path remains valid for an
 explicit read by the harness.
 
 ## Installation
 
-Prerequisite: **Python ≥ 3.11**, no third-party dependencies (standard library
-only). The repository is the installation itself; no installation script or
-root access is required.
+Prerequisite: **Python ≥ 3.11** and no third-party runtime dependencies (the
+server uses the standard library only). The repository is the installation
+itself; no installation script or root access is required.
 
 ```sh
 git clone https://glb.didierb.name/didier/pasteberth.git
@@ -158,10 +161,13 @@ desired zones and paths. The file remains ignored by Git.
 
 | Key | Default | Role |
 |---|---|---|
-| `listen_address` | `"127.0.0.1"` | listening address; non-loopback requires explicit HTTPS |
+| `listen_address` | `"127.0.0.1"` | listening address; non-loopback requires TLS or an explicit private-network HTTP opt-in |
 | `port` | `8765` | TCP port |
 | `max_upload_size` | `"20MiB"` | per-upload limit (20 MiB by default, 50 MiB maximum) |
 | `max_image_pixels` | `25000000` | decoding budget (25 MP by default, 50 MP maximum) |
+| `accept_img` | `true` | accept structurally valid PNG, JPEG, and WebP images |
+| `accept_doc` | `true` | accept valid UTF-8 text content |
+| `accept_bin` | `true` | accept opaque binary content |
 | `trusted_proxies` | loopback | only these peers may set `X-Forwarded-*` |
 | `allowed_hosts` | `[]` | hostnames accepted by Host/Origin checks; empty = wildcard (audit warns). List hostnames to enforce a strict allowlist |
 | `allow_unauthenticated_local` | `false` | explicit opt-in for anonymous loopback/proxy mode |
@@ -175,7 +181,7 @@ desired zones and paths. The file remains ignored by Git.
 | `[[zones]] …` | `default` | `id`, `label`, `type=local`, `directory`, `retain`, `reference_prefix`, `reference_suffix`, `color` (#RRGGBB), `create_directory`, `min_free_percent` |
 
 `directory` is an **absolute path as seen by the server** — this is where
-OpenCode reads the images, not your browser.
+OpenCode or the harness reads the stored files, not your browser.
 
 To copy a reference enclosed in backticks, for example `` `/path/image.png` ``:
 
@@ -221,7 +227,7 @@ color = "#394252"
 
 The default integrated storage is `<repository-root>/storage/default`. The
 `storage/` directory is ignored by Git, but must be backed up separately if the
-images are valuable. An external path can be specified manually in
+stored contents are valuable. An external path can be specified manually in
 `config.toml`.
 
 Zones must be distinct, writable target directories. Private mode `0700` is
@@ -234,6 +240,11 @@ filesystem, but then they also share its free-space reserve.
 Images are limited to `16 384 × 16 384` pixels and `25 MP` by default, which
 covers usual 4K to 6K displays. 8K images exceeding `25 MP` require an explicit
 budget extension.
+
+For a dropped file, `preserve_name=1` can retain its original filename. Names
+are limited to 200 characters and 240 UTF-8 bytes; `/`, `\`, NUL, CR/LF, `.`,
+`..`, `.pasteberth.lock`, and Pasteberth's temporary prefixes are reserved or
+rejected. An invalid name returns `400`.
 
 ## Password
 
@@ -356,16 +367,22 @@ from an unlisted peer are **ignored** (an Internet client cannot force a
 ## API
 
 Same-origin only (no CORS in V1; session cookies). The API is useful if the
-graphical client is not the supplied browser, or if a script wants to deposit a
-validated image in a zone.
+graphical client is not the supplied browser, or if a script wants to deposit
+validated content in a zone.
 
 | Method | Path | Role |
 |---|---|---|
 | GET | `/api/health` | probe (public) |
 | GET | `/api/zones` | zones + counts |
-| GET | `/api/zones/{id}/images` | history, newest first |
-| POST | `/api/zones/{id}/images` | upload (multipart `image` field; `preserve_name=1` keeps a dragged file's name, or raw `image/*` / `application/octet-stream` body) |
-| GET | `/previews/{id}/{file}` | thumbnail (protected) |
+| GET | `/api/zones/{id}/images` | history of all content, newest first |
+| POST | `/api/zones/{id}/images` | upload (multipart `image` field; `preserve_name=1` keeps a dragged file's name, or a raw body with an accepted MIME type) |
+| DELETE | `/api/zones/{id}/images/{file}` | delete a managed content file |
+| GET | `/previews/{id}/{file}` | serve stored content for preview/download (protected) |
+
+Despite the route name, `/api/zones/{id}/images` and its `images` response key
+cover images, UTF-8 text, and opaque binary content. Raw requests accept the
+supported image, text, JSON, XML, and YAML MIME types, `application/octet-stream`,
+or no declared type. Unsupported declared types return `415`.
 
 Example:
 
@@ -380,19 +397,28 @@ curl -b cookies.txt -F image=@capture.png \
   "filename": "2026-08-25_01-22-31_a81c42.png",
   "created_at": "2026-08-24T23:22:31.412000+00:00",
   "width": 1920, "height": 1080, "size": 9283, "format": "png",
+  "kind": "image", "mime": "image/png",
   "preview_url": "/previews/default/2026-08-25_01-22-31_a81c42.png",
   "reference": "@/path/to/repository/storage/default/2026-08-25_01-22-31_a81c42.png"
 }
 ```
 
-Formats: PNG, JPEG, WebP — determined by **content** (magic bytes + structure),
-never by the declared MIME type. Rejections: empty, too large, unknown format,
-incomplete or structurally malformed container. Pixel decompression remains the
-browser/harness responsibility. Names are generated server-side
+For images, formats are PNG, JPEG, and WebP — determined by **content** (magic
+bytes + structure), never by the declared MIME type. Rejections: empty, too
+large, unknown format, incomplete, or structurally malformed container. Pixel
+decompression remains the browser/harness responsibility. Valid UTF-8 content
+without NUL bytes is text; other bytes are opaque binary. The response uses
+`kind` values `image`, `text`, or `binary`; non-image items have `null`
+dimensions and format.
+
+Without `preserve_name=1`, names are generated server-side
 (`YYYY-MM-DD_HH-MM-SS_<6 hex>.ext`, creation with `O_EXCL`: no overwriting).
-Free space below the threshold returns `507 storage_low`. A retention error
-returns `503 retention_error` after the image is created; the client must
-therefore reload the history before blindly retrying.
+With `preserve_name=1`, a valid multipart filename is retained. If a file with
+that name is already managed by Pasteberth, its content and sidecar are replaced
+atomically; a foreign file is never overwritten. Free space below the threshold
+returns `507 storage_low`. A retention error returns `503 retention_error` after
+the content is created; the client must therefore reload the history before
+blindly retrying.
 
 ## Security
 
@@ -409,14 +435,16 @@ therefore reload the history before blindly retrying.
   the served host (403 otherwise). No `Access-Control-*`.
 - Strict CSP without inline content, `X-Frame-Options: DENY`, `nosniff`,
   `Referrer-Policy: no-referrer`, `Cache-Control: no-store` on the UI/API.
-- Previews and API require the session; a filename cannot traverse (strict
-  `[A-Za-z0-9._-]` + history membership required).
+- Previews and protected API routes require the session; `/api/health` is public.
+  User filenames reject path separators, NUL, CR/LF, reserved Pasteberth names,
+  and exceed neither 200 characters nor 240 UTF-8 bytes; preview membership is
+  still required.
 - Only files with a Pasteberth sidecar can be read or deleted. Files matching
-  Pasteberth's exact capture naming (`YYYY-MM-DD_HH-MM-SS_<6hex>.<ext>`) that
+  Pasteberth's exact generated naming (`YYYY-MM-DD_HH-MM-SS_<6hex>.<ext>`) that
   lack a sidecar and are older than one hour are removed during startup
   reconciliation (crash recovery); other personal files are never touched.
 - Writable target directories warn on non-private modes; private mode
-  (`0700`) is recommended. Private images/sidecars (`0600`), symbolic links
+  (`0700`) is recommended. Private stored files/sidecars (`0600`), symbolic links
   refused, and temporary files
   reconciled after a crash. Read-only shared directory modes are warned about.
 - Complete structural validation of PNG/JPEG/WebP, dimensions and pixel budget,
@@ -434,27 +462,27 @@ npm run test:all              # Python + browser in parallel
 ```
 
 The suite covers: image validation (PNG/JPEG/WebP, structural corruption, spoofing),
+image/text/binary classification, filename preservation/replacement/downloads,
 configuration & startup policy, storage/retention/ownership,
 auth/sessions/anti-brute-force, multipart parser, full HTTP integration
 (auth, CSRF/Origin, proxies, headers, secret leakage), concurrency
 (parallel uploads in the same/multiple zones, readers during writes),
-CLI (passwd, refusal of dangerous configuration), frontend contracts, and six
+CLI (passwd, refusal of dangerous configuration), frontend contracts, and
 Playwright browser scenarios on a real Pasteberth server: loading and keyboard
-selection, paste without a zone, upload/preview, selection in the index, and
-drag and drop.
+selection, paste without a zone, image/text/binary upload, preview, selection in
+the index, drag and drop, and exact-name downloads.
 Browser tests use Chromium by default; `E2E_BROWSER=firefox` is available if the
 corresponding Playwright browser is installed.
 
 ## Limitations & V2
 
-- Single `local` destination (relative to the server). The `Destination`
-  abstraction is ready for an `SshDestination` (SFTP, with credentials remaining
-  on the server).
+- Single `local` destination type; each zone uses an absolute path as seen by the
+  server. The `Destination` abstraction is ready for an `SshDestination` (SFTP,
+  with credentials remaining on the server).
 - No browser extension: the API can be used as-is, but dedicated CORS will be
   added explicitly when the time comes.
-- In-memory sessions: a restart disconnects users (deliberate, simple);
-  manual deletion of an image outside retention remains to be provided in the
-  UI.
+- In-memory sessions: a restart disconnects users (deliberate, simple). Manual
+  deletion of stored content outside retention is available from the UI.
 - Single-password authentication in V1; filesystem permissions can nevertheless
   organize multiple zones or users.
 - TLS delegated to the reverse proxy or terminated directly by Pasteberth.

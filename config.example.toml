@@ -23,7 +23,10 @@ allow_unauthenticated_local = false  # including behind a reverse proxy
 allow_unauthenticated_remote = false
 allow_insecure_http_remote = false   # true only on a controlled private network
 
-# Accepted content kinds (all true by default; all false = server refuses everything).
+# Accepted content kinds (all true by default; all false = refuse every upload).
+# accept_img : structurally valid PNG, JPEG, or WebP images
+# accept_doc : valid UTF-8 text without NUL bytes
+# accept_bin : opaque binary content
 accept_bin = true
 accept_img = true
 accept_doc = true
@@ -42,8 +45,8 @@ session_ttl_hours = 72            # server-side session lifetime
 
 # --------------------------------------------------------------- default zone
 # id                : logical API/UI identifier ([a-z0-9_-])
-# directory         : ABSOLUTE path as seen by the SERVER (used by OpenCode)
-# retain            : number of images kept per zone (circular retention)
+# directory         : ABSOLUTE path as seen by the SERVER (used by the harness)
+# retain            : number of stored contents kept per zone (circular retention)
 # reference_prefix  : text prepended to the returned reference (empty allowed)
 # reference_suffix  : text appended to the returned reference (empty by default)
 # color             : zone background (#RRGGBB); text contrast is calculated
