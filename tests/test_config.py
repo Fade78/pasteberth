@@ -123,7 +123,7 @@ class TestParsing(unittest.TestCase):
         with self.assertRaises(ConfigError):
             make_cfg(self.tmp, allowed_hosts='["https://pasteberth.example"]')
 
-    def test_allowed_hosts_wildcard_doit_etre_explicite(self):
+    def test_allowed_hosts_vide_active_le_wildcard(self):
         cfg = make_cfg(self.tmp, allowed_hosts="[]")
         self.assertEqual(cfg.allowed_hosts, ())
 

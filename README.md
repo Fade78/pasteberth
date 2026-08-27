@@ -341,6 +341,12 @@ enforce a strict allowlist, list the hostnames you expose (hostname only,
 without scheme, port, or path) — `pasteberth audit` warns while the list is
 empty:
 
+For a multi-station deployment, leave this key absent or set it to `[]` when
+the public hostname is supplied by the deployment rather than fixed in the
+configuration. Replacing the default with local-only hostnames causes remote
+clients to receive `403 forbidden_host`. Use a non-empty list only when every
+client reaches the service through one of the listed hostnames.
+
 ```toml
 listen_address = "127.0.0.1"
 trusted_proxies = ["127.0.0.1"]  # only if this is the actual proxy peer

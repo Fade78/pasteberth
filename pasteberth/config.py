@@ -429,6 +429,8 @@ def load_config(path: Path) -> Config:
         )
 
     trusted_proxies = _parse_trusted_proxies(data.get("trusted_proxies"), warnings)
+    # The public hostname is deployment-specific; an absent key preserves the
+    # multi-station wildcard compatibility, while a non-empty list is strict.
     allowed_hosts = _parse_allowed_hosts(data.get("allowed_hosts"))
     allow_unauth_local = _get_bool(
         data, "allow_unauthenticated_local", "config", default=False
