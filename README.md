@@ -80,6 +80,11 @@ terminal process.
   dragged file is stored under its original name. If it replaces a Pasteberth-
   managed file with the same name, the content and sidecar are replaced
   atomically. Foreign files are never overwritten.
+- **Mixed clipboard paste**: a paste carrying both an image and plain text is
+  stored as a single `.html` document — the text with the images embedded at
+  their positions. `Copy Text` restores both flavors (`text/html` and
+  `text/plain`): rich content in editors, clean text in terminals. A copied
+  web image (HTML flavor only, no readable text) stays a plain image.
 - **Selected content panel**: after an upload, the new content is selected at
   the top with its name, reference, and a matching content action: `Copy Image`
   or `Copy Text` where relevant, plus `Download EXT` for every type. `Copy link`,

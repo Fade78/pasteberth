@@ -38,6 +38,18 @@ async function dispatchTextPaste(page, text, type = "text/plain") {
   }, { text, type });
 }
 
+async function dispatchMixedPaste(page, text = "hello mixed world") {
+  await page.evaluate((payload) => {
+    const bytes = Uint8Array.from(atob(payload.base64), (char) => char.charCodeAt(0));
+    const dataTransfer = new DataTransfer();
+    dataTransfer.items.add(new File([bytes], "clipboard.png", { type: "image/png" }));
+    dataTransfer.items.add(payload.text, "text/plain");
+    const event = new Event("paste", { bubbles: true, cancelable: true });
+    Object.defineProperty(event, "clipboardData", { value: dataTransfer });
+    window.dispatchEvent(event);
+  }, { base64: ONE_PIXEL_PNG, text });
+}
+
 async function dispatchCanvasPaste(page, type) {
   const payload = await page.evaluate(async (mime) => {
     const canvas = document.createElement("canvas");
@@ -352,4 +364,26 @@ test("colle du texte et l'affiche", async ({ page }) => {
   await expect(page.locator("#pv-copy-image")).toHaveText("Copy Text");
   await expect(page.locator("#pv-download")).toHaveText("Download MD");
   await page.getByRole("button", { name: "Close" }).click();
+});
+
+test("colle un presse-papiers mixte en un seul document html", async ({ page }) => {
+  await openApp(page);
+  const defaultZone = page.locator('[data-zone="default"]');
+  await defaultZone.getByRole("button", { name: "Select zone Default" }).click();
+
+  await dispatchMixedPaste(page);
+
+  await expect(defaultZone.locator(".latest")).toBeVisible();
+  await expect(defaultZone.locator(".fname")).toHaveText(/\.html$/);
+  await expect(defaultZone.locator(".index-title")).toHaveText("Content index");
+  await defaultZone.locator(".copy-image-btn").click();
+  await expect(page.locator("#toast")).toContainText("Text copied");
+  expect(await page.evaluate(() => navigator.clipboard.readText())).toBe("hello mixed world");
+
+  const htmlName = await defaultZone.locator(".fname").textContent();
+  const response = await page.request.get(`/previews/default/${encodeURIComponent(htmlName)}`);
+  expect(response.status()).toBe(200);
+  const body = await response.text();
+  expect(body).toContain("hello mixed world");
+  expect(body).toContain("data:image/png;base64,");
 });

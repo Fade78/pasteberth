@@ -281,9 +281,106 @@
     link.remove();
   }
 
-  async function copyContent(kind, previewUrl) {
+  function escapeHtmlText(text) {
+    return text.replace(/[&<>"']/g, (c) => (
+      { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]
+    ));
+  }
+
+  function blobToDataUrl(blob) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result);
+      reader.onerror = () => reject(new Error("read failed"));
+      reader.readAsDataURL(blob);
+    });
+  }
+
+  // Presse-papiers mixte : un seul document HTML, texte + images incrustées
+  // dans l'ordre des flavors. Les appels getAsString/getAsFile doivent être
+  // émis pendant l'événement ; les slots préservent l'ordre d'origine.
+  async function uploadMixedClipboard(zoneId, items) {
+    const slots = [];
+    const waits = [];
+    for (const item of items) {
+      if (item.kind === "file" && /^image\//.test(item.type)) {
+        const blob = item.getAsFile();
+        if (blob) slots.push({ kind: "image", blob });
+      } else if (item.kind === "string" && item.type === "text/plain") {
+        const slot = { kind: "text", text: "" };
+        slots.push(slot);
+        waits.push(new Promise((resolve) => item.getAsString((text) => {
+          slot.text = text || "";
+          resolve();
+        })));
+      }
+    }
+    if (waits.length) await Promise.all(waits);
+    const chunks = [];
+    for (const part of slots) {
+      if (!part) continue;
+      if (part.kind === "text") {
+        if (!part.text.trim()) continue;
+        chunks.push(`<pre>${escapeHtmlText(part.text)}</pre>`);
+      } else {
+        try {
+          const url = await blobToDataUrl(part.blob);
+          chunks.push(`<p><img alt="" src="${url}"></p>`);
+        } catch (_) { /* image illisible : ignorée */ }
+      }
+    }
+    if (!chunks.length) return;
+    const html = `<!doctype html><html><body>${chunks.join("\n")}</body></html>`;
+    upload(zoneId, new Blob([html], { type: "text/html" }));
+  }
+
+  async function copyHtmlContent(previewUrl) {
+    const loadHtml = async () => {
+      const response = await fetchPreview(previewUrl, {
+        credentials: "same-origin",
+        headers: { Accept: "text/html" },
+      });
+      if (!response.ok) throw new Error("preview unavailable");
+      return response.text();
+    };
+    try {
+      const html = await loadHtml();
+      const doc = new DOMParser().parseFromString(html, "text/html");
+      const plain = ((doc.body && doc.body.textContent) || "").trim();
+      const flavors = { "text/html": new Blob([html], { type: "text/html" }) };
+      if (plain) flavors["text/plain"] = new Blob([plain], { type: "text/plain" });
+      await navigator.clipboard.write([new ClipboardItem(flavors)]);
+      toast("Text copied");
+      return true;
+    } catch (_) {
+      // Repli : texte seul (navigateurs sans ClipboardItem multi-flavors).
+      try {
+        const html = await loadHtml();
+        const doc = new DOMParser().parseFromString(html, "text/html");
+        const plain = ((doc.body && doc.body.textContent) || "").trim();
+        const ok = await writeClipboard(plain);
+        if (ok) toast("Text copied");
+        else toast("Could not copy the text to the clipboard", "error");
+        return ok;
+      } catch (_2) {
+        toast("Could not copy the text to the clipboard", "error");
+        return false;
+      }
+    }
+  }
+
+  async function copyContent(kind, previewUrl, mime) {
     if (kind === "image") return copyImage(previewUrl);
     if (kind === "text") {
+      if (
+        mime === "text/html"
+        && navigator.clipboard
+        && typeof navigator.clipboard.write === "function"
+        && typeof ClipboardItem !== "undefined"
+        && window.isSecureContext !== false
+      ) {
+        return copyHtmlContent(previewUrl);
+      }
       try {
         const response = await fetchPreview(previewUrl, {
           credentials: "same-origin",
@@ -479,6 +576,7 @@
     imageCopy.dataset.preview = item.preview_url;
     imageCopy.dataset.kind = item.kind;
     imageCopy.dataset.filename = item.filename;
+    imageCopy.dataset.mime = item.mime || "";
     const download = document.createElement("button");
     download.type = "button";
     download.className = "download-btn";
@@ -761,12 +859,22 @@
   window.addEventListener("paste", (event) => {
     const items = event.clipboardData && event.clipboardData.items;
     if (!items) return;
-    let file = null;
+    let imageItem = null;
+    let hasPlainText = false;
     for (const item of items) {
-      if (item.kind === "file" && /^image\//.test(item.type)) {
-        file = item.getAsFile();
-        break;
-      }
+      if (item.kind === "file" && /^image\//.test(item.type)) imageItem = item;
+      else if (item.kind === "string" && item.type === "text/plain") hasPlainText = true;
+    }
+    if (imageItem && hasPlainText) {
+      event.preventDefault();
+      const zoneId = requireActiveZone();
+      if (!zoneId) return;
+      uploadMixedClipboard(zoneId, items);
+      return;
+    }
+    let file = null;
+    if (imageItem) {
+      file = imageItem.getAsFile();
     }
     if (file) {
       event.preventDefault();
@@ -804,7 +912,7 @@
     }
     const copyImageBtn = event.target.closest(".copy-image-btn");
     if (copyImageBtn && copyImageBtn.dataset.preview) {
-      copyContent(copyImageBtn.dataset.kind, copyImageBtn.dataset.preview);
+      copyContent(copyImageBtn.dataset.kind, copyImageBtn.dataset.preview, copyImageBtn.dataset.mime);
       return;
     }
     const clearBtn = event.target.closest(".clear-btn");
@@ -950,6 +1058,7 @@
     pvDelete.dataset.filename = item.filename;
     pvCopyImage.dataset.preview = item.preview_url;
     pvCopyImage.dataset.kind = item.kind;
+    pvCopyImage.dataset.mime = item.mime || "";
     if (item.kind === "text") {
       try {
         const response = await fetchPreview(item.preview_url, {
@@ -957,7 +1066,12 @@
           headers: { Accept: "text/plain" },
         });
         if (!response.ok) throw new Error("preview unavailable");
-        const text = await response.text();
+        let text = await response.text();
+        if (item.mime === "text/html") {
+          // Document hybride : afficher le texte extrait, jamais le HTML rendu.
+          const doc = new DOMParser().parseFromString(text, "text/html");
+          text = ((doc.body && doc.body.textContent) || "").trim();
+        }
         openTextPreview(text);
       } catch (_) {
         toast("Could not load the text preview", "error");
@@ -975,7 +1089,7 @@
     }
   }
   pvCopy.addEventListener("click", () => copyLink(pvRef.textContent));
-  pvCopyImage.addEventListener("click", () => copyContent(pvCopyImage.dataset.kind, pvCopyImage.dataset.preview));
+  pvCopyImage.addEventListener("click", () => copyContent(pvCopyImage.dataset.kind, pvCopyImage.dataset.preview, pvCopyImage.dataset.mime));
   pvDownload.addEventListener("click", () => downloadContent(pvDownload.dataset.preview, pvDownload.dataset.filename));
   pvClear.addEventListener("click", clearClipboard);
   pvDelete.addEventListener("click", () => {
