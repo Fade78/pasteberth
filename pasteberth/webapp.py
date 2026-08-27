@@ -200,7 +200,13 @@ def make_handler(cfg: Config, service: PasteService, sessions: SessionStore,
 
         def parse_request(self) -> bool:
             try:
-                return super().parse_request()
+                parsed = super().parse_request()
+                if parsed and not self._host_allowed():
+                    self.close_connection = True
+                    self._route_path = self.path.split("?")[0]
+                    self._error(403, "forbidden_host", "hôte non autorisé")
+                    return False
+                return parsed
             except HeaderTooLarge:
                 self.close_connection = True
                 self.send_error(431, "en-têtes HTTP trop volumineux")
@@ -547,14 +553,17 @@ def make_handler(cfg: Config, service: PasteService, sessions: SessionStore,
                 self._error(400, "invalid_request", "encodage de chemin invalide")
                 return
             self._route_path = path
-            if "\x00" in path or "\\" in path:
+            if "\\" in path or any(ord(char) < 0x20 or ord(char) == 0x7F for char in path):
                 self.close_connection = True
                 self._error(400, "invalid_request", "requête invalide")
+                return
+            if not self._host_allowed():
+                self._error(403, "forbidden_host", "hôte non autorisé")
                 return
             for method, pattern, name in _ROUTES:
                 if self.command != method:
                     continue
-                match = pattern.match(path)
+                match = pattern.fullmatch(path)
                 if match:
                     if method in ("POST", "DELETE") and not self._origin_allowed():
                         log.warning(
@@ -569,7 +578,7 @@ def make_handler(cfg: Config, service: PasteService, sessions: SessionStore,
                     return
             if self.command not in ("GET", "POST"):
                 self._error(405, "method_not_allowed", "méthode non autorisée")
-            elif any(p.match(path) for _, p, _ in _ROUTES):
+            elif any(p.fullmatch(path) for _, p, _ in _ROUTES):
                 self._error(405, "method_not_allowed", "méthode non autorisée pour cette ressource")
             else:
                 self._error(404, "not_found", "ressource introuvable")
@@ -916,7 +925,7 @@ def make_handler(cfg: Config, service: PasteService, sessions: SessionStore,
                     self._error(exc.status, exc.code, str(exc))
                     return
                 extra = []
-                if mime in ("application/octet-stream", "text/html"):
+                if mime not in ("image/png", "image/jpeg", "image/webp"):
                     # Pièce jointe : l'HTML stocké ne doit jamais être rendu
                     # same-origin par navigation directe (défense en profondeur,
                     # la CSP bloque déjà les scripts inline).

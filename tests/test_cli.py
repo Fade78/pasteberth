@@ -209,7 +209,7 @@ class TestConfigurationDepot(unittest.TestCase):
         self.assertEqual(stat.S_IMODE(target.stat().st_mode), 0o600)
         content = target.read_text(encoding="utf-8")
         self.assertIn('id = "default"', content)
-        self.assertIn("allowed_hosts = []", content)
+        self.assertIn('allowed_hosts = ["localhost", "127.0.0.1", "::1"]', content)
         self.assertIn("storage/default", content)
         self.assertIn("configuration générée", proc.stdout)
 
@@ -243,7 +243,13 @@ class TestConfigurationDepot(unittest.TestCase):
         with socket.socket() as probe:
             probe.bind(("127.0.0.1", 0))
             port = probe.getsockname()[1]
-        cfg = write_config(self.tmp, port=port, auth_enabled=True, password="un-hash-valide")
+        cfg = write_config(
+            self.tmp,
+            port=port,
+            auth_enabled=True,
+            password="un-hash-valide",
+            allowed_hosts="[]",
+        )
         proc = run_cli(["audit", "--config", str(cfg)])
         self.assertIn("wildcard", proc.stdout)
         self.assertIn("AVERTISSEMENT", proc.stdout)

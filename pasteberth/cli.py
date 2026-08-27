@@ -108,8 +108,8 @@ def _cmd_serve(args: argparse.Namespace) -> int:
     for warning in cfg.warnings:
         logging.getLogger("pasteberth.config").warning("%s", warning)
 
-    # Politique de sécurité déjà validée par load_config() ; on réaffiche
-    # le contexte d'écoute pour journal clair.
+    # Revalider juste avant la résolution et le bind réduit la fenêtre où un
+    # nom d'hôte pourrait changer de résolution entre la politique et l'écoute.
     log = logging.getLogger("pasteberth.cli")
     try:
         prepare_directories(cfg)
@@ -131,6 +131,12 @@ def _cmd_serve(args: argparse.Namespace) -> int:
 
     from pasteberth.server import serve_forever
 
+    try:
+        expected_loopback = check_startup_policy(cfg)
+    except ConfigError as exc:
+        log.error("pasteberth : politique d'écoute invalide\n  %s", exc)
+        return 2
+
     log.info(
         "Pasteberth %s démarre sur %s://%s:%d (%d zone(s), auth=%s)",
         __version__,
@@ -145,7 +151,13 @@ def _cmd_serve(args: argparse.Namespace) -> int:
             "écoute locale uniquement : prévoir un reverse proxy HTTPS pour un accès réseau"
         )
     try:
-        serve_forever(handler, cfg.listen_address, cfg.port, tls_context=tls_context)
+        serve_forever(
+            handler,
+            cfg.listen_address,
+            cfg.port,
+            tls_context=tls_context,
+            expected_loopback=expected_loopback,
+        )
     except OSError as exc:
         log.error("impossible d'écouter sur %s:%d : %s", cfg.listen_address, cfg.port, exc)
         return 1
@@ -166,9 +178,10 @@ listen_address = "127.0.0.1"
 port = 8765
 max_upload_size = "20MiB"
 max_image_pixels = 25000000
-trusted_proxies = ["127.0.0.1", "::1"]
-# Empty list = wildcard (Host check disabled); list hostnames to enable it.
-allowed_hosts = []
+# Trust no forwarded headers by default; list only the actual reverse proxy IP.
+trusted_proxies = []
+# Local defaults; use an explicit empty list only to opt into wildcard Host checks.
+allowed_hosts = ["localhost", "127.0.0.1", "::1"]
 allow_unauthenticated_local = false
 allow_unauthenticated_remote = false
 # Non-loopback HTTP is refused by default; use an HTTPS reverse proxy.
@@ -205,6 +218,9 @@ min_free_percent = 2.0
 
 def _cmd_generate_config(args: argparse.Namespace) -> int:
     target = config_path_for_generation(_config_arg(args))
+    if "\x00" in str(target):
+        print(f"chemin de configuration invalide : {target}", file=sys.stderr)
+        return 2
     if target.exists() and not args.force:
         print(
             f"configuration déjà présente : {target}\n"
@@ -223,7 +239,7 @@ def _cmd_generate_config(args: argparse.Namespace) -> int:
                 stream.write(_generated_config_text(repository_root()))
                 stream.flush()
                 os.fsync(stream.fileno())
-            os.chmod(temporary_path, 0o600)
+                os.fchmod(stream.fileno(), 0o600)
             os.replace(temporary_path, target)
         finally:
             try:
@@ -244,7 +260,7 @@ def _audit_zone(cfg, zone) -> tuple[list[str], list[str]]:
     path = zone.directory
     try:
         symlink = first_symlink_component(path)
-    except OSError as exc:
+    except (OSError, ValueError) as exc:
         errors.append(f"zone {zone.id}: inspection impossible ({exc})")
         return errors, warnings
     if symlink is not None:
@@ -445,6 +461,9 @@ def _cmd_passwd(args: argparse.Namespace) -> int:
             "configuration absente : exécutez d'abord `pasteberth --generate-config`",
             file=sys.stderr,
         )
+        return 2
+    if "\x00" in str(config_path):
+        print(f"chemin de configuration invalide : {config_path}", file=sys.stderr)
         return 2
     # La politique de sécurité ne bloque pas passwd : il doit rester possible
     # de préparer la configuration avant le premier démarrage.

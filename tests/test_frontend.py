@@ -113,6 +113,7 @@ class TestContratsFrontend(unittest.TestCase):
 
     def test_paste_texte_et_drop_binaire(self):
         self.assertIn('i.kind === "string"', self.app_js)
+        self.assertIn('i.kind === "string" && i.type === "text/plain"', self.app_js)
         self.assertIn("getAsString", self.app_js)
         self.assertIn("new Blob([text]", self.app_js)
         self.assertIn("file.name || \"clipboard\"", self.app_js)
@@ -136,6 +137,9 @@ class TestContratsFrontend(unittest.TestCase):
         self.assertIn("function openContentPreview", self.app_js)
         self.assertIn('id="pv-text"', self.index_html)
         self.assertIn("link.download = filename", self.app_js)
+        self.assertIn("pvDelete.dataset.zone", self.app_js)
+        self.assertIn("generation !== previewGeneration", self.app_js)
+        self.assertIn("activePreviewController.abort()", self.app_js)
 
     def test_echec_copie_signeale(self):
         self.assertIn("Link NOT copied", self.app_js)

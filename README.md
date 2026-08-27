@@ -34,7 +34,7 @@ capture ──▶ browser ── HTTPS ──▶ Pasteberth ──▶ captures/<
 The browser **never** needs to access the returned path. This is the path seen
 by the harness, on the machine where Pasteberth runs.
 
-The current version is `1.0.3`.
+The current version is `1.0.4`.
 
 ---
 
@@ -173,8 +173,8 @@ desired zones and paths. The file remains ignored by Git.
 | `accept_img` | `true` | accept structurally valid PNG, JPEG, and WebP images |
 | `accept_doc` | `true` | accept valid UTF-8 text content |
 | `accept_bin` | `true` | accept opaque binary content |
-| `trusted_proxies` | loopback | only these peers may set `X-Forwarded-*` |
-| `allowed_hosts` | `[]` | hostnames accepted by Host/Origin checks; empty = wildcard (audit warns). List hostnames to enforce a strict allowlist |
+| `trusted_proxies` | `[]` | only these peers may set `X-Forwarded-*`; configure the actual reverse proxy IPs explicitly |
+| `allowed_hosts` | `["localhost", "127.0.0.1", "::1"]` | hostnames accepted by Host/Origin checks; an explicit empty list opts into wildcard mode (audit warns) |
 | `allow_unauthenticated_local` | `false` | explicit opt-in for anonymous loopback/proxy mode |
 | `allow_unauthenticated_remote` | `false` | explicit unlock (discouraged) |
 | `allow_insecure_http_remote` | `false` | separate opt-in for non-loopback HTTP (private network only) |
@@ -241,6 +241,13 @@ startup, allowing controlled sharing between multiple users. Each zone refuses a
 `min_free_percent` (default `2.0`). The measurement applies to the directory's
 filesystem, not just the folder; multiple zones can therefore share a
 filesystem, but then they also share its free-space reserve.
+
+Pasteberth recognizes a stored item only when its regular file and matching
+JSON sidecar are readable by the service user and the metadata is coherent.
+Foreign files and orphan sidecars are left untouched; transaction-owned
+temporary files can be reconciled after an interrupted write.
+Shared writable directories therefore imply trust between the users who can
+modify their entries; use `0700` when that trust is not appropriate.
 
 Images are limited to `16 384 × 16 384` pixels and `25 MP` by default, which
 covers usual 4K to 6K displays. 8K images exceeding `25 MP` require an explicit
@@ -328,15 +335,16 @@ With a non-loopback listener, enable TLS or use an HTTPS reverse proxy. The
 `allow_insecure_http_remote = true` option should only be used on a controlled
 private network.
 
-By default `allowed_hosts` is empty, which disables the Host check (wildcard):
-any Host header is accepted, and the browser Origin must still match it. To
-enforce a strict allowlist, list the hostnames you expose (hostname only,
-without scheme, port, or path) — `pasteberth audit` warns while the list is
-empty:
+By default `allowed_hosts` accepts only local hostnames. An explicit empty list
+disables the Host check (wildcard): any Host header is accepted, and the
+browser Origin must still match it. To enforce a strict allowlist, list the
+hostnames you expose (hostname only, without scheme, port, or path). The
+wildcard form is intended only as a deliberate opt-in and `pasteberth audit`
+warns while the list is empty:
 
 ```toml
 listen_address = "127.0.0.1"
-trusted_proxies = ["127.0.0.1"]
+trusted_proxies = ["127.0.0.1"]  # only if this is the actual proxy peer
 allowed_hosts = ["pasteberth.example.internal"]
 ```
 
@@ -366,9 +374,10 @@ server {
 ```
 
 In both cases: listen on `127.0.0.1` for Pasteberth, and let
-`trusted_proxies` contain only the proxy's IP. `X-Forwarded-Proto/For` headers
-from an unlisted peer are **ignored** (an Internet client cannot force a
-`Secure` cookie or spoof an IP with the rate limiter).
+`trusted_proxies` contain only the proxy's IP. It is empty by default, so a
+direct local client cannot spoof an IP with `X-Forwarded-For`; configure it
+only when the listener is reachable exclusively through the listed proxy.
+`X-Forwarded-Proto/For` headers from an unlisted peer are **ignored**.
 
 ## API
 
@@ -445,10 +454,10 @@ blindly retrying.
   User filenames reject path separators, NUL, CR/LF, reserved Pasteberth names,
   and exceed neither 200 characters nor 240 UTF-8 bytes; preview membership is
   still required.
-- Only files with a Pasteberth sidecar can be read or deleted. Files matching
-  Pasteberth's exact generated naming (`YYYY-MM-DD_HH-MM-SS_<6hex>.<ext>`) that
-  lack a sidecar and are older than one hour are removed during startup
-  reconciliation (crash recovery); other personal files are never touched.
+- Only files with a valid, coherent Pasteberth sidecar can be read, deleted, or
+  replaced. Transaction-owned temporary files are reconciled after a crash;
+  files without a durable ownership marker, including names that merely look
+  generated, are preserved.
 - Writable target directories warn on non-private modes; private mode
   (`0700`) is recommended. Private stored files/sidecars (`0600`), symbolic links
   refused, and temporary files

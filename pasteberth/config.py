@@ -17,7 +17,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from pasteberth.images import HARD_MAX_PIXELS, MAX_PIXELS
-from pasteberth.paths import first_symlink_component
+from pasteberth.paths import first_symlink_component, open_directory
 
 
 log = logging.getLogger("pasteberth.config")
@@ -39,6 +39,7 @@ _LOG_LEVELS = {"DEBUG", "INFO", "WARNING", "ERROR"}
 DEFAULT_MAX_UPLOAD_BYTES = 20 * 1024**2
 MAX_UPLOAD_BYTES = 50 * 1024**2
 DEFAULT_MIN_FREE_PERCENT = 2.0
+_DEFAULT_ALLOWED_HOSTS = ("localhost", "127.0.0.1", "::1")
 
 _SIZE_UNITS = {
     "": 1,
@@ -230,6 +231,8 @@ def _parse_auth(raw: object, warnings: list[str]) -> AuthConfig:
     if password_file_raw is not None:
         if not isinstance(password_file_raw, str) or not password_file_raw.strip():
             raise ConfigError("[auth]: 'password_file' doit être un chemin absolu")
+        if "\x00" in password_file_raw:
+            raise ConfigError("[auth]: 'password_file' contient un caractère NUL")
         password_file = Path(os.path.expanduser(password_file_raw))
         if not password_file.is_absolute():
             raise ConfigError("[auth]: 'password_file' doit être un chemin absolu")
@@ -259,6 +262,8 @@ def _parse_tls(raw: object, warnings: list[str]) -> TLSConfig:
         raise ConfigError("[tls]: 'certificate' doit être un chemin absolu")
     if not isinstance(private_key_raw, str) or not private_key_raw.strip():
         raise ConfigError("[tls]: 'private_key' doit être un chemin absolu")
+    if "\x00" in certificate_raw or "\x00" in private_key_raw:
+        raise ConfigError("[tls]: les chemins ne peuvent pas contenir de caractère NUL")
     certificate = Path(os.path.expanduser(certificate_raw))
     private_key = Path(os.path.expanduser(private_key_raw))
     if not certificate.is_absolute() or not private_key.is_absolute():
@@ -296,6 +301,8 @@ def _parse_zone(raw_zone: object, index: int, warnings: list[str]) -> ZoneConfig
             f"{where}: 'directory' doit être un chemin absolu "
             f"(relatif au serveur Pasteberth, pas au navigateur) : {directory_raw!r}"
         )
+    if "\x00" in directory_raw:
+        raise ConfigError(f"{where}: 'directory' contient un caractère NUL")
     retain = table.get("retain", 10)
     if isinstance(retain, bool) or not isinstance(retain, int) or not (1 <= retain <= 10_000):
         raise ConfigError(f"{where}: 'retain' doit être un entier entre 1 et 10000")
@@ -332,10 +339,7 @@ def _parse_zone(raw_zone: object, index: int, warnings: list[str]) -> ZoneConfig
 
 def _parse_trusted_proxies(raw: object, warnings: list[str]) -> tuple:
     if raw is None:
-        return (
-            ipaddress.ip_network("127.0.0.1/32"),
-            ipaddress.ip_network("::1/128"),
-        )
+        return ()
     if not isinstance(raw, list) or not all(isinstance(v, str) for v in raw):
         raise ConfigError("'trusted_proxies' doit être une liste de chaînes (IP ou CIDR)")
     networks = []
@@ -380,6 +384,8 @@ def load_config(path: Path) -> Config:
         raw_bytes = path.read_bytes()
     except FileNotFoundError as exc:
         raise ConfigError(f"fichier de configuration introuvable : {path}") from exc
+    except ValueError as exc:
+        raise ConfigError(f"chemin de configuration invalide : {path}") from exc
     except OSError as exc:
         raise ConfigError(f"fichier de configuration illisible : {path} ({exc})") from exc
     try:
@@ -425,7 +431,11 @@ def load_config(path: Path) -> Config:
         )
 
     trusted_proxies = _parse_trusted_proxies(data.get("trusted_proxies"), warnings)
-    allowed_hosts = _parse_allowed_hosts(data.get("allowed_hosts"))
+    allowed_hosts = (
+        _DEFAULT_ALLOWED_HOSTS
+        if "allowed_hosts" not in data
+        else _parse_allowed_hosts(data["allowed_hosts"])
+    )
     allow_unauth_local = _get_bool(
         data, "allow_unauthenticated_local", "config", default=False
     )
@@ -479,7 +489,7 @@ def load_config(path: Path) -> Config:
     return cfg
 
 
-def check_startup_policy(cfg: Config) -> None:
+def check_startup_policy(cfg: Config) -> bool:
     """Refuse les expositions distantes non chiffrées ou anonymes."""
     loopback_only = is_loopback_address(cfg.listen_address)
     if not loopback_only and not cfg.tls.enabled and not cfg.allow_insecure_http_remote:
@@ -490,11 +500,11 @@ def check_startup_policy(cfg: Config) -> None:
             "  allow_insecure_http_remote = true"
         )
     if cfg.auth.enabled:
-        return
+        return loopback_only
     if loopback_only and cfg.allow_unauthenticated_local:
-        return
+        return loopback_only
     if not loopback_only and cfg.allow_unauthenticated_remote:
-        return
+        return loopback_only
     if loopback_only:
         raise ConfigError(
             "refus de démarrer : authentification désactivée sur une écoute locale "
@@ -544,11 +554,8 @@ def build_default_config() -> Config:
         port=8765,
         max_upload_bytes=DEFAULT_MAX_UPLOAD_BYTES,
         max_image_pixels=MAX_PIXELS,
-        trusted_proxies=(
-            ipaddress.ip_network("127.0.0.1/32"),
-            ipaddress.ip_network("::1/128"),
-        ),
-        allowed_hosts=(),
+        trusted_proxies=(),
+        allowed_hosts=_DEFAULT_ALLOWED_HOSTS,
         allow_unauthenticated_local=True,
         allow_unauthenticated_remote=False,
         allow_insecure_http_remote=False,
@@ -615,7 +622,7 @@ def prepare_directories(cfg: Config) -> None:
     for zone in cfg.zones.values():
         try:
             symlink = first_symlink_component(zone.directory)
-        except OSError as exc:
+        except (OSError, ValueError) as exc:
             raise ConfigError(
                 f"zone '{zone.id}': impossible d'inspecter {zone.directory} ({exc})"
             ) from exc
@@ -623,29 +630,32 @@ def prepare_directories(cfg: Config) -> None:
             raise ConfigError(
                 f"zone '{zone.id}': le chemin contient un lien symbolique : {symlink}"
             )
-        if zone.directory.exists():
-            if not zone.directory.is_dir():
-                raise ConfigError(
-                    f"zone '{zone.id}': '{zone.directory}' existe mais n'est pas un répertoire"
-                )
-            if not os.access(zone.directory, os.W_OK | os.X_OK):
-                raise ConfigError(
-                    f"zone '{zone.id}': répertoire non accessible en écriture : {zone.directory}"
-                )
-        elif zone.create_directory:
-            try:
-                zone.directory.mkdir(parents=True, exist_ok=True, mode=0o700)
-            except OSError as exc:
-                raise ConfigError(
-                    f"zone '{zone.id}': impossible de créer {zone.directory} ({exc})"
-                ) from exc
-        else:
-            raise ConfigError(
-                f"zone '{zone.id}': répertoire inexistant et create_directory = false : "
-                f"{zone.directory}"
-            )
         try:
-            mode = zone.directory.stat().st_mode & 0o777
+            directory_fd = open_directory(
+                zone.directory,
+                create=zone.create_directory,
+                mode=0o700,
+            )
+        except FileNotFoundError as exc:
+            if not zone.create_directory:
+                raise ConfigError(
+                    f"zone '{zone.id}': répertoire inexistant et create_directory = false : "
+                    f"{zone.directory}"
+                ) from exc
+            raise ConfigError(
+                f"zone '{zone.id}': impossible de créer {zone.directory} ({exc})"
+            ) from exc
+        except NotADirectoryError as exc:
+            raise ConfigError(
+                f"zone '{zone.id}': '{zone.directory}' existe mais n'est pas un répertoire"
+            ) from exc
+        except (OSError, ValueError) as exc:
+            raise ConfigError(
+                f"zone '{zone.id}': impossible d'inspecter {zone.directory} ({exc})"
+            ) from exc
+        try:
+            info = os.fstat(directory_fd)
+            mode = info.st_mode & 0o777
             # Feature: les répertoires partagés (group/other read ou write) sont
             # acceptés avec un avertissement, pas refusés. Refuser pousserait les
             # opérateurs à contourner la protection (chmod 777, désactivation du
@@ -658,11 +668,17 @@ def prepare_directories(cfg: Config) -> None:
                     zone.directory,
                     oct(mode),
                 )
-            identity = (zone.directory.stat().st_dev, zone.directory.stat().st_ino)
+            identity = (info.st_dev, info.st_ino)
         except OSError as exc:
             raise ConfigError(
                 f"zone '{zone.id}': impossible d'inspecter {zone.directory} ({exc})"
             ) from exc
+        finally:
+            os.close(directory_fd)
+        if not os.access(zone.directory, os.W_OK | os.X_OK):
+            raise ConfigError(
+                f"zone '{zone.id}': répertoire non accessible en écriture : {zone.directory}"
+            )
         previous = seen.get(identity)
         if previous is not None:
             raise ConfigError(

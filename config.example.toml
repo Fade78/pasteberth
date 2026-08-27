@@ -13,10 +13,11 @@ max_image_pixels = 25000000        # 25 MP default; absolute maximum 50 MP
 
 # Proxies allowed to set X-Forwarded-* (IP or CIDR).
 # Never include addresses reachable from the Internet.
-trusted_proxies = ["127.0.0.1", "::1"]
-# Empty list = wildcard: any Host is accepted (Origin must still match Host).
-# List hostnames (e.g. "pasteberth.example") to enforce a strict allowlist.
-allowed_hosts = []
+# Trust no forwarded headers by default; list only the actual reverse proxy IP.
+trusted_proxies = []
+# The local defaults accept only these hostnames. An explicit empty list is a
+# deliberate wildcard: any Host is accepted (Origin must still match Host).
+allowed_hosts = ["localhost", "127.0.0.1", "::1"]
 
 # Explicitly refuse non-loopback startup without authentication unless enabled:
 allow_unauthenticated_local = false  # including behind a reverse proxy

@@ -8,6 +8,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
+import pasteberth.storage as storage_module
 from pasteberth.images import ImageInfo
 from pasteberth.storage import (
     DestinationError,
@@ -110,6 +111,193 @@ class TestSauvegarde(Base):
             self.dest.save(b"replacement", info, filename=foreign.name)
         self.assertEqual(foreign.read_bytes(), b"foreign")
 
+    def test_nom_explicit_abandonne_si_cible_etrangere_apparait(self):
+        info = ImageInfo(
+            fmt=None,
+            width=None,
+            height=None,
+            kind="binary",
+            mime="application/octet-stream",
+            ext=".zip",
+        )
+        target = self.dir / "race.zip"
+
+        original_install = self.dest._install_new
+
+        def appear_then_install(directory_fd, temp_name, target_name):
+            if target_name == target.name and not target.exists():
+                target.write_bytes(b"foreign")
+            return original_install(directory_fd, temp_name, target_name)
+
+        with mock.patch.object(self.dest, "_install_new", side_effect=appear_then_install):
+            with self.assertRaises(StorageConflictError):
+                self.dest.save(b"replacement", info, filename=target.name)
+        self.assertEqual(target.read_bytes(), b"foreign")
+
+    def test_nom_explicit_echec_apres_installation_est_recupere(self):
+        info = ImageInfo(
+            fmt=None,
+            width=None,
+            height=None,
+            kind="binary",
+            mime="application/octet-stream",
+            ext=".zip",
+        )
+        target = self.dir / "transaction.zip"
+        original_move = storage_module._rename_noreplace
+
+        def fail_after_data_install(directory_fd, source, destination):
+            result = original_move(directory_fd, source, destination)
+            if destination == target.name and source.startswith(".pbdata-"):
+                raise OSError("coupure simulée")
+            return result
+
+        with mock.patch(
+            "pasteberth.storage._rename_noreplace",
+            side_effect=fail_after_data_install,
+        ):
+            with self.assertRaises(OSError):
+                self.dest.save(b"replacement", info, filename=target.name)
+        self.assertFalse(target.exists())
+        self.assertFalse((self.dir / (target.name + ".json")).exists())
+        self.assertFalse(list(self.dir.glob(".pbtxn-*")))
+
+    def test_nom_explicit_abandonne_si_cible_existante_change(self):
+        info = ImageInfo(
+            fmt=None,
+            width=None,
+            height=None,
+            kind="binary",
+            mime="application/octet-stream",
+            ext=".zip",
+        )
+        target = self.dir / "race-existing.zip"
+        self.dest.save(b"old", info, filename=target.name)
+        original_write = self.dest._write_data_temp
+
+        def swap_then_write(directory_fd, data):
+            target.unlink()
+            target.write_bytes(b"foreign")
+            return original_write(directory_fd, data)
+
+        with mock.patch.object(self.dest, "_write_data_temp", side_effect=swap_then_write):
+            with self.assertRaises(StorageConflictError):
+                self.dest.save(b"replacement", info, filename=target.name)
+        self.assertEqual(target.read_bytes(), b"foreign")
+
+    def test_nom_explicit_ne_remplace_pas_un_etranger_apparu_avant_deplacement(self):
+        info = ImageInfo(
+            fmt=None,
+            width=None,
+            height=None,
+            kind="binary",
+            mime="application/octet-stream",
+            ext=".zip",
+        )
+        target = self.dir / "race-before-move.zip"
+        self.dest.save(b"old", info, filename=target.name)
+        original_move = storage_module._rename_noreplace
+
+        def swap_before_move(directory_fd, source, destination):
+            if source == target.name and destination.startswith(".pbbackup-"):
+                target.unlink()
+                target.write_bytes(b"foreign")
+            return original_move(directory_fd, source, destination)
+
+        with mock.patch(
+            "pasteberth.storage._rename_noreplace",
+            side_effect=swap_before_move,
+        ):
+            with self.assertRaises(StorageConflictError):
+                self.dest.save(b"replacement", info, filename=target.name)
+        self.assertEqual(target.read_bytes(), b"foreign")
+        self.assertFalse(list(self.dir.glob(".pbtxn-*")))
+
+    def test_remplacement_inacheve_recupere_ancien_fichier_apres_redemarrage(self):
+        info = ImageInfo(
+            fmt=None,
+            width=None,
+            height=None,
+            kind="binary",
+            mime="application/octet-stream",
+            ext=".bin",
+        )
+        target = self.dir / "crash.bin"
+        self.dest.save(b"old", info, filename=target.name)
+        original_move = self.dest._move_expected
+
+        def crash_after_backup(*args):
+            result = original_move(*args)
+            if args[2].startswith(".pbbackup-"):
+                raise SystemExit("crash simulé")
+            return result
+
+        with mock.patch.object(self.dest, "_move_expected", side_effect=crash_after_backup):
+            with mock.patch.object(self.dest, "_rollback_transaction", return_value=False):
+                with self.assertRaises(SystemExit):
+                    self.dest.save(b"new", info, filename=target.name)
+
+        recovered = LocalDestination(self.dir)
+        self.assertEqual(recovered.read(target.name), b"old")
+        self.assertFalse(list(self.dir.glob(".pbtxn-*")))
+        self.assertFalse(list(self.dir.glob(".pbbackup-*")))
+
+    def test_nettoyage_apres_commit_ne_rollback_pas_la_nouvelle_version(self):
+        info = ImageInfo(
+            fmt=None,
+            width=None,
+            height=None,
+            kind="binary",
+            mime="application/octet-stream",
+            ext=".bin",
+        )
+        target = self.dir / "committed.bin"
+        self.dest.save(b"old", info, filename=target.name)
+
+        def fail_after_deleting_one_backup(directory_fd, transaction, marker_name, commit_name):
+            os.unlink(transaction["data_backup"], dir_fd=directory_fd)
+            raise OSError("nettoyage interrompu")
+
+        with mock.patch.object(
+            self.dest,
+            "_cleanup_committed_transaction",
+            side_effect=fail_after_deleting_one_backup,
+        ):
+            self.dest.save(b"new", info, filename=target.name)
+
+        recovered = LocalDestination(self.dir)
+        self.assertEqual(recovered.read(target.name), b"new")
+
+    def test_commit_conserve_les_backups_si_la_cible_publique_change(self):
+        info = ImageInfo(
+            fmt=None,
+            width=None,
+            height=None,
+            kind="binary",
+            mime="application/octet-stream",
+            ext=".bin",
+        )
+        target = self.dir / "committed-race.bin"
+        self.dest.save(b"old", info, filename=target.name)
+        original_cleanup = self.dest._cleanup_committed_transaction
+
+        def replace_public_target(directory_fd, transaction, marker_name, commit_name):
+            target.unlink()
+            target.write_bytes(b"bad")
+            return original_cleanup(directory_fd, transaction, marker_name, commit_name)
+
+        with mock.patch.object(
+            self.dest,
+            "_cleanup_committed_transaction",
+            side_effect=replace_public_target,
+        ):
+            self.dest.save(b"new", info, filename=target.name)
+
+        self.assertTrue(list(self.dir.glob(".pbbackup-*")))
+        recovered = LocalDestination(self.dir)
+        self.assertTrue(list(self.dir.glob(".pbbackup-*")))
+        self.assertEqual(recovered.list(), [])
+
     def test_sidecar_orphelin_refuse_en_remplacement(self):
         stored = self.save()[0]
         (self.dir / stored.filename).unlink()
@@ -205,6 +393,127 @@ class TestOwnership(Base):
         with self.assertRaises(DestinationError):
             self.dest.delete(victim.name)
 
+    def test_delete_n_efface_pas_une_cible_changee(self):
+        stored = self.save()[0]
+        target = self.dir / stored.filename
+        original_identity = LocalDestination._entry_identity
+        swapped = False
+
+        def swap_before_target_check(directory_fd, name):
+            nonlocal swapped
+            if name == stored.filename + ".json" and not swapped:
+                target.unlink()
+                target.write_bytes(b"foreign")
+                swapped = True
+            return original_identity(directory_fd, name)
+
+        with mock.patch.object(
+            self.dest,
+            "_entry_identity",
+            side_effect=swap_before_target_check,
+        ):
+            with self.assertRaises(StorageConflictError):
+                self.dest.delete(stored.filename)
+        self.assertEqual(target.read_bytes(), b"foreign")
+
+    def test_lecture_conserve_le_descripteur_ouvert_si_la_cible_change(self):
+        stored = self.save()[0]
+        target = self.dir / stored.filename
+        original = target.read_bytes()
+        foreign = b"foreign" * (len(original) // len(b"foreign"))
+        foreign += b"x" * (len(original) - len(foreign))
+        original_read_meta = self.dest._read_meta
+
+        def replace_after_target_open(directory_fd, name):
+            if name == stored.filename + ".json":
+                target.unlink()
+                target.write_bytes(foreign)
+            return original_read_meta(directory_fd, name)
+
+        with mock.patch.object(
+            self.dest,
+            "_read_meta",
+            side_effect=replace_after_target_open,
+        ):
+            self.assertEqual(self.dest.read(stored.filename), original)
+        self.assertEqual(target.read_bytes(), foreign)
+
+    def test_delete_ne_deplace_pas_un_etranger_apparu_avant_deplacement(self):
+        stored = self.save()[0]
+        target = self.dir / stored.filename
+        original_move = storage_module._rename_noreplace
+
+        def swap_before_move(directory_fd, source, destination):
+            if source == stored.filename and destination.startswith(".pbtrash-"):
+                target.unlink()
+                target.write_bytes(b"foreign")
+            return original_move(directory_fd, source, destination)
+
+        with mock.patch(
+            "pasteberth.storage._rename_noreplace",
+            side_effect=swap_before_move,
+        ):
+            with self.assertRaises(StorageConflictError):
+                self.dest.delete(stored.filename)
+        self.assertEqual(target.read_bytes(), b"foreign")
+
+    def test_delete_nettoyage_prive_en_echec_ne_laise_pas_de_paire(self):
+        stored = self.save()[0]
+        original_unlink = self.dest._unlink_expected
+        calls = 0
+
+        def fail_second_cleanup(directory_fd, name, expected):
+            nonlocal calls
+            calls += 1
+            if calls == 2:
+                raise OSError("nettoyage interrompu")
+            return original_unlink(directory_fd, name, expected)
+
+        with mock.patch.object(
+            self.dest,
+            "_unlink_expected",
+            side_effect=fail_second_cleanup,
+        ):
+            self.dest.delete(stored.filename)
+        self.assertFalse((self.dir / stored.filename).exists())
+        self.assertFalse((self.dir / (stored.filename + ".json")).exists())
+        self.assertEqual(self.dest.list(), [])
+
+    def test_delete_interrompu_est_repris_par_reconciliation(self):
+        stored = self.save()[0]
+        target = self.dir / stored.filename
+        meta_name = stored.filename + ".json"
+        token = "a" * 24
+        marker_name = f".pbdel-{token}.json"
+        transaction = {
+            "version": 1,
+            "target": stored.filename,
+            "data_trash": f".pbtrash-{token}.data",
+            "meta_trash": f".pbtrash-{token}.json",
+            "target_identity": None,
+            "meta_identity": None,
+        }
+        # Build the marker and move only the data file, matching a crash after
+        # the first half of the delete operation.
+        with self.dest._directory_fd() as directory_fd:
+            target_identity = self.dest._entry_identity(directory_fd, stored.filename)
+            meta_identity = self.dest._entry_identity(directory_fd, meta_name)
+            transaction["target_identity"] = list(target_identity)
+            transaction["meta_identity"] = list(meta_identity)
+            self.dest._write_transaction_file(directory_fd, marker_name, transaction)
+            self.dest._move_expected(
+                directory_fd,
+                stored.filename,
+                transaction["data_trash"],
+                target_identity,
+            )
+
+        fresh = LocalDestination(self.dir)
+        self.assertFalse(target.exists())
+        self.assertFalse((self.dir / meta_name).exists())
+        self.assertFalse((self.dir / marker_name).exists())
+        self.assertEqual(fresh.list(), [])
+
     def test_traversal_refuse(self):
         for bad in ["../evil.png", "sub/dir.png", "..\\evil.png", ".hidden.json"]:
             with self.assertRaises(DestinationError):
@@ -212,11 +521,11 @@ class TestOwnership(Base):
             with self.assertRaises(DestinationError):
                 self.dest.read(bad)
 
-    def test_sidecar_orphelin_nettoye(self):
+    def test_sidecar_orphelin_conserve(self):
         stored = self.save()[0]
         (self.dir / stored.filename).unlink()
         self.assertEqual(self.dest.list(), [])
-        self.assertFalse((self.dir / (stored.filename + ".json")).exists())
+        self.assertTrue((self.dir / (stored.filename + ".json")).exists())
 
     def test_sidecar_corrompu_conservé_et_ignore(self):
         self.save()
@@ -225,6 +534,40 @@ class TestOwnership(Base):
         self.assertEqual(len(self.dest.list()), 1)
         self.assertTrue(bad.exists())
 
+    def test_fichier_json_etranger_n_est_pas_supprime(self):
+        stored = self.save()[0]
+        raw = json.loads((self.dir / (stored.filename + ".json")).read_text())
+        raw["filename"] = "notes"
+        foreign_json = self.dir / "notes.json"
+        foreign_json.write_text(json.dumps(raw))
+
+        self.assertEqual([item.filename for item in self.dest.list()], [stored.filename])
+        self.assertTrue(foreign_json.exists())
+
+    def test_sidecar_trop_profond_est_ignore(self):
+        stored = self.save()[0]
+        sidecar = self.dir / (stored.filename + ".json")
+        sidecar.write_text("[" * 2000 + "]" * 2000)
+
+        self.assertEqual(self.dest.list(), [])
+
+    def test_sidecar_texte_dimensions_incoherentes_ignore(self):
+        info = ImageInfo(
+            fmt=None,
+            width=None,
+            height=None,
+            kind="text",
+            mime="text/plain",
+            ext=".txt",
+        )
+        stored = self.dest.save(b"hello", info, filename="notes.txt")
+        sidecar = self.dir / (stored.filename + ".json")
+        raw = json.loads(sidecar.read_text())
+        raw["width"] = 1
+        sidecar.write_text(json.dumps(raw))
+
+        self.assertEqual(self.dest.list(), [])
+
     def test_sidecar_types_invalides_ignores(self):
         stored = self.save()[0]
         sidecar = self.dir / (stored.filename + ".json")
@@ -232,6 +575,19 @@ class TestOwnership(Base):
         raw["filename"] = 123
         sidecar.write_text(json.dumps(raw))
         self.assertEqual(self.dest.list(), [])
+
+    def test_sidecar_invalide_ne_permet_pas_de_supprimer_ou_remplacer(self):
+        stored = self.save()[0]
+        sidecar = self.dir / (stored.filename + ".json")
+        raw = json.loads(sidecar.read_text())
+        raw["size"] = "not-an-integer"
+        sidecar.write_text(json.dumps(raw))
+
+        with self.assertRaises(DestinationError):
+            self.dest.delete(stored.filename)
+        with self.assertRaises(DestinationError):
+            self.dest.save(b"replacement", INFO(), filename=stored.filename)
+        self.assertEqual((self.dir / stored.filename).read_bytes(), make_png(2, 2))
 
     def test_image_symbolique_refusee_en_lecture(self):
         stored = self.save()[0]
@@ -307,15 +663,18 @@ class TestRepertoires(unittest.TestCase):
         self.assertTrue(valid_filename("2026-08-25_01-22-31_a81c42.exe.bat"))
         self.assertFalse(valid_filename(".pasteberth.lock"))
         self.assertFalse(valid_filename("bad\nname.txt"))
+        self.assertFalse(valid_filename("report\u202e gnp.exe"))
+        self.assertFalse(valid_filename("zero\u200bwidth.txt"))
+        self.assertFalse(valid_filename("escape\x1b.txt"))
 
     def test_espace_libre_sous_seuil(self):
         dest = LocalDestination(self.tmp / "space")
         usage = type("Usage", (), {"f_blocks": 1000, "f_bavail": 10, "f_frsize": 1024})()
-        with mock.patch("pasteberth.storage.os.statvfs", return_value=usage):
+        with mock.patch("pasteberth.storage.os.fstatvfs", return_value=usage):
             with self.assertRaises(StorageLowError):
                 dest.ensure_space(1024, 2.0)
 
-    def test_reconciliation_supprime_un_orphelin_ancien(self):
+    def test_reconciliation_conserve_un_nom_genere_sans_preuve(self):
         target = self.tmp / "reconcile"
         LocalDestination(target)
         orphan = target / "2026-01-01_00-00-00_abcdef.png"
@@ -323,7 +682,30 @@ class TestRepertoires(unittest.TestCase):
         old = time.time() - 7200
         os.utime(orphan, (old, old))
         LocalDestination(target)
-        self.assertFalse(orphan.exists())
+        self.assertTrue(orphan.exists())
+
+    def test_reconciliation_conserve_un_orphelin_etranger(self):
+        target = self.tmp / "reconcile-foreign"
+        LocalDestination(target)
+        orphan = target / "2026-01-01_00-00-00_abcdef.png"
+        orphan.write_bytes(b"foreign")
+        old = time.time() - 7200
+        os.utime(orphan, (old, old))
+        real_stat = os.stat
+
+        def foreign_stat(path, *args, **kwargs):
+            result = real_stat(path, *args, **kwargs)
+            if path == orphan.name and kwargs.get("dir_fd") is not None:
+                return type("ForeignStat", (), {
+                    "st_mode": result.st_mode,
+                    "st_uid": result.st_uid + 1,
+                    "st_mtime": result.st_mtime,
+                })()
+            return result
+
+        with mock.patch("pasteberth.storage.os.stat", side_effect=foreign_stat):
+            LocalDestination(target)
+        self.assertTrue(orphan.exists())
 
     def test_retention_signale_les_echecs(self):
         dest = LocalDestination(self.tmp / "retention")

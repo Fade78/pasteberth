@@ -20,7 +20,9 @@ from pasteberth.content import classify
 from pasteberth.images import (
     InvalidImageError,
     mime_allowed,
+    mime_syntax_allowed,
 )
+from pasteberth.paths import open_directory
 from pasteberth.storage import (
     DestinationError,
     LocalDestination,
@@ -44,30 +46,50 @@ class _DeviceSpaceLock:
         base = Path(runtime_root) if runtime_root else Path.home() / ".cache"
         lock_root = base / "pasteberth"
         lock_root.mkdir(parents=True, exist_ok=True, mode=0o700)
-        os.chmod(lock_root, 0o700)
-        self.path = lock_root / f"space-{uid}-{device_id}.lock"
+        fd = os.open(
+            lock_root,
+            os.O_RDONLY
+            | getattr(os, "O_DIRECTORY", 0)
+            | getattr(os, "O_NOFOLLOW", 0),
+        )
+        try:
+            os.fchmod(fd, 0o700)
+        finally:
+            os.close(fd)
+        self.lock_root = lock_root
+        self.lock_name = f"space-{uid}-{device_id}.lock"
         self._thread_lock = threading.Lock()
 
     @contextmanager
     def locked(self):
         with self._thread_lock:
-            fd = os.open(
-                self.path,
-                os.O_RDWR | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0),
-                0o600,
-            )
+            root_fd = -1
+            fd = -1
             try:
+                root_fd = open_directory(self.lock_root)
+                fd = os.open(
+                    self.lock_name,
+                    os.O_RDWR | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0),
+                    0o600,
+                    dir_fd=root_fd,
+                )
                 uid = getattr(os, "getuid", lambda: 0)()
                 if os.fstat(fd).st_uid != uid:
-                    raise PermissionError(f"verrou filesystem non détenu par l'utilisateur : {self.path}")
+                    raise PermissionError(
+                        "verrou filesystem non détenu par l'utilisateur : "
+                        f"{self.lock_root / self.lock_name}"
+                    )
                 os.fchmod(fd, 0o600)
                 fcntl.flock(fd, fcntl.LOCK_EX)
                 yield
             finally:
-                try:
-                    fcntl.flock(fd, fcntl.LOCK_UN)
-                finally:
-                    os.close(fd)
+                if fd >= 0:
+                    try:
+                        fcntl.flock(fd, fcntl.LOCK_UN)
+                    finally:
+                        os.close(fd)
+                if root_fd >= 0:
+                    os.close(root_fd)
 
 
 class ServiceError(Exception):
@@ -167,6 +189,11 @@ class PasteService:
                     "le nom du fichier glissé est invalide",
                 )
             target_filename = filename_hint
+        if not mime_syntax_allowed(declared_mime):
+            raise ServiceError(
+                "unsupported_media_type",
+                f"Content-Type déclaré invalide : {declared_mime!r}",
+            )
         # A drag-and-drop carries a real file name, so its declared MIME may be
         # an arbitrary vendor type. Content classification remains authoritative.
         if not mime_allowed(declared_mime) and target_filename is None:
@@ -251,6 +278,8 @@ class PasteService:
                 self._destinations[zid].delete(filename)
         except UnknownImageError as exc:
             raise ServiceError("unknown_image", str(exc)) from exc
+        except StorageConflictError as exc:
+            raise ServiceError("storage_conflict", str(exc)) from exc
         except (DestinationError, OSError) as exc:
             raise ServiceError("destination_error", str(exc)) from exc
         log.info("suppression zone=%s fichier=%s", zid, filename)

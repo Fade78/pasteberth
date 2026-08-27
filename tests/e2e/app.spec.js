@@ -38,6 +38,30 @@ async function dispatchTextPaste(page, text, type = "text/plain") {
   }, { text, type });
 }
 
+async function dispatchTextPasteFlavors(page, flavors) {
+  await page.evaluate((flavors) => {
+    const dataTransfer = new DataTransfer();
+    for (const [type, text] of flavors) dataTransfer.setData(type, text);
+    const event = new Event("paste", { bubbles: true, cancelable: true });
+    Object.defineProperty(event, "clipboardData", { value: dataTransfer });
+    window.dispatchEvent(event);
+  }, flavors);
+}
+
+async function dispatchTextDrop(page, selector, name, text) {
+  await page.locator(selector).evaluate((element, payload) => {
+    const file = new File([payload.text], payload.name, { type: "text/plain" });
+    const dataTransfer = new DataTransfer();
+    dataTransfer.items.add(file);
+    const event = new DragEvent("drop", {
+      bubbles: true,
+      cancelable: true,
+      dataTransfer,
+    });
+    element.dispatchEvent(event);
+  }, { name, text });
+}
+
 async function dispatchMixedPaste(page, text = "hello mixed world") {
   await page.evaluate((payload) => {
     const bytes = Uint8Array.from(atob(payload.base64), (char) => char.charCodeAt(0));
@@ -335,6 +359,45 @@ test("supprime une image depuis la carte", async ({ page }) => {  await openApp(
   expect(payload.images.some(i => i.filename === filename)).toBe(false);
 });
 
+test("ne réaffiche pas une image supprimée après un refresh périmé", async ({ page }) => {
+  await openApp(page);
+  const defaultZone = page.locator('[data-zone="default"]');
+  await defaultZone.getByRole("button", { name: "Select zone Default" }).click();
+  await dispatchPaste(page);
+  await expect(defaultZone.locator(".latest")).toBeVisible();
+
+  let releaseRefresh;
+  let refreshCaptured;
+  const refreshReady = new Promise((resolve) => { refreshCaptured = resolve; });
+  await page.route("**/api/zones/default/images", async (route) => {
+    if (route.request().method() !== "GET" || releaseRefresh) {
+      await route.continue();
+      return;
+    }
+    const response = await route.fetch();
+    const body = await response.body();
+    refreshCaptured();
+    await new Promise((resolve) => { releaseRefresh = resolve; });
+    try {
+      await route.fulfill({ response, body });
+    } catch (_) {
+      // The browser may have aborted this deliberately stale response.
+    }
+  });
+  await page.evaluate(() => document.dispatchEvent(new Event("visibilitychange")));
+  await refreshReady;
+
+  const filename = await defaultZone.locator(".fname").textContent();
+  page.on("dialog", (dialog) => dialog.accept());
+  await defaultZone.getByRole("button", { name: "Delete this image from the disk" }).click();
+  await expect(defaultZone.locator(".latest")).toHaveCount(0);
+  releaseRefresh();
+  await expect.poll(() => defaultZone.locator(".latest").count()).toBe(0);
+  const responseAfterDelete = await page.request.get("/api/zones/default/images");
+  const payload = await responseAfterDelete.json();
+  expect(payload.images.some((item) => item.filename === filename)).toBe(false);
+});
+
 test("colle du texte et l'affiche", async ({ page }) => {
   await openApp(page);
   const defaultZone = page.locator('[data-zone="default"]');
@@ -366,6 +429,42 @@ test("colle du texte et l'affiche", async ({ page }) => {
   await page.getByRole("button", { name: "Close" }).click();
 });
 
+test("prefere text plain a html dans un presse-papiers mixte", async ({ page }) => {
+  await openApp(page);
+  const defaultZone = page.locator('[data-zone="default"]');
+  await defaultZone.getByRole("button", { name: "Select zone Default" }).click();
+
+  await dispatchTextPasteFlavors(page, [
+    ["text/html", "<p>html value</p>"],
+    ["text/plain", "plain value"],
+  ]);
+
+  await expect(defaultZone.locator(".fname")).toHaveText(/\.txt$/);
+  const filename = await defaultZone.locator(".fname").textContent();
+  const response = await page.request.get(
+    `/previews/default/${encodeURIComponent(filename)}`,
+  );
+  expect(await response.text()).toBe("plain value");
+});
+
+test("ignore un text plain vide si le html contient du contenu", async ({ page }) => {
+  await openApp(page);
+  const defaultZone = page.locator('[data-zone="default"]');
+  await defaultZone.getByRole("button", { name: "Select zone Default" }).click();
+
+  await dispatchTextPasteFlavors(page, [
+    ["text/plain", ""],
+    ["text/html", "<p>html value</p>"],
+  ]);
+
+  await expect(defaultZone.locator(".fname")).toHaveText(/\.html$/);
+  const filename = await defaultZone.locator(".fname").textContent();
+  const response = await page.request.get(
+    `/previews/default/${encodeURIComponent(filename)}`,
+  );
+  expect(await response.text()).toBe("<p>html value</p>");
+});
+
 test("colle un presse-papiers mixte en un seul document html", async ({ page }) => {
   await openApp(page);
   const defaultZone = page.locator('[data-zone="default"]');
@@ -386,6 +485,26 @@ test("colle un presse-papiers mixte en un seul document html", async ({ page }) 
   const body = await response.text();
   expect(body).toContain("hello mixed world");
   expect(body).toContain("data:image/png;base64,");
+});
+
+test("supprime depuis l'aperçu dans la bonne zone si les noms sont identiques", async ({ page }) => {
+  await openApp(page);
+  const defaultZone = page.locator('[data-zone="default"]');
+  const secondary = page.locator('[data-zone="secondary"]');
+  const name = "duplicate.txt";
+
+  await dispatchTextDrop(page, '[data-zone="default"]', name, "default value");
+  await dispatchTextDrop(page, '[data-zone="secondary"]', name, "secondary value");
+  await expect(defaultZone.locator(".fname")).toHaveText(name);
+  await expect(secondary.locator(".fname")).toHaveText(name);
+
+  await secondary.locator(".file-box").click();
+  await expect(page.locator("#pv")).toBeVisible();
+  page.on("dialog", (dialog) => dialog.accept());
+  await page.locator("#pv-delete").click();
+
+  await expect(secondary.locator(".latest")).toHaveCount(0);
+  await expect(defaultZone.locator(".fname")).toHaveText(name);
 });
 
 test("colle une image avec un texte vide comme image simple", async ({ page }) => {

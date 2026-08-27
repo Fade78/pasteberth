@@ -125,6 +125,29 @@ class TestConfigurationProxyParDefaut(Base):
         self.assertEqual(json_of(body), {"ok": True})
 
 
+class TestProxySpoofingParDefaut(Base):
+    auth = True
+    password = PASSWORD
+    config_kwargs = {"trusted_proxies": None}
+
+    def test_xff_ne_change_pas_la_cle_de_limitation_sans_proxy_declare(self):
+        statuses = []
+        for index in range(6):
+            status, _, _ = self.req(
+                "POST",
+                "/login",
+                body=b"password=incorrect",
+                headers={
+                    "Content-Type": "application/x-www-form-urlencoded",
+                    "X-Forwarded-For": f"203.0.113.{index + 1}",
+                },
+                cookie=None,
+            )
+            statuses.append(status)
+        self.assertEqual(statuses[:5], [401] * 5)
+        self.assertEqual(statuses[5], 429)
+
+
 class TestModeAnonymeLoopback(Base):
     auth = False
 
@@ -152,6 +175,21 @@ class TestModeAnonymeLoopback(Base):
         self.assertEqual(data, png)
         self.assertEqual(headers["content-type"], "image/png")
         self.assertEqual(headers["cache-control"], "no-store")
+
+    def test_hote_non_local_refuse_par_defaut(self):
+        body, ctype = build_multipart(data=make_png())
+        status, _, response = self.req(
+            "POST",
+            "/api/zones/default/images",
+            body=body,
+            headers={
+                "Host": "attacker.example",
+                "Origin": "http://attacker.example",
+                "Content-Type": ctype,
+            },
+        )
+        self.assertEqual(status, 403)
+        self.assertEqual(json_of(response)["error"]["code"], "forbidden_host")
 
 
 class TestAuthentification(Base):
@@ -433,6 +471,62 @@ class TestUploadsFormats(Base):
         self.assertEqual(status, 200)
         self.assertIn("attachment", headers.get("content-disposition", ""))
 
+    def test_preview_javascript_telechargee_en_piece_jointe(self):
+        status, item = self._upload_raw("default", b"alert(1)", "text/javascript")
+        self.assertEqual(status, 201)
+        status, headers, _ = self.req("GET", item["preview_url"])
+        self.assertEqual(status, 200)
+        self.assertIn("attachment", headers.get("content-disposition", ""))
+
+    def test_mime_sidecar_ne_peut_pas_injecter_un_entete(self):
+        status, item = self._upload_raw("default", b"hello", "text/plain")
+        self.assertEqual(status, 201)
+        sidecar = self.zones_dirs["default"] / (item["filename"] + ".json")
+        raw = json.loads(sidecar.read_text())
+        raw["mime"] = "text/plain\r\nX-Injected: yes"
+        sidecar.write_text(json.dumps(raw))
+
+        status, headers, _ = self.req("GET", item["preview_url"])
+        self.assertEqual(status, 404)
+        self.assertNotIn("x-injected", headers)
+
+    def test_mime_multipart_invalide_refuse_avant_ecriture(self):
+        body, ctype = build_multipart(
+            filename="bad.txt",
+            data=b"hello",
+            content_type="text/plain,evil",
+            extra_fields={"preserve_name": "1"},
+        )
+        status, _, response = self.req(
+            "POST",
+            "/api/zones/default/images",
+            body=body,
+            headers={"Content-Type": ctype},
+        )
+        self.assertEqual(status, 415)
+        self.assertEqual(json_of(response)["error"]["code"], "unsupported_media_type")
+
+    def test_mime_syntax_trop_longue_refuse_avant_ecriture(self):
+        before = {path.name for path in self.zones_dirs["default"].iterdir()}
+        body, ctype = build_multipart(
+            filename="long.txt",
+            data=b"hello",
+            content_type="text/" + "a" * 121,
+            extra_fields={"preserve_name": "1"},
+        )
+        status, _, response = self.req(
+            "POST",
+            "/api/zones/default/images",
+            body=body,
+            headers={"Content-Type": ctype},
+        )
+        self.assertEqual(status, 415)
+        self.assertEqual(json_of(response)["error"]["code"], "unsupported_media_type")
+        self.assertEqual(
+            {path.name for path in self.zones_dirs["default"].iterdir()},
+            before,
+        )
+
     def test_nom_du_fichier_glisse_et_ecrasement(self):
         def upload(data):
             body, ctype = build_multipart(
@@ -600,7 +694,7 @@ class TestRejetsUploads(Base):
 
     def test_espace_disque_insuffisant(self):
         usage = type("Usage", (), {"f_blocks": 1000, "f_bavail": 1, "f_frsize": 1024})()
-        with mock.patch("pasteberth.storage.os.statvfs", return_value=usage):
+        with mock.patch("pasteberth.storage.os.fstatvfs", return_value=usage):
             status_code, _, body = self.req(
                 "POST",
                 "/api/zones/default/images",
@@ -844,6 +938,7 @@ class TestPersistenceRestart(Base):
 class TestOriginCSRF(Base):
     auth = True
     password = PASSWORD
+    config_kwargs = {"allowed_hosts": "[]"}
 
     def _post(self, origin_header=None):
         body, ctype = build_multipart(data=make_png())
@@ -1018,6 +1113,35 @@ class TestAllowedHosts(Base):
             },
         )
         self.assertEqual(status, 403)
+
+    def test_hote_hors_liste_refuse_aussi_les_get(self):
+        status, _, body = self.req(
+            "GET",
+            "/api/health",
+            headers={"Host": "attacker.example"},
+        )
+        self.assertEqual(status, 403)
+        self.assertEqual(json_of(body)["error"]["code"], "forbidden_host")
+
+    def test_hote_hors_liste_refuse_les_methodes_inconnues(self):
+        for method in ("HEAD", "TRACE", "CONNECT"):
+            with self.subTest(method=method):
+                status, _, body = self.req(
+                    method,
+                    "/api/health",
+                    headers={"Host": "attacker.example"},
+                )
+                self.assertEqual(status, 403)
+                if body:
+                    self.assertIn(b"forbidden_host", body)
+
+    def test_suffixe_de_controle_dans_la_route_est_refuse(self):
+        status, _, _ = self.req(
+            "GET",
+            "/api/health%0a",
+            headers={"Host": "pasteberth.example"},
+        )
+        self.assertEqual(status, 400)
 
 
 class TestRequestFraming(Base):

@@ -12,17 +12,22 @@ import base64
 import hashlib
 import hmac
 import os
+import stat
 import secrets
-import tempfile
 import threading
 import time
 from pathlib import Path
+
+from pasteberth.paths import open_directory
 
 SCRYPT_N = 2**14
 SCRYPT_R = 8
 SCRYPT_P = 1
 _DKLEN = 32
 _MAXMEM = 64 * 1024 * 1024
+_MAX_PASSWORD_FILE_BYTES = 16 * 1024
+_O_NOFOLLOW = getattr(os, "O_NOFOLLOW", 0)
+_O_NONBLOCK = getattr(os, "O_NONBLOCK", 0)
 
 
 # ---------------------------------------------------------------- passwords
@@ -100,42 +105,87 @@ def valid_password_hash(stored: str | None) -> bool:
 def load_password_hash(path: Path) -> str | None:
     """Lit le fichier ``passwd`` (première ligne). Rechargé à chaque essai :
     un changement via `pasteberth passwd` est effectif sans redémarrage."""
+    path = Path(path)
+    if not path.is_absolute():
+        path = Path.cwd() / path
+    parent_fd = -1
+    fd = -1
     try:
-        stat_result = path.lstat()
-        if not stat_result or not path.is_file() or path.is_symlink():
+        parent_fd = open_directory(path.parent)
+        fd = os.open(
+            path.name,
+            os.O_RDONLY | _O_NOFOLLOW | _O_NONBLOCK,
+            dir_fd=parent_fd,
+        )
+        stat_result = os.fstat(fd)
+        if not stat.S_ISREG(stat_result.st_mode):
             raise RuntimeError(f"fichier passwd non régulier : {path}")
         if stat_result.st_mode & 0o077:
             raise RuntimeError(f"permissions trop ouvertes sur {path} (0600 requis)")
-        raw = path.read_text(encoding="utf-8").strip()
+        uid = getattr(os, "getuid", lambda: stat_result.st_uid)()
+        if stat_result.st_uid != uid:
+            raise RuntimeError(f"fichier passwd non détenu par le processus : {path}")
+        with os.fdopen(fd, "rb") as fh:
+            fd = -1
+            encoded = fh.read(_MAX_PASSWORD_FILE_BYTES + 1)
+        if len(encoded) > _MAX_PASSWORD_FILE_BYTES:
+            raise RuntimeError(f"fichier passwd trop volumineux : {path}")
+        raw = encoded.decode("utf-8").strip()
     except FileNotFoundError:
         return None
-    except (OSError, UnicodeError) as exc:
+    except RuntimeError:
+        raise
+    except (OSError, ValueError, UnicodeError) as exc:
         raise RuntimeError(f"lecture impossible de {path} : {exc}") from exc
+    finally:
+        if fd >= 0:
+            try:
+                os.close(fd)
+            except OSError:
+                pass
+        if parent_fd >= 0:
+            try:
+                os.close(parent_fd)
+            except OSError:
+                pass
     return raw.splitlines()[0] if raw else None
 
 
 def save_password_hash(path: Path, password_hash: str) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    fd, tmp_name = tempfile.mkstemp(dir=path.parent, prefix=".passwd-", suffix=".tmp")
+    path = Path(path)
+    if not path.is_absolute():
+        path = Path.cwd() / path
+    parent_fd = open_directory(path.parent, create=True, mode=0o700)
+    temp_name = f".passwd-{secrets.token_hex(12)}.tmp"
+    fd = -1
     try:
+        fd = os.open(
+            temp_name,
+            os.O_WRONLY | os.O_CREAT | os.O_EXCL | _O_NOFOLLOW,
+            0o600,
+            dir_fd=parent_fd,
+        )
         os.fchmod(fd, 0o600)
         with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fd = -1
             fh.write(password_hash + "\n")
             fh.flush()
             os.fsync(fh.fileno())
-        os.replace(tmp_name, path)
-        os.chmod(path, 0o600)
-        dir_fd = os.open(path.parent, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
-        try:
-            os.fsync(dir_fd)
-        finally:
-            os.close(dir_fd)
+        os.rename(temp_name, path.name, src_dir_fd=parent_fd, dst_dir_fd=parent_fd)
+        os.fsync(parent_fd)
     except BaseException:
+        if fd >= 0:
+            try:
+                os.close(fd)
+            except OSError:
+                pass
         try:
-            os.unlink(tmp_name)
+            os.unlink(temp_name, dir_fd=parent_fd)
         except OSError:
             pass
         raise
+    finally:
+        os.close(parent_fd)
 
 
 # ----------------------------------------------------------------- sessions

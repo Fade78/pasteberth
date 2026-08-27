@@ -5,6 +5,7 @@ import threading
 import time
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from pasteberth.server import PasteberthServer
 
@@ -12,6 +13,17 @@ from tests.helpers import LiveServer, write_config
 
 
 class TestCycleDeVieServeur(unittest.TestCase):
+    def test_nom_hote_est_resolu_avant_le_bind(self):
+        resolved = [
+            (socket.AF_INET, socket.SOCK_STREAM, socket.IPPROTO_TCP, "", ("127.0.0.1", 0))
+        ]
+        with mock.patch("pasteberth.server.socket.getaddrinfo", return_value=resolved):
+            server = PasteberthServer(("pasteberth.test", 0), object)
+        try:
+            self.assertEqual(server.server_address[0], "127.0.0.1")
+        finally:
+            server.server_close()
+
     def test_arret_attend_les_handlers_actifs(self):
         self.assertFalse(PasteberthServer.daemon_threads)
         self.assertTrue(PasteberthServer.block_on_close)

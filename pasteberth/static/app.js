@@ -22,6 +22,8 @@
 
   let refreshGeneration = 0;
   let activeRefreshController = null;
+  let previewGeneration = 0;
+  let activePreviewController = null;
 
   const grid = document.getElementById("grid");
   const statusEl = document.getElementById("status");
@@ -548,6 +550,10 @@
     return zone.images.find(item => item.id === itemId) || selectedItem(zone);
   }
 
+  function zoneForControl(control) {
+    return control.closest(".zone")?.dataset.zone || null;
+  }
+
   function itemMeta(item) {
     const meta = document.createElement("div");
     meta.className = "meta";
@@ -855,6 +861,8 @@
 
   async function deleteImage(zoneId, filename) {
     if (!window.confirm(`Delete ${filename} from the disk?`)) return;
+    refreshGeneration += 1;
+    if (activeRefreshController) activeRefreshController.abort();
     try {
       await api(`/api/zones/${encodeURIComponent(zoneId)}/images/${encodeURIComponent(filename)}`,
         { method: "DELETE" });
@@ -902,17 +910,33 @@
       upload(zoneId, file);
       return;
     }
-    // Texte : on garde l'identité du clipboard (text/plain, text/html, …).
-    const textItem = [...items].find(i => i.kind === "string");
-    if (textItem) {
+    // Texte : préférer le texte brut, mais ne pas laisser un flavor vide
+    // masquer un autre flavor réellement exploitable.
+    const textItems = [...items].filter(i => i.kind === "string");
+    const orderedTextItems = [
+      ...textItems.filter(i => i.kind === "string" && i.type === "text/plain"),
+      ...textItems.filter(i => i.type !== "text/plain"),
+    ];
+    if (orderedTextItems.length) {
       event.preventDefault();
       const zoneId = requireActiveZone();
       if (!zoneId) return;
-      textItem.getAsString((text) => {
-        if (!text) return;
-        const blob = new Blob([text], { type: textItem.type || "text/plain" });
-        upload(zoneId, blob);
-      });
+      const uploadText = (index) => {
+        const textItem = orderedTextItems[index];
+        if (!textItem) {
+          toast("The clipboard does not contain an image or text");
+          return;
+        }
+        textItem.getAsString((text) => {
+          if (typeof text !== "string" || text.length === 0) {
+            uploadText(index + 1);
+            return;
+          }
+          const blob = new Blob([text], { type: textItem.type || "text/plain" });
+          upload(zoneId, blob);
+        });
+      };
+      uploadText(0);
       return;
     }
     toast("The clipboard does not contain an image or text");
@@ -942,8 +966,10 @@
     const zoomBtn = event.target.closest(".zoom-btn");
     if (zoomBtn && zoomBtn.dataset.preview) {
       const item = itemForControl(zoomBtn);
-      if (item && item.kind === "image") openPreview(item.preview_url, item.reference, item.filename);
-      else if (item) openContentPreview(item);
+      const zoneId = zoneForControl(zoomBtn);
+      if (item && item.kind === "image") {
+        openPreview(item.preview_url, item.reference, item.filename, zoneId);
+      } else if (item) openContentPreview(item, zoneId);
       return;
     }
     const deleteBtn = event.target.closest(".delete-btn");
@@ -961,14 +987,16 @@
     const bigThumb = event.target.closest(".thumb-big");
     if (bigThumb) {
       const item = itemForControl(bigThumb);
-      if (item && item.kind === "image") openPreview(item.preview_url, item.reference, item.filename);
-      else if (item) openContentPreview(item);
+      const zoneId = zoneForControl(bigThumb);
+      if (item && item.kind === "image") {
+        openPreview(item.preview_url, item.reference, item.filename, zoneId);
+      } else if (item) openContentPreview(item, zoneId);
       return;
     }
     const fileBox = event.target.closest(".file-box");
     if (fileBox) {
       const item = itemForControl(fileBox);
-      if (item) openContentPreview(item);
+      if (item) openContentPreview(item, zoneForControl(fileBox));
       return;
     }
     const zoneCard = event.target.closest(".zone");
@@ -981,15 +1009,17 @@
     if (bigThumb) {
       event.preventDefault();
       const item = itemForControl(bigThumb);
-      if (item && item.kind === "image") openPreview(item.preview_url, item.reference, item.filename);
-      else if (item) openContentPreview(item);
+      const zoneId = zoneForControl(bigThumb);
+      if (item && item.kind === "image") {
+        openPreview(item.preview_url, item.reference, item.filename, zoneId);
+      } else if (item) openContentPreview(item, zoneId);
       return;
     }
     const fileBox = event.target.closest(".file-box");
     if (fileBox) {
       event.preventDefault();
       const item = itemForControl(fileBox);
-      if (item) openContentPreview(item);
+      if (item) openContentPreview(item, zoneForControl(fileBox));
       return;
     }
     const zoneSelect = event.target.closest(".zone-select");
@@ -1041,7 +1071,17 @@
     pvCopyImage.setAttribute("aria-label", `${label} to the clipboard`);
   }
 
-  function openPreview(url, reference, filename) {
+  function invalidatePreviewLoad() {
+    previewGeneration += 1;
+    if (activePreviewController) {
+      activePreviewController.abort();
+      activePreviewController = null;
+    }
+    return previewGeneration;
+  }
+
+  function openPreview(url, reference, filename, zoneId) {
+    invalidatePreviewLoad();
     const storedFilename = filename || decodeURIComponent(url.split("/").pop());
     setPreviewSource(pvImg, url);
     pvImg.hidden = false;
@@ -1054,6 +1094,8 @@
     pvDownload.dataset.filename = storedFilename;
     pvCopyImage.dataset.preview = url;
     pvCopyImage.dataset.kind = "image";
+    pvCopyImage.dataset.mime = "image/png";
+    pvDelete.dataset.zone = zoneId || "";
     pvDelete.dataset.filename = storedFilename;
     if (typeof pv.showModal === "function") pv.showModal();
     else pv.setAttribute("open", "");
@@ -1067,22 +1109,28 @@
     else pv.setAttribute("open", "");
   }
 
-  async function openContentPreview(item) {
+  async function openContentPreview(item, zoneId) {
+    const generation = invalidatePreviewLoad();
+    setPreviewSource(pvImg, "");
     setPreviewCopyLabel(item.kind);
     pvRef.textContent = item.reference;
     pvDownload.textContent = downloadLabel(item.filename);
     pvDownload.setAttribute("aria-label", downloadLabel(item.filename));
     pvDownload.dataset.preview = item.preview_url;
     pvDownload.dataset.filename = item.filename;
+    pvDelete.dataset.zone = zoneId || "";
     pvDelete.dataset.filename = item.filename;
     pvCopyImage.dataset.preview = item.preview_url;
     pvCopyImage.dataset.kind = item.kind;
     pvCopyImage.dataset.mime = item.mime || "";
     if (item.kind === "text") {
+      const controller = new AbortController();
+      activePreviewController = controller;
       try {
         const response = await fetchPreview(item.preview_url, {
           credentials: "same-origin",
           headers: { Accept: "text/plain" },
+          signal: controller.signal,
         });
         if (!response.ok) throw new Error("preview unavailable");
         let text = await response.text();
@@ -1091,9 +1139,14 @@
           const doc = new DOMParser().parseFromString(text, "text/html");
           text = ((doc.body && doc.body.textContent) || "").trim();
         }
+        if (generation !== previewGeneration) return;
         openTextPreview(text);
-      } catch (_) {
+      } catch (err) {
+        if (err && err.name === "AbortError") return;
+        if (generation !== previewGeneration) return;
         toast("Could not load the text preview", "error");
+      } finally {
+        if (activePreviewController === controller) activePreviewController = null;
       }
       return;
     }
@@ -1101,6 +1154,7 @@
     downloadContent(item.preview_url, item.filename);
   }
   function closePreview() {
+    invalidatePreviewLoad();
     if (typeof pv.close === "function") pv.close();
     else {
       pv.removeAttribute("open");
@@ -1112,10 +1166,14 @@
   pvDownload.addEventListener("click", () => downloadContent(pvDownload.dataset.preview, pvDownload.dataset.filename));
   pvClear.addEventListener("click", clearClipboard);
   pvDelete.addEventListener("click", () => {
-    const zoneId = state.zones.find(z => z.images.some(i => i.id === pvDelete.dataset.filename));
-    if (zoneId) {
+    const zoneId = pvDelete.dataset.zone;
+    const filename = pvDelete.dataset.filename;
+    const zone = state.zones.find(
+      z => z.id === zoneId && z.images.some(i => i.id === filename),
+    );
+    if (zone) {
       closePreview();
-      deleteImage(zoneId.id, pvDelete.dataset.filename);
+      deleteImage(zone.id, filename);
     }
   });
   document.getElementById("pv-close").addEventListener("click", closePreview);
@@ -1124,6 +1182,7 @@
     setPreviewSource(pvImg, "");
     pvText.hidden = true;
     pvImg.hidden = false;
+    delete pvDelete.dataset.zone;
   });
 
   document.addEventListener("visibilitychange", () => {

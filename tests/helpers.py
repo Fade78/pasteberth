@@ -88,7 +88,7 @@ def make_webp_lossy(width: int = 8, height: int = 6) -> bytes:
 
 
 def make_webp_vp8x(width: int = 300, height: int = 200, with_payload: bool = True) -> bytes:
-    payload = bytes([0x10, 0, 0, 0])  # flag alpha + octets réservés
+    payload = bytes([0x00, 0, 0, 0])  # image statique, octets réservés nuls
     payload += (width - 1).to_bytes(3, "little") + (height - 1).to_bytes(3, "little")
     chunks = b"VP8X" + struct.pack("<I", len(payload)) + payload
     if with_payload:

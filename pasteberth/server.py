@@ -20,16 +20,28 @@ def create_tls_context(certificate, private_key) -> ssl.SSLContext:
     return context
 
 
-def address_family_for(host: str) -> int:
-    """Retourne la famille d'adresse correspondant à l'écoute demandée."""
+def _resolve_bind_address(host: str, port: int) -> tuple[int, tuple]:
+    """Résout une adresse une seule fois avant de créer la socket d'écoute."""
     try:
         address = ipaddress.ip_address(host)
     except ValueError:
-        infos = socket.getaddrinfo(host, None, type=socket.SOCK_STREAM)
+        infos = socket.getaddrinfo(
+            host,
+            port,
+            type=socket.SOCK_STREAM,
+            proto=socket.IPPROTO_TCP,
+        )
         if not infos:
             raise OSError(f"adresse d'écoute introuvable : {host}")
-        return infos[0][0]
-    return socket.AF_INET6 if address.version == 6 else socket.AF_INET
+        family, _, _, _, sockaddr = infos[0]
+        return family, sockaddr
+    family = socket.AF_INET6 if address.version == 6 else socket.AF_INET
+    return family, (host, port)
+
+
+def address_family_for(host: str) -> int:
+    """Retourne la famille d'adresse correspondant à l'écoute demandée."""
+    return _resolve_bind_address(host, 0)[0]
 
 
 class PasteberthServer(ThreadingHTTPServer):
@@ -41,9 +53,11 @@ class PasteberthServer(ThreadingHTTPServer):
     max_active_requests = 64
 
     def __init__(self, server_address, handler_class, bind_and_activate=True, tls_context=None):
-        self.address_family = address_family_for(server_address[0])
+        self.address_family, resolved_address = _resolve_bind_address(
+            server_address[0], server_address[1]
+        )
         self.tls_context = tls_context
-        super().__init__(server_address, handler_class, bind_and_activate)
+        super().__init__(resolved_address, handler_class, bind_and_activate)
         self._request_slots = threading.BoundedSemaphore(self.max_active_requests)
         self._active_sockets: set[socket.socket] = set()
         self._sockets_lock = threading.Lock()
@@ -110,8 +124,25 @@ class PasteberthServer(ThreadingHTTPServer):
         super().server_close()
 
 
-def serve_forever(handler_class, listen_address: str, port: int, tls_context=None) -> None:
+def serve_forever(
+    handler_class,
+    listen_address: str,
+    port: int,
+    tls_context=None,
+    *,
+    expected_loopback: bool | None = None,
+) -> None:
     server = PasteberthServer((listen_address, port), handler_class, tls_context=tls_context)
+    if expected_loopback is True:
+        try:
+            bound_loopback = ipaddress.ip_address(server.server_address[0]).is_loopback
+        except ValueError:
+            bound_loopback = False
+        if not bound_loopback:
+            server.server_close()
+            raise OSError(
+                f"adresse effectivement liée non locale : {server.server_address[0]}"
+            )
 
     def _shutdown(signum, _frame) -> None:
         log.info("signal %s reçu, arrêt…", signal.Signals(signum).name)

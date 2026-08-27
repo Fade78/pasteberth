@@ -3,6 +3,7 @@ import tempfile
 import unittest
 import os
 import stat
+from dataclasses import replace
 from pathlib import Path
 
 from pasteberth.config import (
@@ -76,6 +77,7 @@ class TestParsing(unittest.TestCase):
         self.assertEqual(cfg.port, 8765)
         self.assertEqual(cfg.max_upload_bytes, 20 * 1024 * 1024)
         self.assertFalse(cfg.auth.enabled)
+        self.assertEqual(cfg.allowed_hosts, ("localhost", "127.0.0.1", "::1"))
         self.assertEqual(set(cfg.zones), {"default", "secondary"})
         self.assertEqual(cfg.zones["default"].reference_prefix, "@")
         self.assertEqual(cfg.zones["default"].reference_suffix, "")
@@ -121,6 +123,10 @@ class TestParsing(unittest.TestCase):
         with self.assertRaises(ConfigError):
             make_cfg(self.tmp, allowed_hosts='["https://pasteberth.example"]')
 
+    def test_allowed_hosts_wildcard_doit_etre_explicite(self):
+        cfg = make_cfg(self.tmp, allowed_hosts="[]")
+        self.assertEqual(cfg.allowed_hosts, ())
+
     def test_defauts_reels_auth_et_proxy(self):
         path = self.tmp / "minimal.toml"
         path.write_text(
@@ -132,8 +138,7 @@ class TestParsing(unittest.TestCase):
         )
         cfg = load_config(path)
         self.assertTrue(cfg.auth.enabled)
-        self.assertEqual(str(cfg.trusted_proxies[0]), "127.0.0.1/32")
-        self.assertEqual(str(cfg.trusted_proxies[1]), "::1/128")
+        self.assertEqual(cfg.trusted_proxies, ())
 
     def test_fichier_passwd_configurable(self):
         password_file = self.tmp / "secrets" / "passwd"
@@ -148,6 +153,14 @@ class TestParsing(unittest.TestCase):
     def test_fichier_passwd_doit_etre_absolu(self):
         with self.assertRaisesRegex(ConfigError, "password_file"):
             make_cfg(self.tmp, password_file="secrets/passwd")
+
+    def test_fichier_passwd_nul_refuse(self):
+        with self.assertRaisesRegex(ConfigError, "NUL"):
+            make_cfg(self.tmp, password_file=str(self.tmp / "passwd\\u0000bad"))
+
+    def test_chemin_config_nul_retourne_une_erreur(self):
+        with self.assertRaises(ConfigError):
+            load_config(Path(str(self.tmp / "config.toml") + "\x00bad"))
 
     def test_zones_chargees(self):
         zones = [
@@ -311,6 +324,7 @@ class TestChemins(unittest.TestCase):
         self.assertTrue(cfg.using_default_config)
         self.assertFalse(cfg.auth.enabled)
         self.assertTrue(cfg.allow_unauthenticated_local)
+        self.assertEqual(cfg.allowed_hosts, ("localhost", "127.0.0.1", "::1"))
         self.assertEqual(set(cfg.zones), {"default"})
         self.assertEqual(cfg.zones["default"].directory, default_storage_path())
 
@@ -364,6 +378,13 @@ class TestRepertoires(unittest.TestCase):
             write_config(self.tmp, zones=[{"id": "x", "directory": str(link / "images")}])
         )
         with self.assertRaisesRegex(ConfigError, "lien symbolique"):
+            prepare_directories(cfg)
+
+    def test_chemin_nul_retourne_une_erreur_de_configuration(self):
+        cfg = make_cfg(self.tmp)
+        zone = replace(cfg.zones["default"], directory=Path(str(self.tmp / "bad") + "\x00zone"))
+        cfg = replace(cfg, zones={"default": zone})
+        with self.assertRaises(ConfigError):
             prepare_directories(cfg)
 
 

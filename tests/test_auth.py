@@ -2,6 +2,7 @@
 import tempfile
 import time
 import unittest
+import os
 from pathlib import Path
 
 from pasteberth.auth import (
@@ -51,6 +52,26 @@ class TestHash(unittest.TestCase):
             path.chmod(0o600)
             with self.assertRaises(RuntimeError):
                 load_password_hash(path)
+
+    def test_fichier_passwd_fifo_ne_bloque_pas(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "passwd"
+            try:
+                os.mkfifo(path, 0o600)
+            except (AttributeError, NotImplementedError, OSError):
+                self.skipTest("FIFO indisponible")
+            with self.assertRaises(RuntimeError):
+                load_password_hash(path)
+
+    def test_parent_symbolique_refuse(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            real = root / "real"
+            real.mkdir()
+            link = root / "link"
+            link.symlink_to(real, target_is_directory=True)
+            with self.assertRaises(OSError):
+                save_password_hash(link / "passwd", hash_password(PASSWORD))
 
     def test_changement_corrige_un_mode_trop_ouvert(self):
         with tempfile.TemporaryDirectory() as tmp:
