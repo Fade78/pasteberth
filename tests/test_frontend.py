@@ -145,7 +145,7 @@ class TestContratsFrontend(unittest.TestCase):
         self.assertIn("Link NOT copied", self.app_js)
 
     def test_mode_compact(self):
-        self.assertIn("@media (max-width: 480px)", self.style_css)
+        self.assertIn("@media (max-width: 600px)", self.style_css)
         self.assertIn(".file-box", self.style_css)
 
     def test_version_dans_le_branding(self):

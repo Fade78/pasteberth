@@ -99,6 +99,7 @@ code, kbd {
   background: linear-gradient(180deg, rgba(255,255,255,0.02), transparent 55%), var(--bg);
   border: 1px solid var(--line);
   border-radius: var(--radius);
+  min-width: 0;
   min-height: 300px;
   padding: 12px 14px 14px;
   display: flex;
@@ -557,7 +558,7 @@ kbd {
 
 /* Mode compact : les zones deviennent des bandes de couleur étroites,
    toujours visibles, avec un bouton pour coller dedans. */
-@media (max-width: 480px) {
+@media (max-width: 600px) {
   .grid {
     grid-template-columns: 1fr;
     gap: 8px;

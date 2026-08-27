@@ -151,6 +151,22 @@ test("charge les zones et expose une sélection clavier accessible", async ({ pa
   await expect(defaultZone).not.toHaveClass(/active/);
 });
 
+test("passe en mode compact à 500px", async ({ page }) => {
+  await page.setViewportSize({ width: 500, height: 525 });
+  await openApp(page);
+
+  await page.getByRole("button", { name: "Select zone Default" }).click();
+  await dispatchPaste(page);
+  await expect(page.locator('[data-zone="default"] .latest')).toBeVisible();
+  await expect(page.locator(".grid")).toHaveCSS("gap", "8px");
+  await expect(page.locator(".zone").first()).toHaveCSS("min-height", "0px");
+  const widths = await page.evaluate(() => ({
+    client: document.documentElement.clientWidth,
+    scroll: document.documentElement.scrollWidth,
+  }));
+  expect(widths.scroll).toBe(widths.client);
+});
+
 test("refuse un collage sans zone active", async ({ page }) => {
   await openApp(page);
   const before = await page.locator(".latest").count();
