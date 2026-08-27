@@ -124,6 +124,15 @@ class TestConfigurationProxyParDefaut(Base):
         self.assertEqual(status, 200)
         self.assertEqual(json_of(body), {"ok": True})
 
+    def test_host_distant_accepte_sans_allowlist_configuree(self):
+        status, _, body = self.req(
+            "GET",
+            "/api/health",
+            headers={"Host": "remote-station.example"},
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(json_of(body), {"ok": True})
+
 
 class TestProxySpoofingParDefaut(Base):
     auth = True
@@ -175,22 +184,6 @@ class TestModeAnonymeLoopback(Base):
         self.assertEqual(data, png)
         self.assertEqual(headers["content-type"], "image/png")
         self.assertEqual(headers["cache-control"], "no-store")
-
-    def test_hote_non_local_refuse_par_defaut(self):
-        body, ctype = build_multipart(data=make_png())
-        status, _, response = self.req(
-            "POST",
-            "/api/zones/default/images",
-            body=body,
-            headers={
-                "Host": "attacker.example",
-                "Origin": "http://attacker.example",
-                "Content-Type": ctype,
-            },
-        )
-        self.assertEqual(status, 403)
-        self.assertEqual(json_of(response)["error"]["code"], "forbidden_host")
-
 
 class TestAuthentification(Base):
     auth = True

@@ -39,8 +39,6 @@ _LOG_LEVELS = {"DEBUG", "INFO", "WARNING", "ERROR"}
 DEFAULT_MAX_UPLOAD_BYTES = 20 * 1024**2
 MAX_UPLOAD_BYTES = 50 * 1024**2
 DEFAULT_MIN_FREE_PERCENT = 2.0
-_DEFAULT_ALLOWED_HOSTS = ("localhost", "127.0.0.1", "::1")
-
 _SIZE_UNITS = {
     "": 1,
     "B": 1,
@@ -431,11 +429,7 @@ def load_config(path: Path) -> Config:
         )
 
     trusted_proxies = _parse_trusted_proxies(data.get("trusted_proxies"), warnings)
-    allowed_hosts = (
-        _DEFAULT_ALLOWED_HOSTS
-        if "allowed_hosts" not in data
-        else _parse_allowed_hosts(data["allowed_hosts"])
-    )
+    allowed_hosts = _parse_allowed_hosts(data.get("allowed_hosts"))
     allow_unauth_local = _get_bool(
         data, "allow_unauthenticated_local", "config", default=False
     )
@@ -555,7 +549,7 @@ def build_default_config() -> Config:
         max_upload_bytes=DEFAULT_MAX_UPLOAD_BYTES,
         max_image_pixels=MAX_PIXELS,
         trusted_proxies=(),
-        allowed_hosts=_DEFAULT_ALLOWED_HOSTS,
+        allowed_hosts=(),
         allow_unauthenticated_local=True,
         allow_unauthenticated_remote=False,
         allow_insecure_http_remote=False,

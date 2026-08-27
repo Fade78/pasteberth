@@ -77,7 +77,7 @@ class TestParsing(unittest.TestCase):
         self.assertEqual(cfg.port, 8765)
         self.assertEqual(cfg.max_upload_bytes, 20 * 1024 * 1024)
         self.assertFalse(cfg.auth.enabled)
-        self.assertEqual(cfg.allowed_hosts, ("localhost", "127.0.0.1", "::1"))
+        self.assertEqual(cfg.allowed_hosts, ())
         self.assertEqual(set(cfg.zones), {"default", "secondary"})
         self.assertEqual(cfg.zones["default"].reference_prefix, "@")
         self.assertEqual(cfg.zones["default"].reference_suffix, "")
@@ -324,7 +324,7 @@ class TestChemins(unittest.TestCase):
         self.assertTrue(cfg.using_default_config)
         self.assertFalse(cfg.auth.enabled)
         self.assertTrue(cfg.allow_unauthenticated_local)
-        self.assertEqual(cfg.allowed_hosts, ("localhost", "127.0.0.1", "::1"))
+        self.assertEqual(cfg.allowed_hosts, ())
         self.assertEqual(set(cfg.zones), {"default"})
         self.assertEqual(cfg.zones["default"].directory, default_storage_path())
 

@@ -15,9 +15,8 @@ max_image_pixels = 25000000        # 25 MP default; absolute maximum 50 MP
 # Never include addresses reachable from the Internet.
 # Trust no forwarded headers by default; list only the actual reverse proxy IP.
 trusted_proxies = []
-# The local defaults accept only these hostnames. An explicit empty list is a
-# deliberate wildcard: any Host is accepted (Origin must still match Host).
-allowed_hosts = ["localhost", "127.0.0.1", "::1"]
+# Empty list = wildcard (Host check disabled); list hostnames to enforce it.
+allowed_hosts = []
 
 # Explicitly refuse non-loopback startup without authentication unless enabled:
 allow_unauthenticated_local = false  # including behind a reverse proxy

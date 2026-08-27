@@ -180,8 +180,8 @@ max_upload_size = "20MiB"
 max_image_pixels = 25000000
 # Trust no forwarded headers by default; list only the actual reverse proxy IP.
 trusted_proxies = []
-# Local defaults; use an explicit empty list only to opt into wildcard Host checks.
-allowed_hosts = ["localhost", "127.0.0.1", "::1"]
+# Empty list = wildcard (Host check disabled); list the public hostnames to enforce it.
+allowed_hosts = []
 allow_unauthenticated_local = false
 allow_unauthenticated_remote = false
 # Non-loopback HTTP is refused by default; use an HTTPS reverse proxy.

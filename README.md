@@ -34,7 +34,7 @@ capture ──▶ browser ── HTTPS ──▶ Pasteberth ──▶ captures/<
 The browser **never** needs to access the returned path. This is the path seen
 by the harness, on the machine where Pasteberth runs.
 
-The current version is `1.0.4`.
+The current version is `1.0.5`.
 
 ---
 
@@ -174,7 +174,7 @@ desired zones and paths. The file remains ignored by Git.
 | `accept_doc` | `true` | accept valid UTF-8 text content |
 | `accept_bin` | `true` | accept opaque binary content |
 | `trusted_proxies` | `[]` | only these peers may set `X-Forwarded-*`; configure the actual reverse proxy IPs explicitly |
-| `allowed_hosts` | `["localhost", "127.0.0.1", "::1"]` | hostnames accepted by Host/Origin checks; an explicit empty list opts into wildcard mode (audit warns) |
+| `allowed_hosts` | `[]` | hostnames accepted by Host/Origin checks; empty = wildcard (audit warns). List hostnames to enforce a strict allowlist |
 | `allow_unauthenticated_local` | `false` | explicit opt-in for anonymous loopback/proxy mode |
 | `allow_unauthenticated_remote` | `false` | explicit unlock (discouraged) |
 | `allow_insecure_http_remote` | `false` | separate opt-in for non-loopback HTTP (private network only) |
@@ -335,12 +335,11 @@ With a non-loopback listener, enable TLS or use an HTTPS reverse proxy. The
 `allow_insecure_http_remote = true` option should only be used on a controlled
 private network.
 
-By default `allowed_hosts` accepts only local hostnames. An explicit empty list
-disables the Host check (wildcard): any Host header is accepted, and the
-browser Origin must still match it. To enforce a strict allowlist, list the
-hostnames you expose (hostname only, without scheme, port, or path). The
-wildcard form is intended only as a deliberate opt-in and `pasteberth audit`
-warns while the list is empty:
+By default `allowed_hosts` is empty, which disables the Host check (wildcard):
+any Host header is accepted, and the browser Origin must still match it. To
+enforce a strict allowlist, list the hostnames you expose (hostname only,
+without scheme, port, or path) — `pasteberth audit` warns while the list is
+empty:
 
 ```toml
 listen_address = "127.0.0.1"
