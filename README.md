@@ -37,7 +37,7 @@ agent/script ── filesystem-drop ─────▶ captures/<zone>/ ──�
 The browser **never** needs to access the returned path. This is the path seen
 by the harness, on the machine where Pasteberth runs.
 
-The current version is `1.1.0`.
+The current version is `1.2.0`.
 
 ---
 
@@ -561,6 +561,14 @@ blindly retrying.
   it is never executed server-side. Full decode validation is a V2 candidate.
 - Retention under a per-zone lock: deterministic ordering, safe concurrent
   uploads (dedicated tests).
+
+## License
+
+Pasteberth is licensed under the **GNU Affero General Public License v3.0 or later** (AGPL-3.0-or-later).
+
+The full license text is available in [`LICENSE`](LICENSE) and at <https://www.gnu.org/licenses/agpl-3.0.html>.
+
+Key implication: if you run a modified version of Pasteberth on a publicly accessible server (including behind a reverse proxy), you must offer the corresponding source code to users of that server. See section 13 of the AGPL.
 
 ## Tests
 

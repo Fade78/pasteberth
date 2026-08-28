@@ -4,11 +4,11 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "pasteberth"
-version = "1.1.0"
+version = "1.2.0"
 description = "Clipboard-to-filesystem bridge for remote CLI/TUI harnesses (OpenCode and friends)"
 readme = "README.md"
 requires-python = ">=3.11"
-license = { text = "MIT" }
+license = { text = "AGPL-3.0-or-later" }
 authors = [{ name = "Pasteberth contributors" }]
 # No runtime dependencies: standard library only.
 dependencies = []
