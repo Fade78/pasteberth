@@ -1,8 +1,9 @@
 """Classification du contenu : image, texte ou binaire.
 
-Le serveur ne décode pas les pixels. Il vérifie les conteneurs complets et
-impose un budget de pixels pour les images ; le texte est validé UTF-8 ;
-tout le reste est traité comme binaire opaque (jamais interprété).
+Le serveur ne décode pas les pixels. Il vérifie les conteneurs image de façon
+bornée ; une signature image dont la validation échoue devient un binaire
+opaque (jamais prévisualisé). Le texte est validé UTF-8 ; tout le reste est
+également traité comme binaire opaque.
 """
 from __future__ import annotations
 
@@ -86,15 +87,26 @@ def classify(
     # 1. Image : la signature du contenu fait foi.
     for sig, fmt in _SIGNATURES:
         if data.startswith(sig):
-            info = inspect_image(data, max_pixels=max_pixels)
-            return ContentInfo(
-                kind="image",
-                ext=FORMATS[info.fmt][0],
-                mime=mime_for(info.fmt),
-                width=info.width,
-                height=info.height,
-                fmt=info.fmt,
-            )
+            try:
+                info = inspect_image(data, max_pixels=max_pixels)
+            except InvalidImageError:
+                # An image-looking upload that cannot pass the bounded
+                # structural check is still safe to retain as an attachment.
+                image_ext = safe_extension(filename_hint) or ".bin"
+                return ContentInfo(
+                    kind="binary",
+                    ext=image_ext,
+                    mime="application/octet-stream",
+                )
+            else:
+                return ContentInfo(
+                    kind="image",
+                    ext=FORMATS[info.fmt][0],
+                    mime=mime_for(info.fmt),
+                    width=info.width,
+                    height=info.height,
+                    fmt=info.fmt,
+                )
     # 2. Texte : déclaré texte OU contenu UTF-8 valide.
     declared = (declared_mime or "").split(";")[0].strip().lower()
     if declared.startswith("text/") or declared in (

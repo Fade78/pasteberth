@@ -868,6 +868,9 @@ def make_handler(cfg: Config, service: PasteService, sessions: SessionStore,
                     preserve_name = (
                         fields.get("preserve_name", (None, None, b""))[2].strip() == b"1"
                     )
+                    allow_replace = (
+                        fields.get("replace", (None, None, b""))[2].strip() == b"1"
+                    )
                 elif ctype.startswith("image/") or ctype.startswith("text/") or ctype in (
                     "application/octet-stream",
                     "application/json",
@@ -879,6 +882,7 @@ def make_handler(cfg: Config, service: PasteService, sessions: SessionStore,
                     filename_client = None
                     declared = ctype or "application/octet-stream"
                     preserve_name = False
+                    allow_replace = False
                 else:
                     self._error(415, "unsupported_media_type",
                                 f"Content-Type refusé : {ctype!r}")
@@ -889,6 +893,7 @@ def make_handler(cfg: Config, service: PasteService, sessions: SessionStore,
                     declared,
                     filename_client,
                     preserve_filename=preserve_name,
+                    allow_replace=allow_replace and preserve_name,
                 )
             except ServiceError as exc:
                 self._error(exc.status, exc.code, str(exc))

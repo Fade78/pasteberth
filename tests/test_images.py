@@ -252,6 +252,11 @@ class TestJpeg(unittest.TestCase):
         with self.assertRaises(InvalidImageError):
             inspect_image(data)
 
+    def test_trop_de_segments_rejete(self):
+        with mock.patch("pasteberth.images._MAX_JPEG_SEGMENTS", 2):
+            with self.assertRaises(InvalidImageError):
+                inspect_image(make_jpeg())
+
 
 class TestWebp(unittest.TestCase):
     def test_lossless_vp8l(self):
@@ -303,6 +308,11 @@ class TestWebp(unittest.TestCase):
         bad[24:27] = (301 - 1).to_bytes(3, "little")
         with self.assertRaises(InvalidImageError):
             inspect_image(bytes(bad))
+
+    def test_trop_de_chunks_rejete(self):
+        with mock.patch("pasteberth.images._MAX_WEBP_CHUNKS", 0):
+            with self.assertRaises(InvalidImageError):
+                inspect_image(make_webp_lossy())
 
 
 class TestRejets(unittest.TestCase):

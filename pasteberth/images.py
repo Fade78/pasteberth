@@ -1,8 +1,8 @@
-"""Validation structurelle des images : PNG, JPEG, WebP.
+"""Validation structurelle bornée des images : PNG, JPEG, WebP.
 
-Le serveur ne décode pas les pixels. Il vérifie toutefois les conteneurs
-complets et impose un budget de pixels afin de limiter les décodages côté
-navigateur/harness lors de l'affichage des previews.
+Le serveur ne décode pas les pixels ni les bitstreams codec. Il vérifie les
+conteneurs, les dimensions et les budgets nécessaires avant une preview côté
+navigateur/harness ; la classification décide ensuite du fallback binaire.
 """
 from __future__ import annotations
 
@@ -18,6 +18,8 @@ HARD_MAX_PIXELS = 50_000_000
 MAX_MIME_LENGTH = 120
 _MAX_PNG_RAW_BYTES = 256 * 1024 * 1024
 _MAX_PNG_CHUNKS = 100_000
+_MAX_JPEG_SEGMENTS = 100_000
+_MAX_WEBP_CHUNKS = 100_000
 _PNG_CHANNELS = {0: 1, 2: 3, 3: 1, 4: 2, 6: 4}
 
 # Formats acceptés -> (extension, MIME)
@@ -228,6 +230,7 @@ def _parse_jpeg(data: bytes, max_pixels: int) -> ImageInfo:
     pos = 2
     end = len(data)
     dimensions: tuple[int, int] | None = None
+    segment_count = 0
     while pos + 1 < end:
         if data[pos] != 0xFF:
             raise InvalidImageError("invalid_image", "flux JPEG désynchronisé")
@@ -237,6 +240,9 @@ def _parse_jpeg(data: bytes, max_pixels: int) -> ImageInfo:
             break
         marker = data[pos]
         pos += 1
+        segment_count += 1
+        if segment_count > _MAX_JPEG_SEGMENTS:
+            raise InvalidImageError("invalid_image", "trop de segments JPEG")
         if marker == 0xD9:
             break
         if marker == 0xDA:
@@ -284,7 +290,11 @@ def _parse_webp(data: bytes, max_pixels: int) -> ImageInfo:
     saw_image_payload = False
     saw_vp8x = False
     payload_count = 0
+    chunk_count = 0
     while pos < end:
+        chunk_count += 1
+        if chunk_count > _MAX_WEBP_CHUNKS:
+            raise InvalidImageError("invalid_image", "trop de chunks WebP")
         if pos + 8 > end:
             raise InvalidImageError("invalid_image", "chunk WebP tronqué")
         fourcc = data[pos:pos + 4]

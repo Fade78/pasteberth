@@ -521,12 +521,15 @@ class TestUploadsFormats(Base):
         )
 
     def test_nom_du_fichier_glisse_et_ecrasement(self):
-        def upload(data):
+        def upload(data, replace=False):
+            fields = {"preserve_name": "1"}
+            if replace:
+                fields["replace"] = "1"
             body, ctype = build_multipart(
                 filename="rapport final.txt",
                 data=data,
                 content_type="text/plain",
-                extra_fields={"preserve_name": "1"},
+                extra_fields=fields,
             )
             return self.req(
                 "POST",
@@ -542,6 +545,10 @@ class TestUploadsFormats(Base):
         self.assertEqual(item["kind"], "text")
 
         status, _, second = upload(b"version 2")
+        self.assertEqual(status, 428)
+        self.assertEqual(json_of(second)["error"]["code"], "replacement_required")
+
+        status, _, second = upload(b"version 2", replace=True)
         self.assertEqual(status, 201)
         replacement = json_of(second)
         self.assertEqual(replacement["filename"], item["filename"])
@@ -568,7 +575,7 @@ class TestUploadsFormats(Base):
             filename="notes.txt",
             data=b"new content",
             content_type="text/plain",
-            extra_fields={"preserve_name": "1"},
+            extra_fields={"preserve_name": "1", "replace": "1"},
         )
         status, _, resp = self.req("POST", "/api/zones/default/images",
                                    body=body, headers={"Content-Type": ctype})
@@ -678,12 +685,14 @@ class TestRejetsUploads(Base):
                                         headers={"Content-Type": "image/gif"})
         self.assertEqual(status_code, 415)
 
-    def test_png_tronque_refuse(self):
+    def test_png_tronque_est_conserve_comme_binaire(self):
         truncated = make_png(8, 8)[:14]
         status_code, _, body = self.req("POST", "/api/zones/default/images",
                                         body=truncated, headers={"Content-Type": "image/png"})
-        self.assertEqual(status_code, 400)
-        self.assertEqual(json_of(body)["error"]["code"], "invalid_image")
+        self.assertEqual(status_code, 201)
+        item = json_of(body)
+        self.assertEqual(item["kind"], "binary")
+        self.assertEqual(item["mime"], "application/octet-stream")
 
     def test_espace_disque_insuffisant(self):
         usage = type("Usage", (), {"f_blocks": 1000, "f_bavail": 1, "f_frsize": 1024})()

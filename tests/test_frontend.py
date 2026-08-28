@@ -73,6 +73,9 @@ class TestContratsFrontend(unittest.TestCase):
         self.assertIn("<dialog", self.index_html)
         self.assertIn("auto-fit", self.style_css)
         self.assertIn("dialog#pv:not([open])", self.style_css)
+        self.assertIn("dialog#replace:not([open])", self.style_css)
+        self.assertIn("dialog-fallback-backdrop", self.style_css)
+        self.assertIn("dialog-fallback", self.style_css)
         self.assertNotIn('aria-live="polite"', self.index_html)
 
     def test_refresh_ordonne_et_actions_clavier(self):
@@ -101,7 +104,11 @@ class TestContratsFrontend(unittest.TestCase):
         self.assertIn('err.code === "retention_error"', self.app_js)
         self.assertIn("await refresh()", self.app_js)
         self.assertIn("function closePreview", self.app_js)
-        self.assertIn('pv.removeAttribute("open")', self.app_js)
+        self.assertIn('dialog.removeAttribute("open")', self.app_js)
+        self.assertIn("function openDialog", self.app_js)
+        self.assertIn("function closeDialog", self.app_js)
+        self.assertIn("replacementBackdrop", self.app_js)
+        self.assertIn('event.key === "Escape"', self.app_js)
 
     def test_previews_reessaient_les_reponses_temporaires(self):
         self.assertIn("function setPreviewSource", self.app_js)
@@ -116,9 +123,16 @@ class TestContratsFrontend(unittest.TestCase):
         self.assertIn('i.kind === "string" && i.type === "text/plain"', self.app_js)
         self.assertIn("getAsString", self.app_js)
         self.assertIn("new Blob([text]", self.app_js)
+        self.assertIn('src="${escapeHtmlText(url)}"', self.app_js)
         self.assertIn("file.name || \"clipboard\"", self.app_js)
         self.assertIn('fd.append("preserve_name", "1")', self.app_js)
+        self.assertIn('fd.append("replace", "1")', self.app_js)
         self.assertIn("preserveName: true", self.app_js)
+        self.assertIn("askReplacement", self.app_js)
+        self.assertIn('id="replace"', self.index_html)
+        self.assertIn('id="replace-backdrop"', self.index_html)
+        self.assertIn('id="replace-confirm"', self.index_html)
+        self.assertIn('id="replace-cancel"', self.index_html)
         self.assertNotIn("Only images are accepted", self.app_js)
 
     def test_bouton_copie_par_kind(self):

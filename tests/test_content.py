@@ -1,9 +1,10 @@
 """Tests de classification du contenu : image, texte, binaire."""
+import struct
 import unittest
+import zlib
 
 from pasteberth.content import classify, safe_extension
-from pasteberth.images import InvalidImageError
-from tests.helpers import make_png, make_jpeg, make_webp_lossy
+from tests.helpers import _png_chunk, make_png, make_jpeg, make_webp_lossy
 
 
 class TestClassify(unittest.TestCase):
@@ -18,9 +19,23 @@ class TestClassify(unittest.TestCase):
         self.assertEqual(classify(make_jpeg(4, 4), None).kind, "image")
         self.assertEqual(classify(make_webp_lossy(4, 4), None).kind, "image")
 
-    def test_image_trop_grande_refusee(self):
-        with self.assertRaises(InvalidImageError):
-            classify(make_png(20000, 20000), None, max_pixels=25_000_000)
+    def test_image_invalide_devient_binaire(self):
+        info = classify(make_webp_lossy()[:-1], "image/webp", "capture.webp")
+        self.assertEqual(info.kind, "binary")
+        self.assertEqual(info.ext, ".webp")
+        self.assertEqual(info.mime, "application/octet-stream")
+
+    def test_image_trop_grande_devient_binaire(self):
+        ihdr = struct.pack(">IIBBBBB", 20_000, 20_000, 8, 2, 0, 0, 0)
+        data = (
+            b"\x89PNG\r\n\x1a\n"
+            + _png_chunk(b"IHDR", ihdr)
+            + _png_chunk(b"IDAT", zlib.compress(b""))
+            + _png_chunk(b"IEND", b"")
+        )
+        info = classify(data, None, max_pixels=25_000_000)
+        self.assertEqual(info.kind, "binary")
+        self.assertEqual(info.ext, ".bin")
 
     def test_texte_utf8_par_defaut_txt(self):
         info = classify("hello world".encode(), "application/octet-stream")

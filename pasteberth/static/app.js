@@ -40,6 +40,13 @@
   const pvDownload = document.getElementById("pv-download");
   const pvClear = document.getElementById("pv-clear");
   const pvDelete = document.getElementById("pv-delete");
+  const replacementDialog = document.getElementById("replace");
+  const replacementBackdrop = document.getElementById("replace-backdrop");
+  const replacementFilename = document.getElementById("replace-filename");
+  const replacementCancel = document.getElementById("replace-cancel");
+  const replacementConfirm = document.getElementById("replace-confirm");
+  const replacementQueue = [];
+  let activeReplacementPrompt = null;
 
   // ------------------------------------------------------------- utilities
 
@@ -100,8 +107,9 @@
   }
 
   function toast(message, kind = "info") {
-    const target = pv.open ? pvToastEl : toastEl;
-    const other = pv.open ? toastEl : pvToastEl;
+    const previewOpen = pv.hasAttribute("open");
+    const target = previewOpen ? pvToastEl : toastEl;
+    const other = previewOpen ? toastEl : pvToastEl;
     target.textContent = message;
     target.className = "toast " + kind;
     target.hidden = false;
@@ -150,6 +158,7 @@
         storage_low: "Not enough disk space",
         retention_error: "Image retention failed",
         storage_conflict: "Name taken by an unmanaged file",
+        replacement_required: "This name already exists; confirm replacement",
         destination_error: "The image destination is unavailable",
         preview_busy: "Too many previews are currently being served",
         rate_limited: "Too many attempts; try again later",
@@ -343,7 +352,7 @@
       } else {
         try {
           const url = await blobToDataUrl(part.blob);
-          chunks.push(`<p><img alt="" src="${url}"></p>`);
+          chunks.push(`<p><img alt="" src="${escapeHtmlText(url)}"></p>`);
         } catch (_) { /* image illisible : ignorée */ }
       }
     }
@@ -802,17 +811,26 @@
 
   // ------------------------------------------------------------- upload
 
-  async function upload(zoneId, file, { preserveName = false } = {}) {
+  async function upload(
+    zoneId,
+    file,
+    { preserveName = false, allowReplace = false } = {},
+  ) {
     if (!file) return;
     const zoneEl = grid.querySelector(`[data-zone="${CSS.escape(zoneId)}"]`);
     if (zoneEl) zoneEl.classList.add("busy");
     refreshGeneration += 1;
     if (activeRefreshController) activeRefreshController.abort();
     try {
+      if (preserveName && !allowReplace && file.name && hasManagedName(zoneId, file.name)) {
+        allowReplace = await askReplacement(file.name);
+        if (!allowReplace) return;
+      }
       const fd = new FormData();
       // Le serveur conserve le nom seulement pour les fichiers déposés.
       fd.append("image", file, file.name || "clipboard");
       if (preserveName) fd.append("preserve_name", "1");
+      if (allowReplace) fd.append("replace", "1");
       const item = await api(`/api/zones/${encodeURIComponent(zoneId)}/images`,
         { method: "POST", body: fd });
       refreshGeneration += 1;
@@ -837,6 +855,17 @@
     } catch (err) {
       if (err.status === 413) toast("Content is too large for this server", "error");
       else if (err.status === 507) toast("Not enough disk space for this upload", "error");
+      else if (
+        err.code === "replacement_required"
+        && preserveName
+        && file.name
+        && !allowReplace
+      ) {
+        const confirmed = await askReplacement(file.name);
+        if (confirmed) {
+          await upload(zoneId, file, { preserveName: true, allowReplace: true });
+        }
+      }
       else {
         if (err.code === "retention_error") {
           try { await refresh(); } catch (_) { /* keep the original error visible */ }
@@ -846,6 +875,68 @@
     } finally {
       if (zoneEl) zoneEl.classList.remove("busy");
     }
+  }
+
+  function hasManagedName(zoneId, filename) {
+    const zone = state.zones.find(z => z.id === zoneId);
+    return Boolean(zone && zone.images.some(item => item.filename === filename));
+  }
+
+  function showNextReplacementPrompt() {
+    if (activeReplacementPrompt || !replacementQueue.length) return;
+    activeReplacementPrompt = replacementQueue.shift();
+    replacementFilename.textContent = activeReplacementPrompt.filename;
+    replacementDialog.returnValue = "";
+    openDialog(replacementDialog);
+    replacementConfirm.focus();
+  }
+
+  function askReplacement(filename) {
+    return new Promise((resolve) => {
+      replacementQueue.push({ filename, resolve });
+      showNextReplacementPrompt();
+    });
+  }
+
+  function settleReplacementPrompt(allowReplace) {
+    if (!activeReplacementPrompt) return;
+    const prompt = activeReplacementPrompt;
+    activeReplacementPrompt = null;
+    prompt.resolve(allowReplace);
+    showNextReplacementPrompt();
+  }
+
+  function closeReplacementPrompt(allowReplace) {
+    if (!activeReplacementPrompt) return;
+    if (closeDialog(replacementDialog, allowReplace ? "replace" : "cancel")) return;
+    settleReplacementPrompt(allowReplace);
+  }
+
+  function openDialog(dialog) {
+    if (typeof dialog.showModal === "function") {
+      dialog.classList.remove("dialog-fallback");
+      if (dialog === replacementDialog) replacementBackdrop.hidden = true;
+      dialog.showModal();
+    } else {
+      dialog.classList.add("dialog-fallback");
+      if (dialog === replacementDialog) replacementBackdrop.hidden = false;
+      dialog.setAttribute("open", "");
+    }
+  }
+
+  function closeDialog(dialog, returnValue = "") {
+    if (dialog.classList.contains("dialog-fallback")) {
+      dialog.classList.remove("dialog-fallback");
+      dialog.removeAttribute("open");
+      if (dialog === replacementDialog) replacementBackdrop.hidden = true;
+      return false;
+    }
+    if (typeof dialog.close === "function" && dialog.open) {
+      dialog.close(returnValue);
+      return true;
+    }
+    dialog.removeAttribute("open");
+    return false;
   }
 
   function requireActiveZone() {
@@ -1053,6 +1144,26 @@
   });
 
   document.addEventListener("keydown", (event) => {
+    if (replacementDialog.classList.contains("dialog-fallback")) {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        closeReplacementPrompt(false);
+      } else if (event.key === "Tab") {
+        const controls = [replacementCancel, replacementConfirm];
+        const current = document.activeElement;
+        if (!replacementDialog.contains(current)) {
+          event.preventDefault();
+          controls[event.shiftKey ? 1 : 0].focus();
+        } else if (event.shiftKey && current === controls[0]) {
+          event.preventDefault();
+          controls[1].focus();
+        } else if (!event.shiftKey && current === controls[1]) {
+          event.preventDefault();
+          controls[0].focus();
+        }
+      }
+      return;
+    }
     if (event.ctrlKey || event.metaKey || event.altKey) return;
     const tag = (event.target.tagName || "").toLowerCase();
     if (tag === "input" || tag === "textarea") return;
@@ -1097,16 +1208,14 @@
     pvCopyImage.dataset.mime = "image/png";
     pvDelete.dataset.zone = zoneId || "";
     pvDelete.dataset.filename = storedFilename;
-    if (typeof pv.showModal === "function") pv.showModal();
-    else pv.setAttribute("open", "");
+    openDialog(pv);
   }
 
   function openTextPreview(text) {
     pvText.textContent = text;
     pvText.hidden = false;
     pvImg.hidden = true;
-    if (typeof pv.showModal === "function") pv.showModal();
-    else pv.setAttribute("open", "");
+    openDialog(pv);
   }
 
   async function openContentPreview(item, zoneId) {
@@ -1155,10 +1264,11 @@
   }
   function closePreview() {
     invalidatePreviewLoad();
-    if (typeof pv.close === "function") pv.close();
-    else {
-      pv.removeAttribute("open");
+    if (!closeDialog(pv)) {
       setPreviewSource(pvImg, "");
+      pvText.hidden = true;
+      pvImg.hidden = false;
+      delete pvDelete.dataset.zone;
     }
   }
   pvCopy.addEventListener("click", () => copyLink(pvRef.textContent));
@@ -1183,6 +1293,15 @@
     pvText.hidden = true;
     pvImg.hidden = false;
     delete pvDelete.dataset.zone;
+  });
+
+  replacementCancel.addEventListener("click", () => closeReplacementPrompt(false));
+  replacementConfirm.addEventListener("click", () => closeReplacementPrompt(true));
+  replacementDialog.addEventListener("click", (event) => {
+    if (event.target === replacementDialog) closeReplacementPrompt(false);
+  });
+  replacementDialog.addEventListener("close", () => {
+    settleReplacementPrompt(replacementDialog.returnValue === "replace");
   });
 
   document.addEventListener("visibilitychange", () => {

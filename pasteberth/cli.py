@@ -2,6 +2,9 @@
 
     pasteberth                         # démarre avec les valeurs locales par défaut
     pasteberth serve   [--config PATH] [--log-level LEVEL]
+    pasteberth filesystem-drop [--config PATH] [--replace] DIRECTORY FILE...
+    pasteberth filesystem-rename [--config PATH] DIRECTORY SOURCE TARGET
+    pasteberth filesystem-delete [--config PATH] [--force] DIRECTORY FILE...
     pasteberth passwd  [--config PATH]
     pasteberth audit   [--config PATH]
     pasteberth --generate-config
@@ -11,6 +14,7 @@ from __future__ import annotations
 import argparse
 import getpass
 import logging
+import mimetypes
 import os
 import shutil
 import ssl
@@ -43,7 +47,7 @@ from pasteberth.config import (
     repository_root,
 )
 from pasteberth.paths import first_symlink_component
-from pasteberth.service import PasteService
+from pasteberth.service import PasteService, ServiceError
 from pasteberth.storage import DestinationError
 
 
@@ -167,6 +171,152 @@ def _cmd_serve(args: argparse.Namespace) -> int:
 
 def _config_arg(args: argparse.Namespace) -> str | None:
     return getattr(args, "config", None) or getattr(args, "global_config", None)
+
+
+def _load_command_service(args: argparse.Namespace):
+    config_arg = _config_arg(args)
+    config_path = find_config_path(config_arg)
+    try:
+        cfg = build_default_config() if config_path is None else load_config(config_path)
+        prepare_directories(cfg)
+        service = PasteService(cfg)
+    except ConfigError as exc:
+        print(f"pasteberth : erreur de configuration\n  {exc}", file=sys.stderr)
+        return None
+    except (DestinationError, OSError) as exc:
+        print(f"pasteberth : erreur de destination\n  {exc}", file=sys.stderr)
+        return None
+    return cfg, service
+
+
+def _command_path(raw: str) -> Path:
+    if "\x00" in raw:
+        raise ValueError("chemin contenant un caractère NUL")
+    return Path(os.path.abspath(os.path.expanduser(raw)))
+
+
+def _zone_for_directory(cfg, raw_directory: str):
+    try:
+        directory = _command_path(raw_directory)
+        symlink = first_symlink_component(directory)
+    except (OSError, ValueError) as exc:
+        raise ConfigError(f"répertoire de zone invalide : {raw_directory!r} ({exc})") from exc
+    if symlink is not None:
+        raise ConfigError(f"le répertoire cible contient un lien symbolique : {symlink}")
+    normalized = Path(os.path.normpath(str(directory)))
+    for zone in cfg.zones.values():
+        if normalized == Path(os.path.normpath(str(zone.directory))):
+            return zone
+    raise ConfigError(
+        f"le répertoire cible ne correspond à aucune zone configurée : {directory}"
+    )
+
+
+def _read_drop_source(path: Path, max_bytes: int) -> bytes:
+    nofollow = getattr(os, "O_NOFOLLOW", 0)
+    nonblock = getattr(os, "O_NONBLOCK", 0)
+    fd = -1
+    try:
+        # Inspect before opening and keep O_NONBLOCK as a second line of
+        # defence against a FIFO replacing the regular source in between.
+        path_info = os.stat(path, follow_symlinks=False)
+        if not stat.S_ISREG(path_info.st_mode):
+            raise ValueError("la source n'est pas un fichier régulier")
+        fd = os.open(path, os.O_RDONLY | nofollow | nonblock)
+        info = os.fstat(fd)
+        if not stat.S_ISREG(info.st_mode):
+            raise ValueError("la source n'est pas un fichier régulier")
+        with os.fdopen(fd, "rb") as stream:
+            fd = -1
+            data = stream.read(max_bytes + 1)
+    except (OSError, ValueError) as exc:
+        raise ValueError(f"lecture impossible : {exc}") from exc
+    finally:
+        if fd >= 0:
+            os.close(fd)
+    if len(data) > max_bytes:
+        raise ValueError(
+            f"fichier trop grand ({len(data)} > {max_bytes} octets)"
+        )
+    return data
+
+
+def _cmd_filesystem_rename(args: argparse.Namespace) -> int:
+    loaded = _load_command_service(args)
+    if loaded is None:
+        return 2
+    cfg, service = loaded
+    try:
+        zone = _zone_for_directory(cfg, args.directory)
+        item = service.rename(zone.id, args.source, args.target)
+    except ConfigError as exc:
+        print(f"pasteberth : erreur de configuration\n  {exc}", file=sys.stderr)
+        return 2
+    except (OSError, ValueError, ServiceError) as exc:
+        print(f"pasteberth : renommage impossible : {exc}", file=sys.stderr)
+        return 1
+    print(item["reference"])
+    return 0
+
+
+def _cmd_filesystem_delete(args: argparse.Namespace) -> int:
+    loaded = _load_command_service(args)
+    if loaded is None:
+        return 2
+    cfg, service = loaded
+    try:
+        zone = _zone_for_directory(cfg, args.directory)
+    except ConfigError as exc:
+        print(f"pasteberth : erreur de configuration\n  {exc}", file=sys.stderr)
+        return 2
+
+    failures = 0
+    for filename in args.files:
+        try:
+            service.delete(
+                zone.id,
+                filename,
+                allow_stale_sidecar=args.force,
+            )
+        except (OSError, ValueError, ServiceError) as exc:
+            failures += 1
+            print(f"pasteberth : suppression impossible {filename!r} : {exc}", file=sys.stderr)
+            continue
+        print(filename)
+    return 1 if failures else 0
+
+
+def _cmd_filesystem_drop(args: argparse.Namespace) -> int:
+    loaded = _load_command_service(args)
+    if loaded is None:
+        return 2
+    cfg, service = loaded
+    try:
+        zone = _zone_for_directory(cfg, args.directory)
+    except ConfigError as exc:
+        print(f"pasteberth : erreur de configuration\n  {exc}", file=sys.stderr)
+        return 2
+
+    failures = 0
+    for raw_source in args.files:
+        try:
+            source = _command_path(raw_source)
+            data = _read_drop_source(source, cfg.max_upload_bytes)
+            declared_mime = mimetypes.guess_type(source.name)[0] or "application/octet-stream"
+            item = service.upload(
+                zone.id,
+                data,
+                declared_mime,
+                source.name,
+                preserve_filename=True,
+                allow_replace=args.replace,
+            )
+        except (OSError, ValueError, ServiceError) as exc:
+            failures += 1
+            print(f"pasteberth : {raw_source} : {exc}", file=sys.stderr)
+            continue
+        print(item["reference"])
+    return 1 if failures else 0
 
 
 def _generated_config_text(root: Path) -> str:
@@ -505,7 +655,7 @@ def _cmd_passwd(args: argparse.Namespace) -> int:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="pasteberth",
-        description="Pont clipboard navigateur -> filesystem du harness.",
+        description="Pont clipboard navigateur <-> filesystem du harness.",
     )
     parser.add_argument("--version", action="version", version=f"pasteberth {__version__}")
     parser.add_argument("--config", dest="global_config", help=argparse.SUPPRESS)
@@ -525,6 +675,41 @@ def build_parser() -> argparse.ArgumentParser:
     p_serve.add_argument("--config", default=argparse.SUPPRESS, help="chemin du config.toml")
     p_serve.add_argument("--log-level", choices=["DEBUG", "INFO", "WARNING", "ERROR"])
     p_serve.set_defaults(func=_cmd_serve)
+
+    p_drop = sub.add_parser(
+        "filesystem-drop",
+        help="dépose des fichiers dans une zone filesystem et crée leurs sidecars",
+    )
+    p_drop.add_argument("directory", help="répertoire exact de la zone configurée")
+    p_drop.add_argument("files", nargs="+", help="fichiers sources à copier")
+    p_drop.add_argument("--replace", action="store_true",
+                        help="autorise le remplacement explicite d'un nom géré")
+    p_drop.add_argument("--config", default=argparse.SUPPRESS, help="chemin du config.toml")
+    p_drop.set_defaults(func=_cmd_filesystem_drop)
+
+    p_rename = sub.add_parser(
+        "filesystem-rename",
+        help="renomme un fichier géré avec son sidecar",
+    )
+    p_rename.add_argument("directory", help="répertoire exact de la zone configurée")
+    p_rename.add_argument("source", help="nom géré actuel, sans chemin")
+    p_rename.add_argument("target", help="nouveau nom, sans chemin")
+    p_rename.add_argument("--config", default=argparse.SUPPRESS, help="chemin du config.toml")
+    p_rename.set_defaults(func=_cmd_filesystem_rename)
+
+    p_delete = sub.add_parser(
+        "filesystem-delete",
+        help="supprime un ou plusieurs fichiers gérés avec leurs sidecars",
+    )
+    p_delete.add_argument("directory", help="répertoire exact de la zone configurée")
+    p_delete.add_argument("files", nargs="+", help="noms gérés à supprimer, sans chemin")
+    p_delete.add_argument(
+        "--force",
+        action="store_true",
+        help="supprime aussi une paire dont la taille ne correspond plus au sidecar",
+    )
+    p_delete.add_argument("--config", default=argparse.SUPPRESS, help="chemin du config.toml")
+    p_delete.set_defaults(func=_cmd_filesystem_delete)
 
     p_pw = sub.add_parser("passwd", help="définit ou change le mot de passe")
     p_pw.add_argument(

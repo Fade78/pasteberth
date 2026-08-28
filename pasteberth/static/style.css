@@ -304,12 +304,26 @@ code, kbd {
 .clear-btn { color: #ffd7d3; }
 .delete-btn { color: #ffb4ab; }
 
+.replace-btn {
+  background: rgba(255, 123, 114, 0.16);
+  color: #ffd7d3;
+  border: 1px solid rgba(255, 123, 114, 0.45);
+  border-radius: 8px;
+  padding: 0.42rem 0.95rem;
+  font-size: 0.85rem;
+  font-weight: 650;
+  cursor: pointer;
+}
+
+.replace-btn:hover { background: rgba(255, 123, 114, 0.28); }
+
 .copy-btn:focus-visible,
 .copy-image-btn:focus-visible,
 .download-btn:focus-visible,
 .clear-btn:focus-visible,
 .zoom-btn:focus-visible,
 .delete-btn:focus-visible,
+.replace-btn:focus-visible,
 .thumb-wrap:focus-visible,
 .zone-select:focus-visible,
 .thumb-big:focus-visible,
@@ -441,9 +455,44 @@ dialog#pv {
   max-width: min(92vw, 1100px);
 }
 
-dialog#pv:not([open]) { display: none; }
+dialog#pv:not([open]), dialog#replace:not([open]) { display: none; }
 
 dialog#pv::backdrop { background: rgba(4, 6, 9, 0.66); }
+
+dialog#replace {
+  background: var(--panel);
+  color: var(--text);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: var(--radius);
+  padding: 1.25rem;
+  width: min(92vw, 30rem);
+  max-width: min(92vw, 30rem);
+}
+
+dialog#replace::backdrop { background: rgba(4, 6, 9, 0.66); }
+
+/* Older browsers have no native modal backdrop; use a real hit-test surface
+   so clicks cannot reach the page behind the prompt. */
+.dialog-fallback-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 99;
+  background: rgba(4, 6, 9, 0.66);
+}
+
+dialog.dialog-fallback[open] {
+  position: fixed;
+  z-index: 100;
+  top: 50%;
+  left: 50%;
+  margin: 0;
+  transform: translate(-50%, -50%);
+}
+
+#replace-title { margin: 0; font-size: 1.05rem; }
+#replace-message { color: var(--muted); margin: 0.7rem 0 0.35rem; }
+#replace-filename { display: block; overflow-wrap: anywhere; }
+.replace-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 1.2rem; }
 
 #pv-img {
   display: block;

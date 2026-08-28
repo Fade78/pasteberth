@@ -45,7 +45,8 @@ session_ttl_hours = 72            # server-side session lifetime
 
 # --------------------------------------------------------------- default zone
 # id                : logical API/UI identifier ([a-z0-9_-])
-# directory         : ABSOLUTE path as seen by the SERVER (used by the harness)
+# directory         : ABSOLUTE path as seen by the SERVER; used by the harness
+#                      and as the target path for filesystem operations
 # retain            : number of stored contents kept per zone (circular retention)
 # reference_prefix  : text prepended to the returned reference (empty allowed)
 # reference_suffix  : text appended to the returned reference (empty by default)

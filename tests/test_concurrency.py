@@ -29,6 +29,23 @@ def _upload(port, cookie, zone):
     return status, resp
 
 
+def _named_upload(port, cookie, zone, data, *, replace=False):
+    fields = {"preserve_name": "1"}
+    if replace:
+        fields["replace"] = "1"
+    body, ctype = build_multipart(
+        filename="shared.txt",
+        data=data,
+        content_type="text/plain",
+        extra_fields=fields,
+    )
+    status, _, resp = request(
+        port, "POST", f"/api/zones/{zone}/images",
+        body=body, headers={"Content-Type": ctype}, cookie=cookie,
+    )
+    return status, resp
+
+
 class Base(unittest.TestCase):
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
@@ -110,6 +127,61 @@ class TestZonesParalleles(Base):
         for status, count in read_results:
             self.assertEqual(status, 200)
             self.assertLessEqual(count, 5)  # retain + éventuel transitoire
+
+
+class TestConcurrenceNomPreserve(Base):
+    def test_deux_uploads_nommes_sans_confirmation_ne_remplacent_pas(self):
+        status, response = _named_upload(
+            self.server.port, self.cookie, "a", b"version initiale"
+        )
+        self.assertEqual(status, 201)
+
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            outcomes = list(pool.map(
+                lambda data: _named_upload(
+                    self.server.port, self.cookie, "a", data
+                ),
+                (b"tentative 1", b"tentative 2"),
+            ))
+
+        self.assertEqual([status for status, _ in outcomes], [428, 428])
+        self.assertEqual(json_of(response)["filename"], "shared.txt")
+        status, _, body = request(
+            self.server.port,
+            "GET",
+            "/previews/a/shared.txt",
+            cookie=self.cookie,
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(body, b"version initiale")
+
+    def test_remplacement_explicite_et_upload_sans_confirmation_sont_serialises(self):
+        status, _ = _named_upload(
+            self.server.port, self.cookie, "a", b"version initiale"
+        )
+        self.assertEqual(status, 201)
+
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            outcomes = list(pool.map(
+                lambda replace: _named_upload(
+                    self.server.port,
+                    self.cookie,
+                    "a",
+                    b"version remplacee" if replace else b"tentative",
+                    replace=replace,
+                ),
+                (True, False),
+            ))
+
+        self.assertEqual(sorted(status for status, _ in outcomes), [201, 428])
+        status, _, body = request(
+            self.server.port,
+            "GET",
+            "/previews/a/shared.txt",
+            cookie=self.cookie,
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(body, b"version remplacee")
 
 
 class TestSessionsMultiples(Base):

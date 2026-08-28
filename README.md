@@ -1,17 +1,18 @@
 # Pasteberth
 
-**The bridge between a graphical clipboard and a CLI/TUI harness that cannot
-easily receive desktop content.**
+**The bridge between a graphical clipboard, a filesystem, and a CLI/TUI
+harness.**
 
-Pasteberth is designed first and foremost for harnesses that work in a
-terminal — OpenCode and similar tools. These tools are very good at reading a
-file on their machine, but they do not always have access to the workstation's
-graphical clipboard, nor a convenient way to receive an image, text, or file.
+Pasteberth is designed for work shared between a graphical environment and
+terminal-based tools — OpenCode and similar harnesses. A browser can send an
+image, text, or file to the harness machine, while an agent or script can copy
+an artifact into a configured zone for people to download in the browser.
 
-Pasteberth therefore keeps the transfer deliberately simple: the browser
-receives clipboard content or a dropped file, the server writes it to the
-filesystem of the harness machine, then returns the exact path to paste into
-the terminal.
+The transfer remains deliberately simple: each zone is a filesystem directory
+with a small JSON sidecar for ownership and metadata. The browser receives
+clipboard content or a dropped file, and `filesystem-drop` sends a file from a
+local process into the same storage path. The Web UI and filesystem command
+are two independent clients of the same service.
 
 You take a screenshot or copy content on your workstation, paste it (Ctrl+V)
 into the area for the right project in your browser, or drop a file there, and
@@ -29,12 +30,14 @@ capture ──▶ browser ── HTTPS ──▶ Pasteberth ──▶ captures/<
                                                │
                                                ▼
                                       terminal / CLI-TUI harness
+
+agent/script ── filesystem-drop ─────▶ captures/<zone>/ ──▶ browser download
 ```
 
 The browser **never** needs to access the returned path. This is the path seen
 by the harness, on the machine where Pasteberth runs.
 
-The current version is `1.0.6`.
+The current version is `1.0.7`.
 
 ---
 
@@ -42,15 +45,16 @@ The current version is `1.0.6`.
 
 1. [Use Cases](#use-cases)
 2. [How It Works](#how-it-works)
-3. [Installation](#installation)
-4. [Configuration](#configuration)
-5. [Password](#password)
-6. [Launching & systemd service](#launching--systemd-service)
-7. [HTTPS & reverse proxy](#https--reverse-proxy)
-8. [API](#api)
-9. [Security](#security)
-10. [Tests](#tests)
-11. [Limitations & V2](#limitations--v2)
+3. [Filesystem Operations](#filesystem-operations)
+4. [Installation](#installation)
+5. [Configuration](#configuration)
+6. [Password](#password)
+7. [Launching & systemd service](#launching--systemd-service)
+8. [HTTPS & reverse proxy](#https--reverse-proxy)
+9. [API](#api)
+10. [Security](#security)
+11. [Tests](#tests)
+12. [Limitations & V2](#limitations--v2)
 
 ---
 
@@ -64,22 +68,27 @@ environment:
 - the harness works in a terminal or a remote session;
 - the harness can read the filesystem on its machine, but cannot receive
   clipboard content directly from the graphical workstation;
+- an agent, script, or another local process produces a file that a person
+  needs to download from the browser;
 - you want to keep a few contents per project without creating a
   general-purpose file-sharing service.
 
 Pasteberth is not public storage, a CDN, or a synchronization tool between
-users. It is a local, targeted gateway between a graphical interface and a
-terminal process.
+users. It is a local, targeted gateway between graphical clients, filesystem
+processes, and terminal tools.
 
 ## How It Works
 
 - **One zone per project**: each zone has an independent identifier, label,
   color, directory, and retention policy. Click a zone to make it active, then
-  use Ctrl+V or drag and drop.
+  use Ctrl+V or drag and drop. The filesystem command targets a zone by its
+  configured server-side directory, not by its UI label or identifier.
 - **Image, text, and file content**: Ctrl+V preserves clipboard content; a
   dragged file is stored under its original name. If it replaces a Pasteberth-
-  managed file with the same name, the content and sidecar are replaced
-  atomically. Foreign files are never overwritten.
+  managed file with the same name, the browser first asks for confirmation.
+  The API and filesystem command require the equivalent explicit replacement
+  flag. Content and sidecar are replaced atomically. Foreign files are never
+  overwritten.
 - **Mixed clipboard paste**: a paste carrying both an image and plain text is
   stored as a single `.html` document — the text with the images embedded at
   their positions. `Copy Text` restores both flavors (`text/html` and
@@ -114,6 +123,76 @@ For OpenCode's `@` selector to find stored images or files directly, place the z
 workspace opened by OpenCode, or open a workspace that contains both the
 project and the capture directory. Otherwise, the path remains valid for an
 explicit read by the harness.
+
+## Filesystem Drop
+
+`filesystem-drop` copies one or more regular files into a configured zone and
+creates the matching Pasteberth sidecars. The source files are left unchanged.
+The target is the exact absolute directory configured for the zone as seen by
+the machine running Pasteberth:
+
+```sh
+pasteberth filesystem-drop --config config.toml \
+  /absolute/path/to/PasteBerth/captures/project-alpha \
+  /tmp/report.txt /tmp/screenshot.png
+```
+
+The command prints one returned reference per successful source. Files are
+processed independently; a failure makes the command return non-zero while
+other sources can still be processed. The initial implementation is flat: the
+source basename is stored directly in the target zone, not in a subdirectory.
+
+An existing Pasteberth-managed name is refused by default. Use `--replace` to
+make the replacement explicit:
+
+```sh
+pasteberth filesystem-drop --replace \
+  /absolute/path/to/PasteBerth/captures/project-alpha /tmp/report.txt
+```
+
+The Web drop uses the same server-side rule through a confirmation dialog. Two
+confirmed replacements are serialized by the zone lock; the last transaction
+to commit wins. A file already present without a valid matching sidecar is a
+storage conflict and is never overwritten, including with `--replace`.
+
+There is no directory watcher in V1. An agent or script must invoke the
+command when it wants to publish a file.
+
+## Filesystem Operations
+
+The filesystem client can rename or delete a managed pair without bypassing
+its JSON sidecar. Names are basenames inside the exact configured zone; paths,
+symlinks, foreign files, and occupied rename targets are refused.
+
+Rename a stored item:
+
+```sh
+pasteberth filesystem-rename --config config.toml \
+  /absolute/path/to/PasteBerth/captures/project-alpha \
+  report.txt report-final.txt
+```
+
+The command moves the data file and updates the sidecar as one durable
+operation. It prints the new reference on success and never replaces the
+target.
+
+Delete one or more stored items:
+
+```sh
+pasteberth filesystem-delete --config config.toml \
+  /absolute/path/to/PasteBerth/captures/project-alpha report-final.txt
+```
+
+Normal deletion requires a structurally valid sidecar whose recorded size
+matches the data file. If a managed file was changed by an external process and
+is therefore hidden from the history, deletion can be made explicit with
+`--force`; this still refuses malformed sidecars and files without a matching
+Pasteberth sidecar:
+
+```sh
+pasteberth filesystem-delete --force --config config.toml \
+  /absolute/path/to/PasteBerth/captures/project-alpha report-final.txt
+```
 
 ## Installation
 
@@ -186,7 +265,8 @@ desired zones and paths. The file remains ignored by Git.
 | `[[zones]] …` | `default` | `id`, `label`, `type=local`, `directory`, `retain`, `reference_prefix`, `reference_suffix`, `color` (#RRGGBB), `create_directory`, `min_free_percent` |
 
 `directory` is an **absolute path as seen by the server** — this is where
-OpenCode or the harness reads the stored files, not your browser.
+OpenCode or the harness reads the stored files, not your browser. It is also
+the target path accepted by `filesystem-drop`.
 
 To copy a reference enclosed in backticks, for example `` `/path/image.png` ``:
 
@@ -395,7 +475,7 @@ validated content in a zone.
 | GET | `/api/health` | probe (public) |
 | GET | `/api/zones` | zones + counts |
 | GET | `/api/zones/{id}/images` | history of all content, newest first |
-| POST | `/api/zones/{id}/images` | upload (multipart `image` field; `preserve_name=1` keeps a dragged file's name, or a raw body with an accepted MIME type) |
+| POST | `/api/zones/{id}/images` | upload (multipart `image` field; `preserve_name=1` keeps a dragged file's name; `replace=1` explicitly permits replacing a managed name) |
 | DELETE | `/api/zones/{id}/images/{file}` | delete a managed content file |
 | GET | `/previews/{id}/{file}` | serve stored content for preview/download (protected) |
 
@@ -424,8 +504,10 @@ curl -b cookies.txt -F image=@capture.png \
 ```
 
 For images, formats are PNG, JPEG, and WebP — determined by **content** (magic
-bytes + structure), never by the declared MIME type. Rejections: empty, too
-large, unknown format, incomplete, or structurally malformed container. Pixel
+bytes + bounded structure), never by the declared MIME type. An image-looking
+upload that fails this structural check is retained as opaque binary instead of
+being previewed; it is rejected when `accept_bin = false`. Empty uploads and
+unknown content still follow the normal text/binary classification. Pixel
 decompression remains the browser/harness responsibility. Valid UTF-8 content
 without NUL bytes is text; other bytes are opaque binary. The response uses
 `kind` values `image`, `text`, or `binary`; non-image items have `null`
@@ -434,8 +516,10 @@ dimensions and format.
 Without `preserve_name=1`, names are generated server-side
 (`YYYY-MM-DD_HH-MM-SS_<6 hex>.ext`, creation with `O_EXCL`: no overwriting).
 With `preserve_name=1`, a valid multipart filename is retained. If a file with
-that name is already managed by Pasteberth, its content and sidecar are replaced
-atomically; a foreign file is never overwritten. Free space below the threshold
+that name is already managed by Pasteberth, `replace=1` is required; without it
+the API returns `428 replacement_required` before writing anything. With the
+flag, its content and sidecar are replaced atomically. A foreign file is never
+overwritten and returns `409 storage_conflict`. Free space below the threshold
 returns `507 storage_low`. A retention error returns `503 retention_error` after
 the content is created; the client must therefore reload the history before
 blindly retrying.
@@ -459,16 +543,17 @@ blindly retrying.
   User filenames reject path separators, NUL, CR/LF, reserved Pasteberth names,
   and exceed neither 200 characters nor 240 UTF-8 bytes; preview membership is
   still required.
-- Only files with a valid, coherent Pasteberth sidecar can be read, deleted, or
-  replaced. Transaction-owned temporary files are reconciled after a crash;
-  files without a durable ownership marker, including names that merely look
-  generated, are preserved.
+- Only files with a valid, coherent Pasteberth sidecar can be read, deleted,
+  renamed, or replaced. Explicit filesystem deletion can remove a structurally
+  valid pair whose recorded size is stale; files without a durable ownership
+  marker, including names that merely look generated, are preserved.
 - Writable target directories warn on non-private modes; private mode
   (`0700`) is recommended. Private stored files/sidecars (`0600`), symbolic links
   refused, and temporary files
   reconciled after a crash. Read-only shared directory modes are warned about.
-- Complete structural validation of PNG/JPEG/WebP, dimensions and pixel budget,
-  and rejection of truncated containers.
+- Bounded structural validation of PNG/JPEG/WebP, dimensions and pixel budget;
+  image-looking data that fails validation is retained as a binary attachment,
+  not served as an image preview.
 - Retention under a per-zone lock: deterministic ordering, safe concurrent
   uploads (dedicated tests).
 
@@ -483,14 +568,15 @@ npm run test:all              # Python + browser in parallel
 
 The suite covers: image validation (PNG/JPEG/WebP, structural corruption, spoofing),
 image/text/binary classification, filename preservation/replacement/downloads,
-configuration & startup policy, storage/retention/ownership,
+filesystem-drop/rename/delete, configuration & startup policy, storage/retention/ownership,
 auth/sessions/anti-brute-force, multipart parser, full HTTP integration
 (auth, CSRF/Origin, proxies, headers, secret leakage), concurrency
-(parallel uploads in the same/multiple zones, readers during writes),
+(parallel uploads in the same/multiple zones, readers during writes, named
+replacement conflicts),
 CLI (passwd, refusal of dangerous configuration), frontend contracts, and
 Playwright browser scenarios on a real Pasteberth server: loading and keyboard
 selection, paste without a zone, image/text/binary upload, preview, selection in
-the index, drag and drop, and exact-name downloads.
+the index, drag and drop, replacement confirmation, and exact-name downloads.
 Browser tests use Chromium by default; `E2E_BROWSER=firefox` is available if the
 corresponding Playwright browser is installed.
 

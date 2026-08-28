@@ -11,7 +11,7 @@ from pathlib import Path
 
 from pasteberth import __version__
 from pasteberth.auth import load_password_hash, verify_password
-from pasteberth.cli import _network_warning
+from pasteberth.cli import _network_warning, _read_drop_source
 from pasteberth.config import load_config
 
 from tests.helpers import REPO_ROOT, write_config
@@ -360,6 +360,162 @@ class TestConfigurationDepot(unittest.TestCase):
             )
         )
         self.assertIsNone(_network_warning(cfg))
+
+
+class TestFilesystemDrop(unittest.TestCase):
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.tmp = Path(self._tmp.name)
+        self.addCleanup(self._tmp.cleanup)
+        self.cfg = write_config(self.tmp)
+        self.zone = self.tmp / "default-images"
+
+    def _run_drop(self, *sources, replace=False):
+        args = ["filesystem-drop", "--config", str(self.cfg)]
+        if replace:
+            args.append("--replace")
+        args.extend([str(self.zone), *(str(source) for source in sources)])
+        return run_cli(args)
+
+    def _run_rename(self, source, target):
+        return run_cli(
+            [
+                "filesystem-rename",
+                "--config",
+                str(self.cfg),
+                str(self.zone),
+                source,
+                target,
+            ]
+        )
+
+    def _run_delete(self, *files, force=False):
+        args = ["filesystem-delete", "--config", str(self.cfg)]
+        if force:
+            args.append("--force")
+        args.extend([str(self.zone), *files])
+        return run_cli(args)
+
+    def test_copie_le_fichier_et_cree_le_sidecar(self):
+        source = self.tmp / "report.txt"
+        source.write_text("version 1\n", encoding="utf-8")
+
+        proc = self._run_drop(source)
+
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertIn("@", proc.stdout)
+        target = self.zone / source.name
+        self.assertEqual(target.read_text(encoding="utf-8"), "version 1\n")
+        self.assertTrue((self.zone / (source.name + ".json")).is_file())
+        self.assertEqual(source.read_text(encoding="utf-8"), "version 1\n")
+
+    def test_remplacement_exige_l_option_expresse(self):
+        source = self.tmp / "report.txt"
+        source.write_text("version 1\n", encoding="utf-8")
+        first = self._run_drop(source)
+        self.assertEqual(first.returncode, 0, first.stderr)
+
+        source.write_text("version 2\n", encoding="utf-8")
+        refused = self._run_drop(source)
+        self.assertEqual(refused.returncode, 1)
+        self.assertIn("remplacement explicite", refused.stderr)
+        self.assertEqual((self.zone / source.name).read_text(encoding="utf-8"), "version 1\n")
+
+        replaced = self._run_drop(source, replace=True)
+        self.assertEqual(replaced.returncode, 0, replaced.stderr)
+        self.assertEqual((self.zone / source.name).read_text(encoding="utf-8"), "version 2\n")
+
+    def test_fichier_etranger_jamais_ecrase_meme_avec_replace(self):
+        foreign = self.zone / "foreign.txt"
+        self.zone.mkdir(parents=True)
+        foreign.write_text("foreign\n", encoding="utf-8")
+        source = self.tmp / "foreign-source.txt"
+        source.write_text("replacement\n", encoding="utf-8")
+        source = source.rename(self.tmp / "foreign.txt")
+
+        proc = self._run_drop(source, replace=True)
+
+        self.assertEqual(proc.returncode, 1)
+        self.assertIn("fichier etranger", proc.stderr)
+        self.assertEqual(foreign.read_text(encoding="utf-8"), "foreign\n")
+
+    def test_plusieurs_sources_sont_traitees_individuellement(self):
+        first = self.tmp / "first.txt"
+        second = self.tmp / "second.bin"
+        first.write_text("first", encoding="utf-8")
+        second.write_bytes(b"\x00\x01")
+
+        proc = self._run_drop(first, second)
+
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual((self.zone / first.name).read_text(encoding="utf-8"), "first")
+        self.assertEqual((self.zone / second.name).read_bytes(), b"\x00\x01")
+
+    def test_source_fifo_refusee_sans_bloquer(self):
+        fifo = self.tmp / "source.fifo"
+        os.mkfifo(fifo)
+
+        with self.assertRaisesRegex(ValueError, "fichier régulier"):
+            _read_drop_source(fifo, 1024)
+
+    def test_rename_deplace_le_sidecar(self):
+        source = self.tmp / "report.txt"
+        source.write_text("report", encoding="utf-8")
+        dropped = self._run_drop(source)
+        self.assertEqual(dropped.returncode, 0, dropped.stderr)
+
+        renamed = self._run_rename("report.txt", "renamed.txt")
+
+        self.assertEqual(renamed.returncode, 0, renamed.stderr)
+        self.assertFalse((self.zone / "report.txt").exists())
+        self.assertFalse((self.zone / "report.txt.json").exists())
+        self.assertEqual((self.zone / "renamed.txt").read_text(encoding="utf-8"), "report")
+        metadata = (self.zone / "renamed.txt.json").read_text(encoding="utf-8")
+        self.assertIn('"filename":"renamed.txt"', metadata)
+
+    def test_delete_supprime_le_fichier_et_le_sidecar(self):
+        source = self.tmp / "report.txt"
+        source.write_text("report", encoding="utf-8")
+        dropped = self._run_drop(source)
+        self.assertEqual(dropped.returncode, 0, dropped.stderr)
+
+        deleted = self._run_delete("report.txt")
+
+        self.assertEqual(deleted.returncode, 0, deleted.stderr)
+        self.assertFalse((self.zone / "report.txt").exists())
+        self.assertFalse((self.zone / "report.txt.json").exists())
+
+    def test_delete_force_supprime_un_sidecar_stale(self):
+        source = self.tmp / "report.txt"
+        source.write_text("report", encoding="utf-8")
+        dropped = self._run_drop(source)
+        self.assertEqual(dropped.returncode, 0, dropped.stderr)
+        (self.zone / "report.txt").write_text("changed content", encoding="utf-8")
+
+        refused = self._run_delete("report.txt")
+
+        self.assertEqual(refused.returncode, 1)
+        self.assertTrue((self.zone / "report.txt").exists())
+
+        forced = self._run_delete("report.txt", force=True)
+
+        self.assertEqual(forced.returncode, 0, forced.stderr)
+        self.assertFalse((self.zone / "report.txt").exists())
+        self.assertFalse((self.zone / "report.txt.json").exists())
+
+    def test_rename_ne_remplace_pas_une_cible_etrangere(self):
+        source = self.tmp / "report.txt"
+        source.write_text("report", encoding="utf-8")
+        dropped = self._run_drop(source)
+        self.assertEqual(dropped.returncode, 0, dropped.stderr)
+        (self.zone / "target.txt").write_text("foreign", encoding="utf-8")
+
+        renamed = self._run_rename("report.txt", "target.txt")
+
+        self.assertEqual(renamed.returncode, 1)
+        self.assertIn("cible", renamed.stderr)
+        self.assertTrue((self.zone / "report.txt").exists())
+        self.assertEqual((self.zone / "target.txt").read_text(encoding="utf-8"), "foreign")
 
 if __name__ == "__main__":
     unittest.main()

@@ -49,6 +49,17 @@
   <div id="pv-toast" class="toast" role="status" hidden></div>
 </dialog>
 
+<div id="replace-backdrop" class="dialog-fallback-backdrop" hidden></div>
+<dialog id="replace" aria-labelledby="replace-title" aria-describedby="replace-message">
+  <h2 id="replace-title">Replace existing file?</h2>
+  <p id="replace-message">A Pasteberth file already uses this name:</p>
+  <code id="replace-filename"></code>
+  <div class="replace-actions">
+    <button type="button" id="replace-cancel" class="ghost-btn">Cancel</button>
+    <button type="button" id="replace-confirm" class="replace-btn">Replace</button>
+  </div>
+</dialog>
+
 <script src="/static/app.js"></script>
 </body>
 </html>

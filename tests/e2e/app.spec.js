@@ -321,7 +321,7 @@ test("accepte le glisser-déposer sur une zone", async ({ page }) => {
   await expect(secondary.locator(".zone-select")).toHaveAttribute("aria-pressed", "true");
 });
 
-test("conserve le nom et propose le téléchargement pour un binaire déposé", async ({ page }) => {
+test("conserve le nom et confirme le remplacement d'un binaire déposé", async ({ page }) => {
   await openApp(page);
   await dispatchBinaryDrop(page, '.zone[data-zone="default"]');
 
@@ -338,6 +338,56 @@ test("conserve le nom et propose le téléchargement pour un binaire déposé", 
   expect(download.suggestedFilename()).toBe("archive.zip");
 
   await dispatchBinaryDrop(page, '.zone[data-zone="default"]');
+  await expect(page.locator("#replace")).toBeVisible();
+  await expect(page.locator("#replace-filename")).toHaveText("archive.zip");
+  await page.locator("#replace-cancel").click();
+  await expect(defaultZone.locator(".thumb-wrap")).toHaveCount(1);
+
+  await dispatchBinaryDrop(page, '.zone[data-zone="default"]');
+  await expect(page.locator("#replace")).toBeVisible();
+  await page.locator("#replace-confirm").click();
+  await expect(defaultZone.locator(".thumb-wrap")).toHaveCount(1);
+});
+
+test("utilise le fallback du dialogue de remplacement sans API native", async ({ page }) => {
+  await page.addInitScript(() => {
+    Object.defineProperty(HTMLDialogElement.prototype, "showModal", { value: undefined });
+    Object.defineProperty(HTMLDialogElement.prototype, "close", { value: undefined });
+  });
+  await openApp(page);
+  const defaultZone = page.locator('[data-zone="default"]');
+
+  await dispatchBinaryDrop(page, '.zone[data-zone="default"]');
+  await expect(defaultZone.locator(".fname")).toHaveText("archive.zip");
+  await dispatchBinaryDrop(page, '.zone[data-zone="default"]');
+  await expect(page.locator("#replace")).toBeVisible();
+  await expect(page.locator("#replace")).toHaveClass(/dialog-fallback/);
+  const secondaryBox = await page.locator('[data-zone="secondary"]').boundingBox();
+  await page.mouse.click(
+    secondaryBox.x + secondaryBox.width / 2,
+    secondaryBox.y + secondaryBox.height / 2,
+  );
+  await expect(defaultZone.getByRole("button", { name: "Select zone Default" }))
+    .toHaveAttribute("aria-pressed", "true");
+  await expect(page.locator("#replace")).toBeVisible();
+  await dispatchBinaryDrop(page, '.zone[data-zone="default"]');
+  await page.locator("#replace-confirm").click();
+  await expect(page.locator("#replace")).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(page.locator("#replace")).toBeHidden();
+
+  await dispatchBinaryDrop(page, '.zone[data-zone="default"]');
+  await expect(page.locator("#replace")).toBeVisible();
+  await page.locator("#replace-confirm").focus();
+  await page.keyboard.press("Tab");
+  await expect(page.locator("#replace-cancel")).toBeFocused();
+  await page.keyboard.press("Shift+Tab");
+  await expect(page.locator("#replace-confirm")).toBeFocused();
+  await page.locator("#replace-cancel").click();
+  await expect(defaultZone.locator(".thumb-wrap")).toHaveCount(1);
+
+  await dispatchBinaryDrop(page, '.zone[data-zone="default"]');
+  await page.locator("#replace-confirm").click();
   await expect(defaultZone.locator(".thumb-wrap")).toHaveCount(1);
 });
 

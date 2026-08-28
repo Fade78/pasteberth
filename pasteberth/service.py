@@ -26,6 +26,7 @@ from pasteberth.paths import open_directory
 from pasteberth.storage import (
     DestinationError,
     LocalDestination,
+    ReplacementRequiredError,
     RetentionError,
     StorageConflictError,
     StorageLowError,
@@ -107,6 +108,7 @@ class ServiceError(Exception):
         "storage_low": 507,
         "retention_error": 503,
         "storage_conflict": 409,
+        "replacement_required": 428,
         "destination_error": 500,
     }
 
@@ -170,6 +172,8 @@ class PasteService:
         declared_mime: str | None,
         filename_hint: str | None = None,
         preserve_filename: bool = False,
+        *,
+        allow_replace: bool = False,
     ) -> dict:
         zone = self._zone_cfg.get(zid)
         if zone is None:
@@ -233,12 +237,19 @@ class PasteService:
                 self._space_locks[device].locked(),
             ):
                 dest.ensure_space(len(data), zone.min_free_percent)
-                stored = dest.save(data, info, filename=target_filename)
+                stored = dest.save(
+                    data,
+                    info,
+                    filename=target_filename,
+                    allow_replace=allow_replace,
+                )
                 deleted = dest.apply_retention(zone.retain, stored.filename)
         except StorageLowError as exc:
             raise ServiceError("storage_low", str(exc)) from exc
         except RetentionError as exc:
             raise ServiceError("retention_error", str(exc)) from exc
+        except ReplacementRequiredError as exc:
+            raise ServiceError("replacement_required", str(exc)) from exc
         except StorageConflictError as exc:
             raise ServiceError("storage_conflict", str(exc)) from exc
         except (DestinationError, OSError) as exc:
@@ -267,7 +278,13 @@ class PasteService:
 
     # --------------------------------------------------------------- preview
 
-    def delete(self, zid: str, filename: str) -> None:
+    def delete(
+        self,
+        zid: str,
+        filename: str,
+        *,
+        allow_stale_sidecar: bool = False,
+    ) -> None:
         """Supprime une image connue (fichier + sidecar) de la zone."""
         if zid not in self._zone_cfg:
             raise ServiceError("unknown_zone", f"zone inconnue : {zid}")
@@ -275,7 +292,10 @@ class PasteService:
             raise ServiceError("unknown_image", "nom de fichier invalide")
         try:
             with self._locks[zid], self._destinations[zid].operation_lock(exclusive=True):
-                self._destinations[zid].delete(filename)
+                self._destinations[zid].delete(
+                    filename,
+                    allow_stale_sidecar=allow_stale_sidecar,
+                )
         except UnknownImageError as exc:
             raise ServiceError("unknown_image", str(exc)) from exc
         except StorageConflictError as exc:
@@ -283,6 +303,24 @@ class PasteService:
         except (DestinationError, OSError) as exc:
             raise ServiceError("destination_error", str(exc)) from exc
         log.info("suppression zone=%s fichier=%s", zid, filename)
+
+    def rename(self, zid: str, source: str, target: str) -> dict:
+        """Renomme une paire gérée (fichier + sidecar) dans une zone."""
+        if zid not in self._zone_cfg:
+            raise ServiceError("unknown_zone", f"zone inconnue : {zid}")
+        if not valid_filename(source) or not valid_filename(target) or source == target:
+            raise ServiceError("invalid_filename", "nom source ou cible invalide")
+        try:
+            with self._locks[zid], self._destinations[zid].operation_lock(exclusive=True):
+                stored = self._destinations[zid].rename(source, target)
+        except UnknownImageError as exc:
+            raise ServiceError("unknown_image", str(exc)) from exc
+        except StorageConflictError as exc:
+            raise ServiceError("storage_conflict", str(exc)) from exc
+        except (DestinationError, OSError) as exc:
+            raise ServiceError("destination_error", str(exc)) from exc
+        log.info("renommage zone=%s source=%s cible=%s", zid, source, target)
+        return self.item_payload(zid, stored)
 
     def preview(self, zid: str, filename: str) -> tuple[bytes, str]:
         """Contenu binaire + MIME ; n'accepte que les fichiers connus."""
