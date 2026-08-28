@@ -284,6 +284,37 @@ class TestAuthentification(Base):
         )
         self.assertEqual(status, 413)
 
+    def test_corps_login_plafond_4kio(self):
+        status, _, _ = request(
+            self.server.port,
+            "POST",
+            "/login",
+            body=b"password=" + b"x" * (4 * 1024),
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+        )
+        self.assertEqual(status, 413)
+
+    def test_login_multipart_trop_de_parties_refuse(self):
+        boundary = "----pb-test"
+        parts = []
+        for index in range(40):
+            parts.append(
+                f"--{boundary}\r\n"
+                f'Content-Disposition: form-data; name="f{index}"\r\n\r\n'
+                f"value{index}\r\n"
+            )
+        body = ("".join(parts) + f"--{boundary}--\r\n").encode()
+        status, _, _ = request(
+            self.server.port,
+            "POST",
+            "/login",
+            body=body,
+            headers={"Content-Type": f"multipart/form-data; boundary={boundary}"},
+        )
+        # Le parse borné échoue avant toute vérification scrypt : le login
+        # est refusé sans réserver de slot coûteux.
+        self.assertEqual(status, 401)
+
     def test_reset_reseau_pendant_login_ne_reserve_pas_de_slot(self):
         import socket
         import struct
@@ -965,6 +996,18 @@ class TestOriginCSRF(Base):
         self.assertEqual(
             handler._normalize_netloc("[2001:0db8::1]:80", "http"),
             "[2001:db8::1]",
+        )
+        self.assertEqual(
+            handler._normalize_netloc("hote:80", "https"),
+            "hote:80",
+        )
+        self.assertEqual(
+            handler._normalize_netloc("hote:443", "http"),
+            "hote:443",
+        )
+        self.assertEqual(
+            handler._normalize_netloc("hote:443", "https"),
+            "hote",
         )
         body, ctype = build_multipart(data=make_png())
         status, _, _ = self.req(

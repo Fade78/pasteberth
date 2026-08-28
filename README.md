@@ -37,7 +37,7 @@ agent/script ── filesystem-drop ─────▶ captures/<zone>/ ──�
 The browser **never** needs to access the returned path. This is the path seen
 by the harness, on the machine where Pasteberth runs.
 
-The current version is `1.0.7`.
+The current version is `1.1.0`.
 
 ---
 
@@ -554,6 +554,11 @@ blindly retrying.
 - Bounded structural validation of PNG/JPEG/WebP, dimensions and pixel budget;
   image-looking data that fails validation is retained as a binary attachment,
   not served as an image preview.
+- **Image validation is structural, not a full codec decode**: containers,
+  dimensions, chunk/segment structure and pixel budgets are checked without
+  decoding the bitstream. A structurally valid but undecodable file (e.g. a
+  truncated WebP or a minimal JPEG) can be stored and produce a broken preview;
+  it is never executed server-side. Full decode validation is a V2 candidate.
 - Retention under a per-zone lock: deterministic ordering, safe concurrent
   uploads (dedicated tests).
 

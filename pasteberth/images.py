@@ -3,6 +3,11 @@
 Le serveur ne décode pas les pixels ni les bitstreams codec. Il vérifie les
 conteneurs, les dimensions et les budgets nécessaires avant une preview côté
 navigateur/harness ; la classification décide ensuite du fallback binaire.
+
+Contrat : la validation est structurelle, pas un décodage codec complet. Un
+fichier structurellement valide mais non décodable (WebP tronqué, JPEG
+minimal) peut être stocké et produire une preview cassée ; il n'est jamais
+exécuté côté serveur. Un décodage complet est un candidat V2.
 """
 from __future__ import annotations
 

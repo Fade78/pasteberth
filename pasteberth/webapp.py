@@ -704,7 +704,7 @@ def make_handler(cfg: Config, service: PasteService, sessions: SessionStore,
             released = False
             try:
                 try:
-                    body, _ = self._read_body(16 * 1024)
+                    body, _ = self._read_body(4 * 1024)
                 except BodyTooLarge:
                     self.close_connection = True
                     self._error(413, "too_large", "corps de login trop grand")
