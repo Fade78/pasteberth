@@ -120,6 +120,14 @@ class ZoneConfig:
 
 
 @dataclass(frozen=True)
+class GroupConfig:
+    name: str
+    pattern: tuple[str, ...]
+    hide_empty: bool = False
+    show_count: bool = True
+
+
+@dataclass(frozen=True)
 class Config:
     listen_address: str
     port: int
@@ -136,6 +144,7 @@ class Config:
     auth: AuthConfig
     tls: TLSConfig
     zones: dict[str, ZoneConfig]
+    groups: tuple[GroupConfig, ...]
     log_level: str
     config_path: Path
     warnings: list[str] = field(default_factory=list)
@@ -335,6 +344,45 @@ def _parse_zone(raw_zone: object, index: int, warnings: list[str]) -> ZoneConfig
     )
 
 
+def _parse_groups(raw: object, warnings: list[str]) -> tuple[GroupConfig, ...]:
+    if raw is None:
+        return ()
+    if not isinstance(raw, list):
+        raise ConfigError("'groups' doit être une liste de tables")
+    groups = []
+    seen_names = set()
+    for index, item in enumerate(raw):
+        where = f"[[groups]] #{index + 1}"
+        if not isinstance(item, dict):
+            raise ConfigError(f"{where}: doit être une table")
+        _warn_unknown(
+            item,
+            {"name", "pattern", "hide_empty", "show_count"},
+            where,
+            warnings,
+        )
+        name = _get_str(item, "name", where)
+        if name in seen_names:
+            raise ConfigError(f"{where}: nom de groupe dupliqué : {name!r}")
+        seen_names.add(name)
+        raw_pattern = item.get("pattern")
+        if raw_pattern is None:
+            raise ConfigError(f"{where}: 'pattern' requis (liste de chaînes)")
+        if not isinstance(raw_pattern, list) or not all(isinstance(p, str) for p in raw_pattern):
+            raise ConfigError(f"{where}: 'pattern' doit être une liste de chaînes")
+        if not raw_pattern:
+            raise ConfigError(f"{where}: 'pattern' ne peut pas être vide")
+        hide_empty = _get_bool(item, "hide_empty", where, default=False)
+        show_count = _get_bool(item, "show_count", where, default=True)
+        groups.append(GroupConfig(
+            name=name,
+            pattern=tuple(raw_pattern),
+            hide_empty=hide_empty,
+            show_count=show_count,
+        ))
+    return tuple(groups)
+
+
 def _parse_trusted_proxies(raw: object, warnings: list[str]) -> tuple:
     if raw is None:
         return ()
@@ -400,7 +448,7 @@ def load_config(path: Path) -> Config:
          "allow_unauthenticated_local", "allow_unauthenticated_remote",
          "allow_insecure_http_remote", "accept_bin", "accept_img", "accept_doc",
          "auth", "tls",
-         "zones", "log_level"},
+         "zones", "groups", "log_level"},
         "config",
         warnings,
     )
@@ -461,6 +509,8 @@ def load_config(path: Path) -> Config:
             raise ConfigError(f"id de zone dupliqué : {zone.id!r}")
         zones[zone.id] = zone
 
+    groups = _parse_groups(data.get("groups"), warnings)
+
     cfg = Config(
         listen_address=listen,
         port=port,
@@ -477,6 +527,7 @@ def load_config(path: Path) -> Config:
         auth=auth,
         tls=tls,
         zones=zones,
+        groups=groups,
         log_level=log_level,
         config_path=path,
         warnings=warnings,
@@ -571,6 +622,7 @@ def build_default_config() -> Config:
                 color="#304237",
             )
         },
+        groups=(),
         log_level="INFO",
         config_path=repository_config_path(),
         using_default_config=True,

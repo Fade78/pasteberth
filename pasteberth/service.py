@@ -7,6 +7,7 @@ indépendantes entre elles.
 """
 from __future__ import annotations
 
+import fnmatch
 import fcntl
 import logging
 import os
@@ -147,13 +148,36 @@ class PasteService:
         zones = []
         for zid, zone in self._zone_cfg.items():
             count = len(self.history(zid))
+            # Compute which groups this zone belongs to
+            zone_groups = []
+            for group in self.cfg.groups:
+                if any(fnmatch.fnmatch(zid, pattern) for pattern in group.pattern):
+                    zone_groups.append(group.name)
             zones.append(
                 {
                     "id": zid,
                     "label": zone.label,
                     "color": zone.color,
                     "retain": zone.retain,
-                    "count": count,
+                    "count": len(self.history(zid)),
+                    "groups": zone_groups,
+                }
+            )
+        # Build groups response
+        groups = []
+        for group in self.cfg.groups:
+            zone_ids = [
+                zid for zid in self._zone_cfg
+                if any(fnmatch.fnmatch(zid, pattern) for pattern in group.pattern)
+            ]
+            groups.append(
+                {
+                    "name": group.name,
+                    "pattern": list(group.pattern),
+                    "zone_ids": zone_ids,
+                    "hide_empty": group.hide_empty,
+                    "show_count": group.show_count,
+                    "zone_count": len(zone_ids),
                 }
             )
         return {
@@ -161,6 +185,7 @@ class PasteService:
             "max_upload_bytes": self.cfg.max_upload_bytes,
             "max_image_pixels": self.cfg.max_image_pixels,
             "zones": zones,
+            "groups": groups,
         }
 
     # --------------------------------------------------------------- upload

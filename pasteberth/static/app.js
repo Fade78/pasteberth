@@ -18,6 +18,11 @@
     selectedByZone: Object.create(null),
     retryTimer: null,
     toastTimer: null,
+    // Groups
+    groups: [],              // [{name, pattern, zone_ids, hide_empty, show_count, zone_count}]
+    activeGroupId: null,     // null = first group (or "All" if no explicit groups)
+    showEmptyGroups: false,
+    showZoneCounts: true,
   };
 
   let refreshGeneration = 0;
@@ -26,6 +31,7 @@
   let activePreviewController = null;
 
   const grid = document.getElementById("grid");
+  const groupTabs = document.getElementById("group-tabs");
   const statusEl = document.getElementById("status");
   const statusText = document.getElementById("status-text");
   const logoutForm = document.getElementById("logout-form");
@@ -712,9 +718,16 @@
     return index;
   }
 
+  function getVisibleZones() {
+    if (!state.activeGroupId || !state.groups.length) return state.zones;
+    const group = state.groups.find(g => g.name === state.activeGroupId);
+    if (!group) return state.zones;
+    return state.zones.filter(z => group.zone_ids.includes(z.id));
+  }
+
   function renderAll() {
     grid.replaceChildren();
-    for (const zone of state.zones) grid.appendChild(renderZone(zone));
+    for (const zone of getVisibleZones()) grid.appendChild(renderZone(zone));
   }
 
   function rerenderZone(zoneId) {
@@ -741,7 +754,111 @@
     }
   }
 
-  // ------------------------------------------------------------- data
+  function renderGroups() {
+    if (!groupTabs) return;
+    const groups = state.groups;
+    if (!groups.length) {
+      groupTabs.hidden = true;
+      return;
+    }
+    // Only show group tabs if there's more than one group configured
+    if (groups.length <= 1) {
+      groupTabs.hidden = true;
+      return;
+    }
+    groupTabs.hidden = false;
+    groupTabs.replaceChildren();
+    for (const group of state.groups) {
+      const tab = document.createElement("button");
+      tab.type = "button";
+      tab.className = "group-tab";
+      tab.dataset.group = group.name;
+      tab.setAttribute("role", "tab");
+      tab.setAttribute("aria-selected", "false");
+      const count = group.zone_count ?? group.zone_ids?.length ?? 0;
+      const isEmpty = count === 0;
+      if (isEmpty && group.hide_empty) continue;
+      let label = group.name;
+      if (group.show_count) label += ` <span class="count">(${count})</span>`;
+      tab.innerHTML = label;
+      if (isEmpty) tab.classList.add("empty");
+      if (group.name === state.activeGroupId) tab.classList.add("active");
+      tab.addEventListener("click", () => {
+        setActiveGroup(group.name);
+      });
+      groupTabs.appendChild(tab);
+    }
+
+    // Add group options dropdown
+    const optionsBtn = document.createElement("button");
+    optionsBtn.type = "button";
+    optionsBtn.className = "group-tab group-options-btn";
+    optionsBtn.innerHTML = "⋮";
+    optionsBtn.setAttribute("aria-label", "Group options");
+    optionsBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      showGroupOptions(e.target);
+    });
+    groupTabs.appendChild(optionsBtn);
+  }
+
+  function showGroupOptions(anchor) {
+    // Remove any existing dropdown
+    const existing = document.querySelector(".group-options-dropdown");
+    if (existing) existing.remove();
+
+    const dropdown = document.createElement("div");
+    dropdown.className = "group-options-dropdown";
+    dropdown.innerHTML = `
+      <label>
+        <input type="checkbox" id="opt-show-empty" ${state.showEmptyGroups ? "checked" : ""}>
+        <span>Show empty groups</span>
+      </label>
+      <label>
+        <input type="checkbox" id="opt-show-count" ${state.showZoneCounts ? "checked" : ""}>
+        <span>Show zone counts</span>
+      </label>
+    `;
+    document.body.appendChild(dropdown);
+
+    const rect = anchor.getBoundingClientRect();
+    dropdown.style.left = `${rect.left}px`;
+    dropdown.style.top = `${rect.bottom + 4}px`;
+
+    const onClickOutside = (e) => {
+      if (!dropdown.contains(e.target) && e.target !== anchor) {
+        dropdown.remove();
+        document.removeEventListener("click", onClickOutside);
+      }
+    };
+    document.addEventListener("click", onClickOutside);
+
+    dropdown.querySelector("#opt-show-empty").addEventListener("change", (e) => {
+      state.showEmptyGroups = e.target.checked;
+      try { localStorage.setItem("pb.showEmptyGroups", e.target.checked); } catch (_) {}
+      renderGroups();
+    });
+    dropdown.querySelector("#opt-show-count").addEventListener("change", (e) => {
+      state.showZoneCounts = e.target.checked;
+      try { localStorage.setItem("pb.showZoneCounts", e.target.checked); } catch (_) {}
+      renderGroups();
+    });
+  }
+
+  function setActiveGroup(groupName) {
+    state.activeGroupId = groupName;
+    try {
+      localStorage.setItem("pb.activeGroup", groupName);
+    } catch (_) {}
+    // Update tab UI
+    for (const tab of groupTabs.querySelectorAll(".group-tab")) {
+      const active = tab.dataset.group === groupName;
+      tab.classList.toggle("active", active);
+      tab.setAttribute("aria-selected", String(active));
+    }
+    renderAll();
+    toast(`Group: ${groupName}`);
+  }
 
   async function refresh() {
     const generation = ++refreshGeneration;
@@ -763,12 +880,32 @@
       state.authEnabled = overview.auth_enabled !== false;
       logoutForm.hidden = !state.authEnabled;
       state.zones = nextZones;
+      state.groups = overview.groups || [];
       for (const zoneId of Object.keys(state.selectedByZone)) {
         const zone = state.zones.find(z => z.id === zoneId);
         if (!zone || !zone.images.some(item => item.id === state.selectedByZone[zoneId])) {
           delete state.selectedByZone[zoneId];
         }
       }
+
+      // Initialize group state from localStorage
+      if (!state.activeGroupId && state.groups.length > 0) {
+        try {
+          const stored = localStorage.getItem("pb.activeGroup");
+          if (stored && state.groups.some(g => g.name === stored)) {
+            state.activeGroupId = stored;
+          } else {
+            state.activeGroupId = state.groups[0].name;
+          }
+        } catch (_) {}
+      }
+      // Load group UI preferences
+      try {
+        state.showEmptyGroups = localStorage.getItem("pb.showEmptyGroups") === "true";
+        state.showZoneCounts = localStorage.getItem("pb.showZoneCounts") !== "false";
+      } catch (_) {}
+
+      renderGroups();
       renderAll();
 
       let stored = null;

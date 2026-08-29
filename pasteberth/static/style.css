@@ -93,6 +93,89 @@ code, kbd {
   padding: 14px;
 }
 
+/* ---------------------------------------------------------------- group tabs */
+
+.group-tabs {
+  display: flex;
+  gap: 4px;
+  overflow-x: auto;
+  padding: 0 1rem 8px;
+  margin-bottom: 8px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.07);
+}
+
+.group-tab {
+  padding: 6px 12px;
+  border-radius: 8px;
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--muted);
+  font-size: 0.85rem;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.group-tab:hover { color: var(--text); }
+
+.group-tab.active {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: rgba(77, 163, 255, 0.1);
+}
+
+.group-tab .count { opacity: 0.6; font-weight: 400; margin-left: 4px; }
+
+.group-tab.empty { opacity: 0.4; }
+
+.group-tab.hidden { display: none; }
+
+.group-options-btn {
+  padding: 6px 10px;
+  border-radius: 8px;
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--muted);
+  font-size: 1.2rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.group-options-btn:hover {
+  color: var(--text);
+  border-color: var(--accent);
+  background: rgba(77, 163, 255, 0.1);
+}
+
+.group-options-dropdown {
+  position: fixed;
+  background: var(--panel);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 8px;
+  padding: 8px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+  z-index: 100;
+  min-width: 180px;
+}
+
+.group-options-dropdown label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  color: var(--text);
+  font-size: 0.85rem;
+  cursor: pointer;
+  border-radius: 4px;
+}
+
+.group-options-dropdown label:hover {
+  background: rgba(255, 255, 255, 0.07);
+}
+
+.group-options-dropdown input[type="checkbox"] {
+  accent-color: var(--accent);
+}
+
 /* Each zone receives these values through CSSOM: --bg, --fg, --halo, --halo-soft, --line */
 .zone {
   position: relative;
@@ -106,13 +189,16 @@ code, kbd {
   flex-direction: column;
   gap: 10px;
   cursor: pointer;
-  transition: box-shadow 120ms ease, border-color 120ms ease, transform 60ms ease;
+  outline: 3px solid transparent;
+  outline-offset: -3px;
+  transition: outline-color 120ms ease, border-color 120ms ease, transform 60ms ease;
 }
 
 /* Active state: border + halo + marker, never color alone. */
 .zone.active {
   border-color: var(--halo);
-  box-shadow: 0 0 0 3px var(--halo-soft), 0 10px 30px rgba(0, 0, 0, 0.25);
+  outline-color: var(--halo);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.25);
 }
 .zone.active .zone-marker { opacity: 1; transform: scale(1); }
 .zone.active .zone-label::after {

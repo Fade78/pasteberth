@@ -37,7 +37,7 @@ agent/script ── filesystem-drop ─────▶ captures/<zone>/ ──�
 The browser **never** needs to access the returned path. This is the path seen
 by the harness, on the machine where Pasteberth runs.
 
-The current version is `1.2.0`.
+The current version is `1.3.0`.
 
 ---
 

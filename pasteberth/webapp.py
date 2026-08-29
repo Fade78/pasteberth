@@ -48,6 +48,7 @@ _ROUTES: tuple[tuple[str, re.Pattern, str], ...] = tuple(
     for method, pattern, name in (
         ("GET", r"^/api/health$", "h_health"),
         ("GET", r"^/api/zones$", "h_zones"),
+        ("GET", r"^/api/groups$", "h_groups"),
         ("GET", rf"^/api/zones/{_ZONE_RE}/images$", "h_zone_images"),
         ("POST", rf"^/api/zones/{_ZONE_RE}/images$", "h_zone_upload"),
         ("DELETE", rf"^/api/zones/{_ZONE_RE}/images/{_FILENAME_RE}$", "h_zone_delete"),
@@ -811,6 +812,16 @@ def make_handler(cfg: Config, service: PasteService, sessions: SessionStore,
                 self._error(exc.status, exc.code, str(exc))
                 return
             self._json(200, overview)
+
+        def _h_groups(self) -> None:
+            if not self._require_auth_api():
+                return
+            try:
+                overview = service.overview()
+            except ServiceError as exc:
+                self._error(exc.status, exc.code, str(exc))
+                return
+            self._json(200, {"groups": overview.get("groups", [])})
 
         def _h_zone_images(self, zid: str) -> None:
             if not self._require_auth_api():
