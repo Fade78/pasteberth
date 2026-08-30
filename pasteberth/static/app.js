@@ -781,10 +781,9 @@
       el.appendChild(hint);
     } else {
       const selected = selectedItem(zone);
-      el.appendChild(renderLatest(zone.id, selected));
+      const selectedItemsInZone = selectedItems(zone);
+      el.appendChild(renderLatest(zone, selected, selectedItemsInZone));
       el.appendChild(renderThumbs(zone.images, selected.id, selectedItemIds(zone.id)));
-      const bulkActions = renderBulkActions(zone);
-      if (bulkActions) el.appendChild(bulkActions);
     }
     return el;
   }
@@ -826,10 +825,43 @@
     return meta;
   }
 
-  function renderLatest(zoneId, item) {
+  function renderLatest(zone, item, selectedItemsInZone = []) {
     const card = document.createElement("div");
     card.className = "latest";
     card.dataset.itemId = item.id;
+
+    if (selectedItemsInZone.length > 1) {
+      card.classList.add("selection-latest");
+      const summary = document.createElement("div");
+      summary.className = "selection-summary";
+      const heading = document.createElement("h3");
+      heading.className = "selection-summary-title";
+      heading.textContent = "Selected files";
+      const list = document.createElement("ul");
+      list.className = "selection-summary-list";
+      list.setAttribute("aria-label", "Selected files");
+      for (const selectedItem of selectedItemsInZone) {
+        const entry = document.createElement("li");
+        entry.className = "selection-summary-item";
+        const name = document.createElement("code");
+        name.className = "selection-summary-name";
+        name.textContent = selectedItem.filename;
+        const metadata = document.createElement("span");
+        metadata.className = "selection-summary-meta";
+        metadata.textContent = `${fmtBytes(selectedItem.size)} · ${fmtDateTime(selectedItem.created_at)}`;
+        entry.append(name, metadata);
+        list.appendChild(entry);
+      }
+      summary.append(heading, list);
+
+      const actions = document.createElement("div");
+      actions.className = "latest-right selection-actions";
+      actions.appendChild(renderBulkActions(zone));
+      card.append(summary, actions);
+      return card;
+    }
+
+    const zoneId = zone.id;
     const right = document.createElement("div");
     right.className = "latest-right";
     right.appendChild(itemMeta(item));

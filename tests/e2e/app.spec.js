@@ -530,6 +530,11 @@ test("dépose plusieurs fichiers séquentiellement et permet la sélection group
   await dispatchMultiDrop(page, '[data-zone="default"]');
 
   await expect(defaultZone.locator(".thumb-wrap")).toHaveCount(2);
+  await expect(defaultZone.locator(".selection-latest")).toBeVisible();
+  await expect(defaultZone.locator(".selection-summary-item")).toHaveCount(2);
+  await expect(defaultZone.locator(".selection-summary-meta")).toHaveCount(2);
+  await expect(defaultZone.locator(".selection-latest .download-btn")).toHaveText("Download ZIP");
+  await expect(defaultZone.locator(".selection-latest .zoom-btn")).toHaveCount(0);
   await expect(defaultZone.locator(".bulk-actions")).toHaveCount(1);
   await expect(defaultZone.locator(".bulk-summary")).toHaveText("2 files selected");
 

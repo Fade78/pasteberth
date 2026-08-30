@@ -100,7 +100,9 @@ processes, and terminal tools.
   the top with its name, reference, and a matching content action: `Copy Image`
   or `Copy Text` where relevant, plus `Download EXT` for every type. `Copy link`,
   `Clear`, and image/text `Preview`/`Zoom` remain available according to the
-  content; binary files are downloaded directly.
+  content; binary files are downloaded directly. With multiple selected items,
+  this panel becomes a file list with sizes and stored dates, and the individual
+  download/preview actions are replaced by the group actions, including `Download ZIP`.
 - **Content index**: the items at the bottom form the zone's complete history,
   newest first. Images are shown in thumbnail slots backed by the server's
   preview URL; the server does not generate resized thumbnails. Text and files
