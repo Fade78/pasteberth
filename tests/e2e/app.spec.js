@@ -154,6 +154,9 @@ test.beforeEach(async ({ request }) => {
 
 test("charge les zones et expose une sélection clavier accessible", async ({ page }) => {
   await openApp(page);
+  const brandIcon = page.locator(".brand-icon");
+  await expect(brandIcon).toHaveAttribute("src", "/static/favicon.svg");
+  expect(await brandIcon.evaluate(icon => icon.complete && icon.naturalWidth > 0)).toBe(true);
 
   const defaultZone = page.locator('[data-zone="default"]');
   const secondary = page.locator('[data-zone="secondary"]');

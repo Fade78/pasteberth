@@ -1,4 +1,48 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
-  <rect width="24" height="24" rx="5" fill="#0f1318"/>
-  <path fill="#4da3ff" d="M12 3.5a2.5 2.5 0 0 0-2.5 2.5H8A1.75 1.75 0 0 0 6.25 7.75v10A1.75 1.75 0 0 0 8 19.5h8a1.75 1.75 0 0 0 1.75-1.75v-10A1.75 1.75 0 0 0 16 6h-1.5A2.5 2.5 0 0 0 12 3.5zm0 1.75a.75.75 0 0 1 .75.75v.75h-1.5V6A.75.75 0 0 1 12 5.25zM8 7.75h1.17c.34.49.87.83 1.53.83h2.6c.66 0 1.19-.34 1.53-.83H16v10H8v-10z"/>
+<svg xmlns="http://www.w3.org/2000/svg"
+     viewBox="0 0 512 512"
+     role="img"
+     aria-labelledby="title desc">
+  <title id="title">Pasteberth</title>
+  <desc id="desc">
+    A blue clipboard containing two colored zones with bidirectional arrows,
+    representing a bridge between browser and filesystem clients.
+  </desc>
+
+  <g fill="none"
+     stroke="#4da3ff"
+     stroke-width="26"
+     stroke-linecap="round"
+     stroke-linejoin="round">
+    <path d="M150 118
+             H108
+             C84 118 70 134 70 158
+             V404
+             C70 428 86 444 110 444
+             H326
+             C350 444 366 428 366 404
+             V360" />
+    <path d="M366 282 V254" />
+    <path d="M366 176 V158
+             C366 134 350 118 326 118
+             H286" />
+    <path d="M152 118
+             V92
+             C152 62 174 42 204 42
+             H232
+             C262 42 284 62 284 92
+             V118" />
+    <path d="M152 118 H284" />
+  </g>
+
+  <rect x="106" y="174" width="212" height="86" rx="22" fill="#c33d60" />
+  <path d="M136 203 H246" fill="none" stroke="#f8dce4" stroke-width="14" stroke-linecap="round" opacity=".95" />
+  <path d="M136 232 H216" fill="none" stroke="#f8dce4" stroke-width="14" stroke-linecap="round" opacity=".72" />
+  <path d="M318 217 H420" fill="none" stroke="#c33d60" stroke-width="28" stroke-linecap="round" />
+  <path d="M410 178 L456 217 L410 256 Z" fill="#c33d60" />
+
+  <rect x="106" y="286" width="212" height="86" rx="22" fill="#36c98b" />
+  <path d="M136 315 H246" fill="none" stroke="#ddf8ed" stroke-width="14" stroke-linecap="round" opacity=".95" />
+  <path d="M136 344 H216" fill="none" stroke="#ddf8ed" stroke-width="14" stroke-linecap="round" opacity=".72" />
+  <path d="M456 329 H352" fill="none" stroke="#36c98b" stroke-width="28" stroke-linecap="round" />
+  <path d="M362 290 L318 329 L362 368 Z" fill="#36c98b" />
 </svg>

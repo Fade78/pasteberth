@@ -12,6 +12,8 @@ This file records user-visible changes to Pasteberth.
 - copied reference lists, streamed ZIP downloads, and group deletion;
 - `filesystem-drop`, `filesystem-rename`, and `filesystem-delete` operations;
 - configurable reference prefixes, suffixes, separators, and ZIP availability;
+- a unified bidirectional clipboard-and-zones logo in the Web UI and
+  documentation;
 - password authentication, sessions, CSRF protection, proxy handling, and TLS
   termination options;
 - transactional local storage with ownership sidecars, retention, crash

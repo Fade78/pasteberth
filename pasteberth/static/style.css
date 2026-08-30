@@ -55,7 +55,7 @@ code, kbd {
   opacity: 0.78;
 }
 
-.brand-icon { width: 22px; height: 22px; fill: var(--accent); }
+.brand-icon { width: 22px; height: 22px; display: block; object-fit: contain; }
 
 .topbar-right {
   display: flex;
