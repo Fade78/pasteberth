@@ -7,12 +7,14 @@ XDG reste accepté en dernier recours.
 """
 from __future__ import annotations
 
+import fnmatch
 import ipaddress
 import logging
 import math
 import os
 import re
 import socket
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -35,6 +37,8 @@ class ConfigError(Exception):
 _ZONE_ID_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
 _COLOR_RE = re.compile(r"^#[0-9a-fA-F]{6}$")
 _LOG_LEVELS = {"DEBUG", "INFO", "WARNING", "ERROR"}
+_GROUP_SELECTIONS = {"all", "pattern", "other"}
+_GROUP_LAYOUTS = {"area", "tab"}
 
 DEFAULT_MAX_UPLOAD_BYTES = 20 * 1024**2
 MAX_UPLOAD_BYTES = 50 * 1024**2
@@ -122,7 +126,10 @@ class ZoneConfig:
 @dataclass(frozen=True)
 class GroupConfig:
     name: str
-    pattern: tuple[str, ...]
+    selection: str = "pattern"
+    pattern: tuple[str, ...] = ()
+    pattern_defined: bool = False
+    layout: str = "area"
     hide_empty: bool = False
     show_count: bool = True
 
@@ -357,7 +364,7 @@ def _parse_groups(raw: object, warnings: list[str]) -> tuple[GroupConfig, ...]:
             raise ConfigError(f"{where}: doit être une table")
         _warn_unknown(
             item,
-            {"name", "pattern", "hide_empty", "show_count"},
+            {"name", "selection", "pattern", "layout", "hide_empty", "show_count"},
             where,
             warnings,
         )
@@ -365,22 +372,65 @@ def _parse_groups(raw: object, warnings: list[str]) -> tuple[GroupConfig, ...]:
         if name in seen_names:
             raise ConfigError(f"{where}: nom de groupe dupliqué : {name!r}")
         seen_names.add(name)
+        selection = _get_str(item, "selection", where, default="pattern").lower()
+        if selection not in _GROUP_SELECTIONS:
+            raise ConfigError(
+                f"{where}: 'selection' doit être parmi {sorted(_GROUP_SELECTIONS)}"
+            )
         raw_pattern = item.get("pattern")
-        if raw_pattern is None:
-            raise ConfigError(f"{where}: 'pattern' requis (liste de chaînes)")
-        if not isinstance(raw_pattern, list) or not all(isinstance(p, str) for p in raw_pattern):
+        pattern_defined = "pattern" in item
+        if raw_pattern is not None and (
+            not isinstance(raw_pattern, list)
+            or not all(isinstance(pattern, str) for pattern in raw_pattern)
+        ):
             raise ConfigError(f"{where}: 'pattern' doit être une liste de chaînes")
-        if not raw_pattern:
+        pattern = tuple(raw_pattern or ())
+        if selection == "pattern" and not pattern:
             raise ConfigError(f"{where}: 'pattern' ne peut pas être vide")
+        layout = _get_str(item, "layout", where, default="area").lower()
+        if layout not in _GROUP_LAYOUTS:
+            raise ConfigError(
+                f"{where}: 'layout' doit être parmi {sorted(_GROUP_LAYOUTS)}"
+            )
         hide_empty = _get_bool(item, "hide_empty", where, default=False)
         show_count = _get_bool(item, "show_count", where, default=True)
         groups.append(GroupConfig(
             name=name,
-            pattern=tuple(raw_pattern),
+            selection=selection,
+            pattern=pattern,
+            pattern_defined=pattern_defined,
+            layout=layout,
             hide_empty=hide_empty,
             show_count=show_count,
         ))
     return tuple(groups)
+
+
+def resolve_group_zone_ids(
+    groups: tuple[GroupConfig, ...], zone_ids: Iterable[str],
+) -> dict[str, tuple[str, ...]]:
+    """Calcule les zones effectives de chaque groupe sans accéder au stockage."""
+    ordered_zone_ids = tuple(zone_ids)
+    pattern_zone_ids: set[str] = set()
+    resolved: dict[str, tuple[str, ...]] = {}
+    for group in groups:
+        if group.selection == "all":
+            resolved[group.name] = ordered_zone_ids
+        elif group.selection == "pattern":
+            matching = tuple(
+                zid
+                for zid in ordered_zone_ids
+                if any(fnmatch.fnmatch(zid, pattern) for pattern in group.pattern)
+            )
+            resolved[group.name] = matching
+            pattern_zone_ids.update(matching)
+    other_zone_ids = tuple(
+        zid for zid in ordered_zone_ids if zid not in pattern_zone_ids
+    )
+    for group in groups:
+        if group.selection == "other":
+            resolved[group.name] = other_zone_ids
+    return resolved
 
 
 def _parse_trusted_proxies(raw: object, warnings: list[str]) -> tuple:

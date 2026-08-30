@@ -61,6 +61,7 @@ class Base(unittest.TestCase):
             accept_bin=self.config_kwargs.get("accept_bin"),
             accept_img=self.config_kwargs.get("accept_img"),
             accept_doc=self.config_kwargs.get("accept_doc"),
+            groups=self.config_kwargs.get("groups"),
         )
         self.tmp = tmp
         self.server = LiveServer(cfg_path)
@@ -104,6 +105,18 @@ class TestPublic(Base):
         status, _, body = self.req("GET", "/api/health")
         self.assertEqual(status, 200)
         self.assertEqual(json_of(body), {"ok": True})
+
+    def test_sans_groupes_toutes_les_zones_restant_visibles(self):
+        status, _, response = self.req("GET", "/api/groups")
+        self.assertEqual(status, 200)
+        self.assertEqual(json_of(response), {"groups": []})
+
+        status, _, response = self.req("GET", "/api/zones")
+        self.assertEqual(status, 200)
+        self.assertEqual(
+            [zone["groups"] for zone in json_of(response)["zones"]],
+            [[], []],
+        )
 
     def test_static_assets(self):
         for path, ctype in [("/static/app.js", "text/javascript"),
@@ -197,6 +210,12 @@ class TestAuthentification(Base):
 
     def test_api_401_json(self):
         status, headers, body = self.req("GET", "/api/zones", cookie=None)
+        self.assertEqual(status, 401)
+        self.assertEqual(json_of(body)["error"]["code"], "unauthorized")
+        self.assertNotIn("access-control-allow-origin", headers)
+
+    def test_groups_401_json(self):
+        status, headers, body = self.req("GET", "/api/groups", cookie=None)
         self.assertEqual(status, 401)
         self.assertEqual(json_of(body)["error"]["code"], "unauthorized")
         self.assertNotIn("access-control-allow-origin", headers)
@@ -946,6 +965,49 @@ class TestRetentionAPI(Base):
         self.assertEqual(by_id["secondary"]["count"], 0)
         self.assertEqual(by_id["default"]["color"], "#304237")
         self.assertNotEqual(by_id["default"]["color"], by_id["secondary"]["color"])
+
+
+class TestGroupsAPI(Base):
+    config_kwargs = {
+        "groups": [
+            {"name": "All", "selection": "all", "pattern": ["*"], "show_count": True},
+            {"name": "Operational", "selection": "pattern", "pattern": ["default", "missing-*"], "show_count": False, "layout": "tab"},
+            {"name": "Other", "selection": "other"},
+        ]
+    }
+
+    def test_groups_et_memberships_zones(self):
+        status, _, response = self.req("GET", "/api/groups")
+        self.assertEqual(status, 200)
+        groups = json_of(response)["groups"]
+        self.assertEqual([group["name"] for group in groups], ["All", "Operational", "Other"])
+        self.assertEqual(groups[0]["selection"], "all")
+        self.assertEqual(groups[1]["selection"], "pattern")
+        self.assertEqual(groups[1]["layout"], "tab")
+        self.assertEqual(groups[0]["zone_ids"], ["default", "secondary"])
+        self.assertEqual(groups[1]["zone_ids"], ["default"])
+        self.assertEqual(groups[1]["zone_count"], 1)
+        self.assertFalse(groups[1]["show_count"])
+        self.assertEqual(groups[2]["zone_ids"], ["secondary"])
+
+        status, _, response = self.req("GET", "/api/zones")
+        self.assertEqual(status, 200)
+        by_id = {zone["id"]: zone for zone in json_of(response)["zones"]}
+        self.assertEqual(by_id["default"]["groups"], ["All", "Operational"])
+        self.assertEqual(by_id["secondary"]["groups"], ["All", "Other"])
+
+    def test_groups_ne_lit_pas_les_historiques(self):
+        with mock.patch.object(self.server.service, "history", side_effect=AssertionError):
+            status, _, response = self.req("GET", "/api/groups")
+        self.assertEqual(status, 200)
+        self.assertEqual(len(json_of(response)["groups"]), 3)
+
+    def test_overview_ne_lit_qu_un_historique_par_zone(self):
+        original = self.server.service.history
+        with mock.patch.object(self.server.service, "history", wraps=original) as history:
+            status, _, _ = self.req("GET", "/api/zones")
+        self.assertEqual(status, 200)
+        self.assertEqual(history.call_count, 2)
 
 
 class TestPersistenceRestart(Base):

@@ -128,6 +128,7 @@ def build_multipart(
 def write_config(
     tmp: Path,
     zones: list[dict] | None = None,
+    groups: list[dict] | None = None,
     *,
     auth_enabled: bool = False,
     listen_address: str = "127.0.0.1",
@@ -217,6 +218,21 @@ def write_config(
         if zone_min_free is not None:
             lines.append(f"min_free_percent = {zone_min_free}")
         lines.append("")
+    if groups is not None:
+        for group in groups:
+            lines.append("[[groups]]")
+            lines.append(f"name = {json.dumps(group['name'])}")
+            if "selection" in group:
+                lines.append(f"selection = {json.dumps(group['selection'])}")
+            if "pattern" in group:
+                lines.append(f"pattern = {json.dumps(group['pattern'])}")
+            if "layout" in group:
+                lines.append(f"layout = {json.dumps(group['layout'])}")
+            if "hide_empty" in group:
+                lines.append(f"hide_empty = {str(group['hide_empty']).lower()}")
+            if "show_count" in group:
+                lines.append(f"show_count = {str(group['show_count']).lower()}")
+            lines.append("")
     text = "\n".join(lines) + extra
     cfg_path = tmp / "config.toml"
     cfg_path.write_text(text, encoding="utf-8")

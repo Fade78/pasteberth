@@ -816,12 +816,7 @@ def make_handler(cfg: Config, service: PasteService, sessions: SessionStore,
         def _h_groups(self) -> None:
             if not self._require_auth_api():
                 return
-            try:
-                overview = service.overview()
-            except ServiceError as exc:
-                self._error(exc.status, exc.code, str(exc))
-                return
-            self._json(200, {"groups": overview.get("groups", [])})
+            self._json(200, {"groups": service.group_overview()})
 
         def _h_zone_images(self, zid: str) -> None:
             if not self._require_auth_api():

@@ -93,6 +93,68 @@ code, kbd {
   padding: 14px;
 }
 
+.grid.tab-layout {
+  grid-template-columns: minmax(10rem, 16rem) minmax(0, 1fr);
+  gap: 0;
+  padding: 0;
+  align-items: start;
+}
+
+.tab-zone-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  padding: 14px 10px 14px 14px;
+  border-right: 1px solid rgba(255, 255, 255, 0.07);
+}
+
+.tab-zone-link {
+  width: 100%;
+  min-width: 0;
+  padding: 9px 12px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  overflow-wrap: anywhere;
+}
+
+.tab-zone-link:hover { color: var(--text); background: rgba(255, 255, 255, 0.05); }
+
+.tab-zone-link.active {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: rgba(77, 163, 255, 0.1);
+}
+
+.tab-zone-link.open { font-weight: 700; }
+
+.tab-zone-link.dragging {
+  border-style: dashed;
+  border-color: var(--accent);
+  background: rgba(77, 163, 255, 0.1);
+}
+
+.tab-zone-main {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 27rem), 1fr));
+  gap: 14px;
+  min-width: 0;
+  padding: 14px;
+}
+
+.tab-zone-main:empty::before {
+  grid-column: 1 / -1;
+  color: var(--muted);
+  content: "Select a zone to open it";
+  padding: 2rem;
+  text-align: center;
+}
+
 /* ---------------------------------------------------------------- group tabs */
 
 .group-tabs {
@@ -103,6 +165,8 @@ code, kbd {
   margin-bottom: 8px;
   border-bottom: 1px solid rgba(255, 255, 255, 0.07);
 }
+
+.group-tabs[hidden] { display: none; }
 
 .group-tab {
   padding: 6px 12px;
@@ -410,6 +474,8 @@ code, kbd {
 .zoom-btn:focus-visible,
 .delete-btn:focus-visible,
 .replace-btn:focus-visible,
+.group-tab:focus-visible,
+.tab-zone-link:focus-visible,
 .thumb-wrap:focus-visible,
 .zone-select:focus-visible,
 .thumb-big:focus-visible,
@@ -687,6 +753,16 @@ kbd {
 
 @media (max-width: 720px) {
   .grid { grid-template-columns: 1fr; }
+  .grid.tab-layout { grid-template-columns: 1fr; }
+  .tab-zone-list {
+    flex-direction: row;
+    overflow-x: auto;
+    padding: 8px;
+    border-right: 0;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.07);
+  }
+  .tab-zone-link { width: auto; flex: 0 0 auto; }
+  .tab-zone-main { padding: 8px; }
   .latest { flex-direction: column; }
   .thumb-big { max-width: 100%; }
 }

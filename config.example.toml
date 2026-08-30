@@ -69,24 +69,31 @@ color = "#304237"
 min_free_percent = 2.0
 
 # --------------------------------------------------------------- zone groups
-# A group defines a filter on zone IDs (glob patterns). Zones matching any
-# pattern belong to the group. A zone can belong to multiple groups.
-# If no [[groups]] section is present, an implicit "All" group with pattern
-# ["*"] exists but is not shown in the UI.
+# A group selects zones and controls their layout. A zone can belong to several
+# groups. If no [[groups]] section is present, an implicit "All" group exists
+# but is not shown in the UI.
 #
 # name        : display name in the UI
-# pattern     : list of glob patterns matched against zone IDs (fnmatch syntax)
+# selection   : all, pattern, or other (default: pattern)
+# pattern     : glob patterns for selection = "pattern" (fnmatch syntax)
+# layout      : area or tab (default: area)
 # hide_empty  : hide the group tab when no zones match (default: false)
 # show_count  : show zone count as "(N)" in the group tab (default: true)
 #
-# [[groups]]
-# name = "All"
-# pattern = ["*"]
-# hide_empty = false
-# show_count = true
+[[groups]]
+name = "All"
+selection = "all"
+layout = "area"
+hide_empty = false
+show_count = true
 #
 # [[groups]]
-# name = "Production"
-# pattern = ["prod-*", "api-*"]
-# hide_empty = true
-# show_count = true
+# name = "LWP"
+# selection = "pattern"
+# pattern = ["lightwebpres*"]
+# layout = "tab"
+#
+# [[groups]]
+# name = "Other"
+# selection = "other"
+# layout = "area"

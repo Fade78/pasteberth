@@ -269,6 +269,29 @@ class TestConfigurationDepot(unittest.TestCase):
         self.assertIn("refusera tout contenu", proc.stdout)
         self.assertIn("AVERTISSEMENT", proc.stdout)
 
+    def test_audit_selections_groupes_redondantes_avertit(self):
+        with socket.socket() as probe:
+            probe.bind(("127.0.0.1", 0))
+            port = probe.getsockname()[1]
+        cfg = write_config(
+            self.tmp,
+            port=port,
+            groups=[
+                {"name": "All", "selection": "all", "pattern": ["ignored-*"]},
+                {"name": "AllAgain", "selection": "all"},
+                {"name": "AllPattern", "pattern": ["*"]},
+                {"name": "Other", "selection": "other", "pattern": ["ignored-*"]},
+                {"name": "OtherAgain", "selection": "other"},
+            ],
+        )
+        proc = run_cli(["audit", "--config", str(cfg)])
+        self.assertEqual(proc.returncode, 1)
+        self.assertIn("pattern' ignoré", proc.stdout)
+        self.assertIn("groupes selection='all' redondants", proc.stdout)
+        self.assertIn("selection='all' et selection='other'", proc.stdout)
+        self.assertIn("groupes selection='other' redondants", proc.stdout)
+        self.assertIn("groupes redondants : All (all) et AllPattern (pattern)", proc.stdout)
+
     def test_audit_permissions_zone_avertit_sans_echouer(self):
         target = self.tmp / "open"
         target.mkdir(mode=0o755)

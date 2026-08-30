@@ -177,6 +177,193 @@ test("refuse un collage sans zone active", async ({ page }) => {
   await expect.poll(() => page.locator(".latest").count()).toBe(before);
 });
 
+test("désélectionne la zone absente du groupe actif", async ({ page }) => {
+  await openApp(page);
+  await page.getByRole("button", { name: "Select zone Default" }).click();
+  await page.locator('.group-tab[data-group="Secondary"]').click();
+
+  await expect(page.locator(".zone")).toHaveCount(1);
+  await expect(page.locator('[data-zone="secondary"] .zone-select'))
+    .toHaveAttribute("aria-pressed", "false");
+
+  await page.evaluate(() => document.dispatchEvent(new Event("visibilitychange")));
+  await expect(page.locator('[data-zone="secondary"] .zone-select'))
+    .toHaveAttribute("aria-pressed", "false");
+
+  await page.locator('.group-tab[data-group="Secondary"]').click();
+  await page.locator('[data-zone="secondary"] .zone-select').click();
+  await page.getByRole("button", { name: "All" }).click();
+  await expect(page.locator('[data-zone="secondary"] .zone-select'))
+    .toHaveAttribute("aria-pressed", "false");
+
+  let uploadSeen = false;
+  page.on("request", (request) => {
+    if (request.method() === "POST" && request.url().includes("/api/zones/")) {
+      uploadSeen = true;
+    }
+  });
+  await dispatchPaste(page);
+  await expect(page.locator("#toast")).toContainText("Choose a zone first");
+  expect(uploadSeen).toBe(false);
+});
+
+test("le focus Tab sélectionne la première zone visible", async ({ page }) => {
+  await openApp(page);
+  await page.locator('.group-tab[data-group="Secondary"]').click();
+  await page.getByRole("button", { name: "Group options" }).focus();
+  await page.keyboard.press("Tab");
+  await expect(page.locator('[data-zone="secondary"] .zone-select'))
+    .toHaveAttribute("aria-pressed", "true");
+});
+
+test("conserve le focus sur le groupe après son changement au clavier", async ({ page }) => {
+  await openApp(page);
+  const secondaryTab = page.locator('.group-tab[data-group="Secondary"]');
+  await secondaryTab.focus();
+  await page.keyboard.press("Enter");
+  await expect(page.locator('.group-tab[data-group="Secondary"]')).toBeFocused();
+});
+
+test("le layout tab ouvre une zone et permet une sélection multiple au Shift-clic", async ({ page }) => {
+  await openApp(page);
+  await page.locator('.group-tab[data-group="Tabbed"]').click();
+  await expect(page.locator(".grid")).toHaveClass(/tab-layout/);
+  await expect(page.locator(".tab-zone-link")).toHaveCount(2);
+  await expect(page.locator(".zone")).toHaveCount(0);
+
+  const defaultLink = page.locator('.tab-zone-link[data-zone="default"]');
+  const secondaryLink = page.locator('.tab-zone-link[data-zone="secondary"]');
+  await defaultLink.focus();
+  await expect(defaultLink).toHaveAttribute("aria-pressed", "true");
+  await secondaryLink.hover();
+  await expect(secondaryLink).toHaveAttribute("aria-pressed", "true");
+  const pasteRequest = page.waitForRequest(request => (
+    request.method() === "POST" && request.url().includes("/api/zones/secondary/images")
+  ));
+  await dispatchPaste(page);
+  await pasteRequest;
+  await expect(page.locator('.tab-zone-main .zone[data-zone="secondary"]')).toHaveCount(1);
+  await secondaryLink.click();
+  await expect(page.locator(".tab-zone-main .zone")).toHaveCount(0);
+  const dropRequest = page.waitForRequest(request => (
+    request.method() === "POST" && request.url().includes("/api/zones/secondary/images")
+  ));
+  await dispatchDrop(page, '.tab-zone-link[data-zone="secondary"]');
+  await dropRequest;
+  await expect(page.locator('.tab-zone-main .zone[data-zone="secondary"]')).toHaveCount(1);
+  await defaultLink.click();
+  await expect(page.locator('.tab-zone-main .zone[data-zone="default"]')).toHaveCount(1);
+  await page.locator('.group-tab[data-group="All"]').click();
+  await expect(page.locator(".grid")).not.toHaveClass(/tab-layout/);
+  await page.locator('.group-tab[data-group="Tabbed"]').click();
+  await expect(page.locator(".tab-zone-main .zone")).toHaveCount(0);
+  await secondaryLink.click();
+  await expect(page.locator('.tab-zone-main .zone[data-zone="secondary"]')).toHaveCount(1);
+  await expect(page.locator('.tab-zone-main .zone[data-zone="default"]')).toHaveCount(0);
+
+  await defaultLink.click({ modifiers: ["Shift"] });
+  await expect(page.locator(".tab-zone-main .zone")).toHaveCount(2);
+  await secondaryLink.click();
+  await expect(page.locator('.tab-zone-main .zone[data-zone="secondary"]')).toHaveCount(1);
+  await secondaryLink.click();
+  await expect(page.locator(".tab-zone-main .zone")).toHaveCount(0);
+  await defaultLink.click({ modifiers: ["Shift"] });
+  await secondaryLink.click({ modifiers: ["Shift"] });
+  await expect(page.locator(".tab-zone-main .zone")).toHaveCount(2);
+  await secondaryLink.click({ modifiers: ["Shift"] });
+  await expect(page.locator('.tab-zone-main .zone[data-zone="default"]')).toHaveCount(1);
+  await expect(page.locator('.tab-zone-main .zone[data-zone="secondary"]')).toHaveCount(0);
+  await defaultLink.click();
+  await expect(page.locator(".tab-zone-main .zone")).toHaveCount(0);
+
+  await page.getByRole("button", { name: "Group options" }).click();
+  await page.getByLabel("Layout").selectOption("area");
+  await expect(page.locator(".tab-zone-list")).toHaveCount(0);
+  await expect(page.locator(".zone")).toHaveCount(2);
+  await page.getByRole("button", { name: "Group options" }).click();
+  await page.getByLabel("Layout").selectOption("tab");
+  await expect(page.locator(".tab-zone-list")).toBeVisible();
+  await page.reload({ waitUntil: "domcontentloaded" });
+  await expect(page.locator("#status-text")).toHaveText("online");
+  await expect(page.locator(".tab-zone-list")).toBeVisible();
+  await expect(page.locator(".tab-zone-main .zone")).toHaveCount(0);
+});
+
+test("les options filtrent les groupes vides et les compteurs", async ({ page }) => {
+  await openApp(page);
+  await expect(page.locator('.group-tab[data-group="Empty"]')).toBeVisible();
+
+  const options = page.getByRole("button", { name: "Group options" });
+  await options.click();
+  await expect(options).toHaveAttribute("aria-expanded", "true");
+  await expect(page.getByRole("checkbox", { name: "Hide empty groups" })).toBeFocused();
+  await page.evaluate(() => document.dispatchEvent(new Event("visibilitychange")));
+  await expect(page.locator(".group-options-dropdown")).toHaveCount(0);
+  await expect(options).toHaveAttribute("aria-expanded", "false");
+
+  await options.click();
+  await expect(options).toHaveAttribute("aria-expanded", "true");
+  await page.keyboard.press("Escape");
+  await expect(options).toHaveAttribute("aria-expanded", "false");
+  await expect(options).toBeFocused();
+
+  await options.click();
+  await page.getByRole("checkbox", { name: "Hide empty groups" }).click();
+  await expect(page.locator('.group-tab[data-group="Empty"]')).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Group options" })).toBeFocused();
+
+  await page.getByRole("button", { name: "Group options" }).click();
+  await page.getByRole("checkbox", { name: "Show zone counts" }).click();
+  await expect(page.getByRole("button", { name: "All" })).toHaveText("All");
+  await expect(page.getByRole("button", { name: "Group options" })).toBeFocused();
+});
+
+test("sélectionne automatiquement l'unique zone visible", async ({ page }) => {
+  await page.route("**/api/zones", async (route) => {
+    const response = await route.fetch();
+    const overview = await response.json();
+    overview.zones = overview.zones.filter((zone) => zone.id === "default");
+    await route.fulfill({ response, json: overview });
+  });
+  await page.addInitScript(() => localStorage.removeItem("pb.activeZone"));
+  await page.goto("/", { waitUntil: "domcontentloaded" });
+  await expect(page.locator("#status-text")).toHaveText("online");
+  await expect(page.locator('[data-zone="default"] .zone-select'))
+    .toHaveAttribute("aria-pressed", "true");
+});
+
+test("sans groupes configurés, conserve toutes les zones sans barre de groupes", async ({ page }) => {
+  await page.route("**/api/zones", async (route) => {
+    const response = await route.fetch();
+    const overview = await response.json();
+    overview.groups = [];
+    await route.fulfill({ response, json: overview });
+  });
+  await openApp(page);
+  await expect(page.locator("#group-tabs")).toBeHidden();
+});
+
+test("ne réaffiche pas les zones quand tous les groupes sont masqués", async ({ page }) => {
+  await page.route("**/api/zones", async (route) => {
+    const response = await route.fetch();
+    const overview = await response.json();
+    overview.groups = [{
+      name: "Empty",
+      pattern: ["missing-*"],
+      zone_ids: [],
+      zone_count: 0,
+      hide_empty: false,
+      show_count: true,
+    }];
+    await route.fulfill({ response, json: overview });
+  });
+  await page.addInitScript(() => localStorage.setItem("pb.hideEmptyGroups", "true"));
+  await page.goto("/", { waitUntil: "domcontentloaded" });
+  await expect(page.locator("#status-text")).toHaveText("online");
+  await expect(page.locator(".zone")).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Group options" })).toBeVisible();
+});
+
 test("colle une image et ouvre son aperçu au clavier", async ({ page }) => {
   await openApp(page);
   await page.getByRole("button", { name: "Select zone Default" }).click();

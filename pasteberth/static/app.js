@@ -19,16 +19,20 @@
     retryTimer: null,
     toastTimer: null,
     // Groups
-    groups: [],              // [{name, pattern, zone_ids, hide_empty, show_count, zone_count}]
-    activeGroupId: null,     // null = first group (or "All" if no explicit groups)
-    showEmptyGroups: false,
+    groups: [],              // [{name, selection, pattern, layout, zone_ids, ...}]
+    activeGroupId: null,     // null = implicit All when no group is selected
+    openZoneIds: [],
+    groupLayouts: Object.create(null),
+    hideEmptyGroups: false,
     showZoneCounts: true,
+    initialized: false,
   };
 
   let refreshGeneration = 0;
   let activeRefreshController = null;
   let previewGeneration = 0;
   let activePreviewController = null;
+  let groupOptionsClose = null;
 
   const grid = document.getElementById("grid");
   const groupTabs = document.getElementById("group-tabs");
@@ -719,24 +723,157 @@
   }
 
   function getVisibleZones() {
-    if (!state.activeGroupId || !state.groups.length) return state.zones;
+    if (!state.groups.length) return state.zones;
     const group = state.groups.find(g => g.name === state.activeGroupId);
-    if (!group) return state.zones;
+    if (!group) return [];
     return state.zones.filter(z => group.zone_ids.includes(z.id));
+  }
+
+  function isGroupLayout(value) {
+    return value === "area" || value === "tab";
+  }
+
+  function groupLayout(group) {
+    if (!group) return "area";
+    if (isGroupLayout(state.groupLayouts[group.name])) return state.groupLayouts[group.name];
+    return isGroupLayout(group.layout) ? group.layout : "area";
+  }
+
+  function loadGroupLayouts() {
+    try {
+      const stored = JSON.parse(localStorage.getItem("pb.groupLayouts") || "{}");
+      if (!stored || typeof stored !== "object" || Array.isArray(stored)) return;
+      for (const [name, layout] of Object.entries(stored)) {
+        if (isGroupLayout(layout)) state.groupLayouts[name] = layout;
+      }
+    } catch (_) {}
+  }
+
+  function saveGroupLayouts() {
+    try {
+      localStorage.setItem("pb.groupLayouts", JSON.stringify(state.groupLayouts));
+    } catch (_) {}
+  }
+
+  function groupZoneCount(group) {
+    return group.zone_count ?? group.zone_ids?.length ?? 0;
+  }
+
+  function groupIsDisplayed(group) {
+    return !(groupZoneCount(group) === 0 && (state.hideEmptyGroups || group.hide_empty));
+  }
+
+  function displayedGroups() {
+    return state.groups.filter(groupIsDisplayed);
+  }
+
+  function reconcileActiveGroup() {
+    const previous = state.activeGroupId;
+    if (!state.groups.length) {
+      state.activeGroupId = null;
+    } else if (!state.activeGroupId || !state.groups.some(g => g.name === state.activeGroupId)) {
+      state.activeGroupId = displayedGroups()[0]?.name || null;
+    } else if (!groupIsDisplayed(state.groups.find(g => g.name === state.activeGroupId))) {
+      state.activeGroupId = displayedGroups()[0]?.name || null;
+    }
+    if (state.activeGroupId === previous) return false;
+    state.openZoneIds = [];
+    try {
+      if (state.activeGroupId) localStorage.setItem("pb.activeGroup", state.activeGroupId);
+      else localStorage.removeItem("pb.activeGroup");
+    } catch (_) {}
+    return true;
   }
 
   function renderAll() {
     grid.replaceChildren();
-    for (const zone of getVisibleZones()) grid.appendChild(renderZone(zone));
+    const visibleZones = getVisibleZones();
+    const visibleIds = new Set(visibleZones.map(zone => zone.id));
+    state.openZoneIds = state.openZoneIds.filter(zoneId => visibleIds.has(zoneId));
+    const group = state.groups.find(item => item.name === state.activeGroupId);
+    grid.classList.toggle("tab-layout", groupLayout(group) === "tab");
+    if (!group || groupLayout(group) !== "tab") {
+      for (const zone of visibleZones) grid.appendChild(renderZone(zone));
+      return;
+    }
+
+    const list = document.createElement("aside");
+    list.className = "tab-zone-list";
+    list.setAttribute("aria-label", "Zones");
+    for (const zone of visibleZones) {
+      const link = document.createElement("button");
+      link.type = "button";
+      link.className = "tab-zone-link";
+      link.dataset.zone = zone.id;
+      link.textContent = zone.label;
+      link.setAttribute("aria-pressed", String(zone.id === state.activeId));
+      link.setAttribute("aria-expanded", String(state.openZoneIds.includes(zone.id)));
+      link.setAttribute("aria-controls", "tab-zone-main");
+      link.addEventListener("mouseenter", () => setActive(zone.id));
+      link.addEventListener("focus", () => setActive(zone.id));
+      link.addEventListener("click", event => toggleOpenZone(zone.id, event.shiftKey));
+      if (zone.id === state.activeId) link.classList.add("active");
+      if (state.openZoneIds.includes(zone.id)) link.classList.add("open");
+      list.appendChild(link);
+    }
+
+    const main = document.createElement("section");
+    main.className = "tab-zone-main";
+    main.id = "tab-zone-main";
+    main.setAttribute("aria-label", "Open zones");
+    const openZones = visibleZones.filter(zone => state.openZoneIds.includes(zone.id));
+    for (const zone of openZones) main.appendChild(renderZone(zone));
+    grid.append(list, main);
+  }
+
+  function toggleOpenZone(zoneId, shiftKey) {
+    if (!getVisibleZones().some(zone => zone.id === zoneId)) return;
+    const restoreFocus = document.activeElement?.classList.contains("tab-zone-link");
+    const index = state.openZoneIds.indexOf(zoneId);
+    if (shiftKey) {
+      if (index === -1) state.openZoneIds.push(zoneId);
+      else state.openZoneIds.splice(index, 1);
+    } else if (index !== -1 && state.openZoneIds.length === 1) {
+      state.openZoneIds = [];
+    } else {
+      state.openZoneIds = [zoneId];
+    }
+    setActive(zoneId);
+    renderAll();
+    if (restoreFocus) {
+      const link = [...grid.querySelectorAll(".tab-zone-link")]
+        .find(item => item.dataset.zone === zoneId);
+      if (link) link.focus();
+    }
   }
 
   function rerenderZone(zoneId) {
     const zone = state.zones.find(z => z.id === zoneId);
-    const old = grid.querySelector(`[data-zone="${CSS.escape(zoneId)}"]`);
+    const old = grid.querySelector(`.zone[data-zone="${CSS.escape(zoneId)}"]`);
     if (zone && old) old.replaceWith(renderZone(zone));
   }
 
+  function refreshUploadedZone(zoneId) {
+    const group = state.groups.find(item => item.name === state.activeGroupId);
+    if (groupLayout(group) !== "tab" || !getVisibleZones().some(zone => zone.id === zoneId)) {
+      rerenderZone(zoneId);
+      return;
+    }
+    if (state.openZoneIds.includes(zoneId)) {
+      rerenderZone(zoneId);
+      return;
+    }
+    const focused = document.activeElement?.classList.contains("tab-zone-link")
+      && document.activeElement.dataset.zone === zoneId;
+    state.openZoneIds.push(zoneId);
+    renderAll();
+    if (focused) {
+      grid.querySelector(`.tab-zone-link[data-zone="${CSS.escape(zoneId)}"]`)?.focus();
+    }
+  }
+
   function setActive(zoneId, { announce = false } = {}) {
+    if (zoneId && !getVisibleZones().some(zone => zone.id === zoneId)) return;
     state.activeId = zoneId;
     try {
       if (zoneId) localStorage.setItem("pb.activeZone", zoneId);
@@ -748,6 +885,11 @@
       const select = el.querySelector(".zone-select");
       if (select) select.setAttribute("aria-pressed", String(active));
     }
+    for (const link of grid.querySelectorAll(".tab-zone-link")) {
+      const active = link.dataset.zone === zoneId;
+      link.classList.toggle("active", active);
+      link.setAttribute("aria-pressed", String(active));
+    }
     if (announce) {
       const zone = state.zones.find(z => z.id === zoneId);
       if (zone) toast(`Active zone: ${zone.label}`);
@@ -756,33 +898,36 @@
 
   function renderGroups() {
     if (!groupTabs) return;
-    const groups = state.groups;
-    if (!groups.length) {
+    const focusedGroup = document.activeElement?.closest(".group-tab")?.dataset.group;
+    const focusedOptions = document.activeElement?.classList.contains("group-options-btn");
+    if (groupOptionsClose) groupOptionsClose();
+    reconcileActiveGroup();
+    if (!state.groups.length) {
       groupTabs.hidden = true;
-      return;
-    }
-    // Only show group tabs if there's more than one group configured
-    if (groups.length <= 1) {
-      groupTabs.hidden = true;
+      groupTabs.replaceChildren();
       return;
     }
     groupTabs.hidden = false;
     groupTabs.replaceChildren();
-    for (const group of state.groups) {
+    const groups = displayedGroups();
+    for (const group of groups) {
       const tab = document.createElement("button");
       tab.type = "button";
       tab.className = "group-tab";
       tab.dataset.group = group.name;
-      tab.setAttribute("role", "tab");
-      tab.setAttribute("aria-selected", "false");
-      const count = group.zone_count ?? group.zone_ids?.length ?? 0;
+      const active = group.name === state.activeGroupId;
+      if (active) tab.setAttribute("aria-current", "page");
+      const count = groupZoneCount(group);
       const isEmpty = count === 0;
-      if (isEmpty && group.hide_empty) continue;
-      let label = group.name;
-      if (group.show_count) label += ` <span class="count">(${count})</span>`;
-      tab.innerHTML = label;
+      tab.appendChild(document.createTextNode(group.name));
+      if (state.showZoneCounts && group.show_count) {
+        const countEl = document.createElement("span");
+        countEl.className = "count";
+        countEl.textContent = ` (${count})`;
+        tab.appendChild(countEl);
+      }
       if (isEmpty) tab.classList.add("empty");
-      if (group.name === state.activeGroupId) tab.classList.add("active");
+      if (active) tab.classList.add("active");
       tab.addEventListener("click", () => {
         setActiveGroup(group.name);
       });
@@ -793,70 +938,146 @@
     const optionsBtn = document.createElement("button");
     optionsBtn.type = "button";
     optionsBtn.className = "group-tab group-options-btn";
-    optionsBtn.innerHTML = "⋮";
+    optionsBtn.textContent = "⋮";
     optionsBtn.setAttribute("aria-label", "Group options");
+    optionsBtn.setAttribute("aria-expanded", "false");
+    optionsBtn.setAttribute("aria-controls", "group-options-dropdown");
     optionsBtn.addEventListener("click", (e) => {
       e.stopPropagation();
-      showGroupOptions(e.target);
+      showGroupOptions(e.currentTarget);
     });
     groupTabs.appendChild(optionsBtn);
+    if (focusedGroup) {
+      groupTabs.querySelector(`.group-tab[data-group="${CSS.escape(focusedGroup)}"]`)?.focus();
+    } else if (focusedOptions) {
+      optionsBtn.focus();
+    }
   }
 
   function showGroupOptions(anchor) {
-    // Remove any existing dropdown
-    const existing = document.querySelector(".group-options-dropdown");
-    if (existing) existing.remove();
+    if (groupOptionsClose) groupOptionsClose();
 
     const dropdown = document.createElement("div");
     dropdown.className = "group-options-dropdown";
-    dropdown.innerHTML = `
-      <label>
-        <input type="checkbox" id="opt-show-empty" ${state.showEmptyGroups ? "checked" : ""}>
-        <span>Show empty groups</span>
-      </label>
-      <label>
-        <input type="checkbox" id="opt-show-count" ${state.showZoneCounts ? "checked" : ""}>
-        <span>Show zone counts</span>
-      </label>
-    `;
+    dropdown.id = "group-options-dropdown";
+    dropdown.setAttribute("aria-label", "Group display options");
+    const addToggle = (id, labelText, checked) => {
+      const label = document.createElement("label");
+      const input = document.createElement("input");
+      input.type = "checkbox";
+      input.id = id;
+      input.checked = checked;
+      const text = document.createElement("span");
+      text.textContent = labelText;
+      label.append(input, text);
+      dropdown.appendChild(label);
+      return input;
+    };
+    const hideEmpty = addToggle("opt-hide-empty", "Hide empty groups", state.hideEmptyGroups);
+    const showCount = addToggle("opt-show-count", "Show zone counts", state.showZoneCounts);
+    const activeGroup = state.groups.find(group => group.name === state.activeGroupId);
+    let layoutSelect = null;
+    if (activeGroup) {
+      const layoutLabel = document.createElement("label");
+      const layoutText = document.createElement("span");
+      layoutText.textContent = "Layout";
+      layoutSelect = document.createElement("select");
+      layoutSelect.id = "opt-layout";
+      for (const [value, labelText] of [["area", "Area"], ["tab", "Tab"]]) {
+        const option = document.createElement("option");
+        option.value = value;
+        option.textContent = labelText;
+        layoutSelect.appendChild(option);
+      }
+      layoutSelect.value = groupLayout(activeGroup);
+      layoutLabel.append(layoutText, layoutSelect);
+      dropdown.appendChild(layoutLabel);
+    }
     document.body.appendChild(dropdown);
 
     const rect = anchor.getBoundingClientRect();
-    dropdown.style.left = `${rect.left}px`;
-    dropdown.style.top = `${rect.bottom + 4}px`;
+    const left = Math.max(8, Math.min(rect.left, window.innerWidth - dropdown.offsetWidth - 8));
+    const top = Math.max(8, Math.min(rect.bottom + 4, window.innerHeight - dropdown.offsetHeight - 8));
+    dropdown.style.left = `${left}px`;
+    dropdown.style.top = `${top}px`;
 
+    const close = () => {
+      dropdown.remove();
+      document.removeEventListener("click", onClickOutside);
+      dropdown.removeEventListener("keydown", onKeyDown);
+      anchor.setAttribute("aria-expanded", "false");
+      if (groupOptionsClose === close) groupOptionsClose = null;
+    };
     const onClickOutside = (e) => {
       if (!dropdown.contains(e.target) && e.target !== anchor) {
-        dropdown.remove();
-        document.removeEventListener("click", onClickOutside);
+        close();
+      }
+    };
+    const onKeyDown = (e) => {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        close();
+        anchor.focus();
       }
     };
     document.addEventListener("click", onClickOutside);
+    dropdown.addEventListener("keydown", onKeyDown);
+    groupOptionsClose = close;
+    anchor.setAttribute("aria-expanded", "true");
+    hideEmpty.focus();
 
-    dropdown.querySelector("#opt-show-empty").addEventListener("change", (e) => {
-      state.showEmptyGroups = e.target.checked;
-      try { localStorage.setItem("pb.showEmptyGroups", e.target.checked); } catch (_) {}
+    hideEmpty.addEventListener("change", (e) => {
+      state.hideEmptyGroups = e.target.checked;
+      try { localStorage.setItem("pb.hideEmptyGroups", e.target.checked); } catch (_) {}
+      close();
+      const groupChanged = reconcileActiveGroup();
+      if (groupChanged && state.activeId && !getVisibleZones().some(z => z.id === state.activeId)) {
+        setActive(null);
+      }
       renderGroups();
+      renderAll();
+      groupTabs.querySelector(".group-options-btn")?.focus();
     });
-    dropdown.querySelector("#opt-show-count").addEventListener("change", (e) => {
+    showCount.addEventListener("change", (e) => {
       state.showZoneCounts = e.target.checked;
       try { localStorage.setItem("pb.showZoneCounts", e.target.checked); } catch (_) {}
+      close();
       renderGroups();
+      groupTabs.querySelector(".group-options-btn")?.focus();
     });
+    if (layoutSelect && activeGroup) {
+      layoutSelect.addEventListener("change", (e) => {
+        if (!isGroupLayout(e.target.value)) return;
+        state.groupLayouts[activeGroup.name] = e.target.value;
+        saveGroupLayouts();
+        close();
+        renderGroups();
+        renderAll();
+        groupTabs.querySelector(".group-options-btn")?.focus();
+      });
+    }
   }
 
   function setActiveGroup(groupName) {
+    const group = state.groups.find(item => item.name === groupName);
+    if (!group || !groupIsDisplayed(group)) return;
+    const restoreGroupFocus = groupTabs && groupTabs.contains(document.activeElement);
+    const groupChanged = state.activeGroupId !== groupName;
     state.activeGroupId = groupName;
     try {
       localStorage.setItem("pb.activeGroup", groupName);
     } catch (_) {}
-    // Update tab UI
-    for (const tab of groupTabs.querySelectorAll(".group-tab")) {
-      const active = tab.dataset.group === groupName;
-      tab.classList.toggle("active", active);
-      tab.setAttribute("aria-selected", String(active));
+    if (groupChanged) {
+      state.openZoneIds = [];
+      setActive(null);
     }
+    renderGroups();
     renderAll();
+    if (restoreGroupFocus) {
+      const activeTab = [...groupTabs.querySelectorAll(".group-tab")]
+        .find(tab => tab.dataset.group === groupName);
+      if (activeTab) activeTab.focus();
+    }
     toast(`Group: ${groupName}`);
   }
 
@@ -889,31 +1110,34 @@
       }
 
       // Initialize group state from localStorage
-      if (!state.activeGroupId && state.groups.length > 0) {
+      if (state.groups.length > 0) {
         try {
           const stored = localStorage.getItem("pb.activeGroup");
-          if (stored && state.groups.some(g => g.name === stored)) {
+          if (!state.activeGroupId && stored && state.groups.some(g => g.name === stored)) {
             state.activeGroupId = stored;
-          } else {
-            state.activeGroupId = state.groups[0].name;
           }
         } catch (_) {}
       }
       // Load group UI preferences
       try {
-        state.showEmptyGroups = localStorage.getItem("pb.showEmptyGroups") === "true";
+        state.hideEmptyGroups = localStorage.getItem("pb.hideEmptyGroups") === "true";
         state.showZoneCounts = localStorage.getItem("pb.showZoneCounts") !== "false";
       } catch (_) {}
+      loadGroupLayouts();
 
+      reconcileActiveGroup();
       renderGroups();
       renderAll();
 
       let stored = null;
       try { stored = localStorage.getItem("pb.activeZone"); } catch (_) {}
-      if (stored && state.zones.some(z => z.id === stored)) setActive(stored);
-      else if (state.zones.length === 1) setActive(state.zones[0].id);
+      const visibleZones = getVisibleZones();
+      const candidate = state.activeId || stored
+        || (!state.initialized && visibleZones.length === 1 ? visibleZones[0].id : null);
+      if (candidate && visibleZones.some(z => z.id === candidate)) setActive(candidate);
       else setActive(null);
 
+      state.initialized = true;
       setOnline(true);
     } finally {
       if (activeRefreshController === controller) activeRefreshController = null;
@@ -954,7 +1178,7 @@
     { preserveName = false, allowReplace = false } = {},
   ) {
     if (!file) return;
-    const zoneEl = grid.querySelector(`[data-zone="${CSS.escape(zoneId)}"]`);
+    const zoneEl = grid.querySelector(`.zone[data-zone="${CSS.escape(zoneId)}"]`);
     if (zoneEl) zoneEl.classList.add("busy");
     refreshGeneration += 1;
     if (activeRefreshController) activeRefreshController.abort();
@@ -980,7 +1204,7 @@
         zone.images.unshift(item);
         if (zone.images.length > zone.retain) zone.images.length = zone.retain;
         state.selectedByZone[zoneId] = item.id;
-        rerenderZone(zoneId);
+         refreshUploadedZone(zoneId);
       }
       toast(`${item.kind === "image" ? "Image" : "Content"} uploaded (${shortRef(item.reference)})`);
       // Copie automatique best-effort : si elle échoue, on le signale
@@ -1077,7 +1301,10 @@
   }
 
   function requireActiveZone() {
-    if (state.activeId && state.zones.some(z => z.id === state.activeId)) return state.activeId;
+    if (state.activeId && getVisibleZones().some(z => z.id === state.activeId)) {
+      return state.activeId;
+    }
+    if (state.activeId) setActive(null);
     toast("Choose a zone first (click its card)", "error");
     for (const el of grid.querySelectorAll(".zone")) {
       el.classList.remove("attention");
@@ -1107,6 +1334,16 @@
   }
 
   // ------------------------------------------------------------- events
+
+  grid.addEventListener("focusin", (event) => {
+    const tabLink = event.target.closest(".tab-zone-link");
+    if (tabLink) {
+      setActive(tabLink.dataset.zone);
+      return;
+    }
+    const zoneCard = event.target.closest(".zone");
+    if (zoneCard) setActive(zoneCard.dataset.zone);
+  });
 
   window.addEventListener("paste", (event) => {
     const items = event.clipboardData && event.clipboardData.items;
@@ -1260,24 +1497,25 @@
   });
 
   grid.addEventListener("dragover", (event) => {
-    const zoneCard = event.target.closest(".zone");
-    if (!zoneCard) return;
+    const zoneTarget = event.target.closest(".zone, .tab-zone-link");
+    if (!zoneTarget) return;
     event.preventDefault();
-    zoneCard.classList.add("dragging");
+    zoneTarget.classList.add("dragging");
+    setActive(zoneTarget.dataset.zone);
   });
   grid.addEventListener("dragleave", (event) => {
-    const zoneCard = event.target.closest(".zone");
-    if (zoneCard) zoneCard.classList.remove("dragging");
+    const zoneTarget = event.target.closest(".zone, .tab-zone-link");
+    if (zoneTarget) zoneTarget.classList.remove("dragging");
   });
   grid.addEventListener("drop", (event) => {
-    const zoneCard = event.target.closest(".zone");
-    if (!zoneCard) return;
+    const zoneTarget = event.target.closest(".zone, .tab-zone-link");
+    if (!zoneTarget) return;
     event.preventDefault();
-    zoneCard.classList.remove("dragging");
-    setActive(zoneCard.dataset.zone);
+    zoneTarget.classList.remove("dragging");
+    setActive(zoneTarget.dataset.zone);
     const file = event.dataTransfer && event.dataTransfer.files && event.dataTransfer.files[0];
     if (!file) return;
-    upload(zoneCard.dataset.zone, file, { preserveName: true });
+    upload(zoneTarget.dataset.zone, file, { preserveName: true });
   });
 
   document.addEventListener("keydown", (event) => {
@@ -1305,10 +1543,10 @@
     const tag = (event.target.tagName || "").toLowerCase();
     if (tag === "input" || tag === "textarea") return;
     if (/^[1-9]$/.test(event.key)) {
-      const zone = state.zones[Number(event.key) - 1];
+      const zone = getVisibleZones()[Number(event.key) - 1];
       if (zone) setActive(zone.id, { announce: true });
     } else if (event.key === "c" || event.key === "C") {
-      const zone = state.zones.find(z => z.id === state.activeId);
+      const zone = getVisibleZones().find(z => z.id === state.activeId);
       if (zone && zone.images.length) copyLink(selectedItem(zone).reference);
     }
   });

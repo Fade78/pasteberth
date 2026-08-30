@@ -7,7 +7,6 @@ indépendantes entre elles.
 """
 from __future__ import annotations
 
-import fnmatch
 import fcntl
 import logging
 import os
@@ -16,7 +15,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from urllib.parse import quote
 
-from pasteberth.config import Config, ZoneConfig
+from pasteberth.config import Config, ZoneConfig, resolve_group_zone_ids
 from pasteberth.content import classify
 from pasteberth.images import (
     InvalidImageError,
@@ -135,6 +134,19 @@ class PasteService:
             device = self._destinations[zid].device_id
             self._space_locks.setdefault(device, _DeviceSpaceLock(device))
 
+        # La configuration est immuable pendant la durée du processus. Garder
+        # les memberships précalculés évite de rescanner les patterns à chaque
+        # requête et permet à /api/groups de rester indépendant des fichiers.
+        self._group_zone_ids = resolve_group_zone_ids(cfg.groups, self._zone_cfg)
+        zone_groups: dict[str, list[str]] = {zid: [] for zid in self._zone_cfg}
+        for group in cfg.groups:
+            zone_ids = self._group_zone_ids[group.name]
+            for zid in zone_ids:
+                zone_groups[zid].append(group.name)
+        self._zone_groups = {
+            zid: tuple(groups) for zid, groups in zone_groups.items()
+        }
+
     # ---------------------------------------------------------------- zones
 
     @property
@@ -147,37 +159,15 @@ class PasteService:
     def overview(self) -> dict:
         zones = []
         for zid, zone in self._zone_cfg.items():
-            count = len(self.history(zid))
-            # Compute which groups this zone belongs to
-            zone_groups = []
-            for group in self.cfg.groups:
-                if any(fnmatch.fnmatch(zid, pattern) for pattern in group.pattern):
-                    zone_groups.append(group.name)
+            items = self.history(zid)
             zones.append(
                 {
                     "id": zid,
                     "label": zone.label,
                     "color": zone.color,
                     "retain": zone.retain,
-                    "count": len(self.history(zid)),
-                    "groups": zone_groups,
-                }
-            )
-        # Build groups response
-        groups = []
-        for group in self.cfg.groups:
-            zone_ids = [
-                zid for zid in self._zone_cfg
-                if any(fnmatch.fnmatch(zid, pattern) for pattern in group.pattern)
-            ]
-            groups.append(
-                {
-                    "name": group.name,
-                    "pattern": list(group.pattern),
-                    "zone_ids": zone_ids,
-                    "hide_empty": group.hide_empty,
-                    "show_count": group.show_count,
-                    "zone_count": len(zone_ids),
+                    "count": len(items),
+                    "groups": list(self._zone_groups[zid]),
                 }
             )
         return {
@@ -185,8 +175,27 @@ class PasteService:
             "max_upload_bytes": self.cfg.max_upload_bytes,
             "max_image_pixels": self.cfg.max_image_pixels,
             "zones": zones,
-            "groups": groups,
+            "groups": self.group_overview(),
         }
+
+    def group_overview(self) -> list[dict]:
+        """Retourne les groupes sans lire les destinations de stockage."""
+        groups = []
+        for group in self.cfg.groups:
+            zone_ids = self._group_zone_ids[group.name]
+            groups.append(
+                {
+                    "name": group.name,
+                    "selection": group.selection,
+                    "pattern": list(group.pattern),
+                    "layout": group.layout,
+                    "zone_ids": list(zone_ids),
+                    "hide_empty": group.hide_empty,
+                    "show_count": group.show_count,
+                    "zone_count": len(zone_ids),
+                }
+            )
+        return groups
 
     # --------------------------------------------------------------- upload
 

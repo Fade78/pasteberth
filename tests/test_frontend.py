@@ -171,6 +171,22 @@ class TestContratsFrontend(unittest.TestCase):
         self.assertIn('event.key === "c"', self.app_js)
         self.assertIn("/^[1-9]$/.test(event.key)", self.app_js)
 
+    def test_groupes_respectent_la_zone_visible_et_le_focus(self):
+        self.assertIn("function getVisibleZones", self.app_js)
+        self.assertIn("function reconcileActiveGroup", self.app_js)
+        self.assertIn("getVisibleZones().some", self.app_js)
+        self.assertIn('addEventListener("focusin"', self.app_js)
+        self.assertIn("hideEmptyGroups", self.app_js)
+        self.assertIn("state.showZoneCounts", self.app_js)
+        self.assertIn("openZoneIds", self.app_js)
+        self.assertIn("toggleOpenZone", self.app_js)
+        self.assertIn("event.shiftKey", self.app_js)
+        self.assertIn("groupLayouts", self.app_js)
+        self.assertIn('id = "opt-layout"', self.app_js)
+        self.assertIn("tab-zone-link", self.app_js)
+        self.assertIn('aria-label="Zone groups"', self.index_html)
+        self.assertIn('aria-current", "page"', self.app_js)
+
 
 if __name__ == "__main__":
     unittest.main()

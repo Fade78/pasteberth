@@ -1,3 +1,3 @@
 """Pasteberth : pont clipboard navigateur -> filesystem du harness."""
 
-__version__ = "1.3.0"
+__version__ = "1.4.0"

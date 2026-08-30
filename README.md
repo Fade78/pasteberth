@@ -37,7 +37,7 @@ agent/script ── filesystem-drop ─────▶ captures/<zone>/ ──�
 The browser **never** needs to access the returned path. This is the path seen
 by the harness, on the machine where Pasteberth runs.
 
-The current version is `1.3.0`.
+The current version is `1.4.0`.
 
 ---
 
@@ -263,6 +263,7 @@ desired zones and paths. The file remains ignored by Git.
 | `[auth] session_ttl_hours` | `72` | server session lifetime |
 | `[auth] password_file` | next to `config.toml` | absolute path to the `passwd` hash (regular 0600 file) |
 | `[[zones]] …` | `default` | `id`, `label`, `type=local`, `directory`, `retain`, `reference_prefix`, `reference_suffix`, `color` (#RRGGBB), `create_directory`, `min_free_percent` |
+| `[[groups]] …` | none | group `selection` (`all`, `pattern`, `other`), `pattern` required for `pattern`, `layout` (`area`, `tab`), `hide_empty`, `show_count` |
 
 `directory` is an **absolute path as seen by the server** — this is where
 OpenCode or the harness reads the stored files, not your browser. It is also
@@ -314,6 +315,31 @@ The default integrated storage is `<repository-root>/storage/default`. The
 `storage/` directory is ignored by Git, but must be backed up separately if the
 stored contents are valuable. An external path can be specified manually in
 `config.toml`.
+
+Groups are loaded when the service starts. A group can use one of three
+selection modes: `all` contains every zone; `pattern` contains every zone whose
+ID matches at least one glob in `pattern`; `other` contains zones not selected
+by any `pattern` group. `all` groups are deliberately ignored when calculating
+`other`, so explicit `All` and `Other` groups can overlap; `pasteberth audit`
+warns about that configuration. A zone can belong to several groups. When
+groups are configured, the interface displays only the zones in the selected
+group. A zone that matches no group is therefore absent from every group view.
+With no `[[groups]]` section, all zones are displayed through an implicit `All`
+fallback and no group tab is shown. The example configuration contains an
+explicit `All` group with `selection = "all"`.
+
+Several `all` or `other` groups are accepted but redundant and are reported by
+the audit. A `pattern` field on an `all` or `other` group is ignored and also
+reported. Multiple pattern groups are useful when their patterns select
+different zones; equivalent effective selections are reported as redundant.
+
+The group controls expose local display preferences for empty groups, zone
+counts, and the selected group's layout. `layout = "area"` keeps the current
+zone grid. `layout = "tab"` shows zone names in a column and opens selected
+zones in the main view. Hovering or focusing a zone name makes it the next
+paste target; clicking opens or closes it. Shift-click adds or removes a zone
+without closing the other open zones. The active zone is cleared when changing
+groups.
 
 Zones must be distinct, writable target directories. Private mode `0700` is
 recommended; a more open mode produces an audit warning but does not prevent
@@ -473,11 +499,19 @@ validated content in a zone.
 | Method | Path | Role |
 |---|---|---|
 | GET | `/api/health` | probe (public) |
-| GET | `/api/zones` | zones + counts |
+| GET | `/api/zones` | zones + counts + group memberships |
+| GET | `/api/groups` | configured groups + selections, layouts, and matching zone IDs |
 | GET | `/api/zones/{id}/images` | history of all content, newest first |
 | POST | `/api/zones/{id}/images` | upload (multipart `image` field; `preserve_name=1` keeps a dragged file's name; `replace=1` explicitly permits replacing a managed name) |
 | DELETE | `/api/zones/{id}/images/{file}` | delete a managed content file |
 | GET | `/previews/{id}/{file}` | serve stored content for preview/download (protected) |
+
+`/api/groups` returns `groups` in configuration order. Each entry contains
+`name`, `selection`, `pattern`, `layout`, `zone_ids`, `zone_count`, `hide_empty`,
+and `show_count`.
+The `/api/zones` response includes the matching group names in each zone's
+`groups` field. Both endpoints are protected when authentication is enabled;
+there is no CORS support.
 
 Despite the route name, `/api/zones/{id}/images` and its `images` response key
 cover images, UTF-8 text, and opaque binary content. Raw requests accept the
@@ -588,8 +622,10 @@ auth/sessions/anti-brute-force, multipart parser, full HTTP integration
 replacement conflicts),
 CLI (passwd, refusal of dangerous configuration), frontend contracts, and
 Playwright browser scenarios on a real Pasteberth server: loading and keyboard
-selection, paste without a zone, image/text/binary upload, preview, selection in
-the index, drag and drop, replacement confirmation, and exact-name downloads.
+selection, group filtering and area/tab layouts, hover/focus paste targeting,
+Shift-click multi-selection, paste without a zone, image/text/binary upload,
+preview, selection in the index, drag and drop, replacement confirmation, and
+exact-name downloads.
 Browser tests use Chromium by default; `E2E_BROWSER=firefox` is available if the
 corresponding Playwright browser is installed.
 

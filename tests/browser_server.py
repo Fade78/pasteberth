@@ -48,6 +48,28 @@ retain = 5
 reference_prefix = "@"
 color = "#26394a"
 min_free_percent = 0.0
+
+[[groups]]
+name = "All"
+selection = "all"
+show_count = true
+
+[[groups]]
+name = "Secondary"
+pattern = ["secondary"]
+layout = "area"
+show_count = true
+
+[[groups]]
+name = "Tabbed"
+pattern = ["*"]
+layout = "tab"
+show_count = true
+
+[[groups]]
+name = "Empty"
+pattern = ["missing-*"]
+show_count = true
 '''
     path = root / "config.toml"
     path.write_text(text, encoding="utf-8")

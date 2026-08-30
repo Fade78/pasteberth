@@ -43,6 +43,7 @@ from pasteberth.config import (
     is_loopback_address,
     load_config,
     prepare_directories,
+    resolve_group_zone_ids,
     validate_directory_identities,
     repository_root,
 )
@@ -363,6 +364,18 @@ reference_suffix = ""
 color = "#304237"
 create_directory = true
 min_free_percent = 2.0
+
+# Optional group views. Omit the whole section to show all zones without tabs.
+# [[groups]]
+# name = "LWP"
+# selection = "pattern"
+# pattern = ["lightwebpres*"]
+# layout = "tab"
+#
+# [[groups]]
+# name = "Other"
+# selection = "other"
+# layout = "area"
 '''
 
 
@@ -516,6 +529,60 @@ def _network_warning(cfg) -> str | None:
     )
 
 
+def _audit_groups(cfg) -> list[str]:
+    warnings: list[str] = []
+    all_groups = [group for group in cfg.groups if group.selection == "all"]
+    other_groups = [group for group in cfg.groups if group.selection == "other"]
+    if len(all_groups) > 1:
+        warnings.append(
+            "groupes selection='all' redondants : "
+            + ", ".join(group.name for group in all_groups)
+        )
+    if len(other_groups) > 1:
+        warnings.append(
+            "groupes selection='other' redondants : "
+            + ", ".join(group.name for group in other_groups)
+        )
+    if all_groups and other_groups:
+        warnings.append(
+            "selection='all' et selection='other' coexistent ; "
+            "les groupes peuvent se recouvrir"
+        )
+    for group in cfg.groups:
+        if group.selection in {"all", "other"} and group.pattern_defined:
+            warnings.append(
+                f"groupe {group.name}: 'pattern' ignoré avec "
+                f"selection='{group.selection}'"
+            )
+
+    memberships = resolve_group_zone_ids(cfg.groups, cfg.zones)
+    seen_pattern_memberships: dict[tuple[str, ...], str] = {}
+    seen_effective_memberships: dict[tuple[str, ...], dict[str, str]] = {}
+    for group in cfg.groups:
+        zone_ids = memberships[group.name]
+        if group.selection == "pattern":
+            previous = seen_pattern_memberships.get(zone_ids)
+            if previous is not None:
+                warnings.append(
+                    f"groupes pattern redondants : {previous} et {group.name} "
+                    f"sélectionnent les mêmes zones"
+                )
+            else:
+                seen_pattern_memberships[zone_ids] = group.name
+
+        groups_by_selection = seen_effective_memberships.setdefault(zone_ids, {})
+        if group.selection not in groups_by_selection:
+            for previous_selection, previous_name in groups_by_selection.items():
+                if {previous_selection, group.selection} == {"all", "other"}:
+                    continue
+                warnings.append(
+                    f"groupes redondants : {previous_name} ({previous_selection}) et "
+                    f"{group.name} ({group.selection}) sélectionnent les mêmes zones"
+                )
+            groups_by_selection[group.selection] = group.name
+    return warnings
+
+
 def _cmd_audit(args: argparse.Namespace) -> int:
     config_path = find_config_path(_config_arg(args))
     errors: list[str] = []
@@ -531,6 +598,7 @@ def _cmd_audit(args: argparse.Namespace) -> int:
         except ConfigError as exc:
             print(f"ERREUR configuration : {exc}", file=sys.stderr)
             return 2
+    warnings.extend(cfg.warnings)
 
     if sys.version_info < (3, 11):
         errors.append("Python 3.11 ou plus récent est requis")
@@ -563,6 +631,7 @@ def _cmd_audit(args: argparse.Namespace) -> int:
             "accept_bin, accept_img et accept_doc sont tous à false : "
             "le serveur refusera tout contenu"
         )
+    warnings.extend(_audit_groups(cfg))
 
     for zone in cfg.zones.values():
         zone_errors, zone_warnings = _audit_zone(cfg, zone)

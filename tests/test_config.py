@@ -17,6 +17,7 @@ from pasteberth.config import (
     prepare_directories,
     parse_size,
     resolve_config_path,
+    resolve_group_zone_ids,
 )
 from pasteberth.server import address_family_for
 from tests.helpers import write_config
@@ -79,6 +80,7 @@ class TestParsing(unittest.TestCase):
         self.assertFalse(cfg.auth.enabled)
         self.assertEqual(cfg.allowed_hosts, ())
         self.assertEqual(set(cfg.zones), {"default", "secondary"})
+        self.assertEqual(cfg.groups, ())
         self.assertEqual(cfg.zones["default"].reference_prefix, "@")
         self.assertEqual(cfg.zones["default"].reference_suffix, "")
         self.assertTrue(cfg.zones["default"].create_directory)
@@ -173,6 +175,63 @@ class TestParsing(unittest.TestCase):
         self.assertEqual(cfg.zones["default"].retain, 7)
         self.assertEqual(cfg.zones["default"].color, "#304237")
         self.assertEqual(cfg.zones["secondary"].label, "secondary")
+
+    def test_groupes_charges_et_valides(self):
+        cfg = make_cfg(
+            self.tmp,
+            groups=[
+                {"name": "All", "pattern": ["*"]},
+                {"name": "Ops", "pattern": ["default", "api-*"]},
+            ],
+        )
+        self.assertEqual([group.name for group in cfg.groups], ["All", "Ops"])
+        self.assertEqual(cfg.groups[0].selection, "pattern")
+        self.assertEqual(cfg.groups[1].pattern, ("default", "api-*"))
+        self.assertEqual(cfg.groups[1].layout, "area")
+        self.assertFalse(cfg.groups[0].hide_empty)
+        self.assertTrue(cfg.groups[0].show_count)
+
+    def test_selections_all_pattern_other_et_layout(self):
+        zones = [
+            {"id": "lightwebpres-api", "directory": str(self.tmp / "lwp")},
+            {"id": "api", "directory": str(self.tmp / "api")},
+            {"id": "misc", "directory": str(self.tmp / "misc")},
+        ]
+        cfg = make_cfg(
+            self.tmp,
+            zones=zones,
+            groups=[
+                {"name": "All", "selection": "all", "pattern": ["ignored-*"], "layout": "tab"},
+                {"name": "LWP", "selection": "pattern", "pattern": ["lightwebpres*"]},
+                {"name": "Other", "selection": "other"},
+            ],
+        )
+        self.assertEqual(cfg.groups[0].layout, "tab")
+        self.assertTrue(cfg.groups[0].pattern_defined)
+        memberships = resolve_group_zone_ids(cfg.groups, cfg.zones)
+        self.assertEqual(memberships["All"], tuple(cfg.zones))
+        self.assertEqual(memberships["LWP"], ("lightwebpres-api",))
+        self.assertEqual(memberships["Other"], ("api", "misc"))
+
+    def test_selection_et_layout_invalides(self):
+        with self.assertRaisesRegex(ConfigError, "selection"):
+            make_cfg(self.tmp, groups=[{"name": "Bad", "selection": "never"}])
+        with self.assertRaisesRegex(ConfigError, "layout"):
+            make_cfg(self.tmp, groups=[{"name": "Bad", "pattern": ["*"], "layout": "stack"}])
+        with self.assertRaisesRegex(ConfigError, "pattern"):
+            make_cfg(self.tmp, groups=[{"name": "Bad", "selection": "pattern"}])
+
+    def test_groupes_refusent_les_noms_dupliques_et_patterns_vides(self):
+        with self.assertRaisesRegex(ConfigError, "dupliqué"):
+            make_cfg(
+                self.tmp,
+                groups=[
+                    {"name": "Ops", "pattern": ["default"]},
+                    {"name": "Ops", "pattern": ["secondary"]},
+                ],
+            )
+        with self.assertRaisesRegex(ConfigError, "ne peut pas être vide"):
+            make_cfg(self.tmp, groups=[{"name": "Empty", "pattern": []}])
 
     def test_cle_inconnue_avertissement(self):
         cfg = load_config(
