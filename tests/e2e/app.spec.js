@@ -533,6 +533,15 @@ test("dépose plusieurs fichiers séquentiellement et permet la sélection group
   await expect(defaultZone.locator(".selection-latest")).toBeVisible();
   await expect(defaultZone.locator(".selection-summary-item")).toHaveCount(2);
   await expect(defaultZone.locator(".selection-summary-meta")).toHaveCount(2);
+  const summaryNames = defaultZone.locator(".selection-summary-name");
+  await expect(summaryNames).toHaveCount(2);
+  expect(await summaryNames.evaluateAll(names => names.map(name => ({
+    text: name.textContent,
+    title: name.title,
+  })))).toEqual([
+    { text: "second.png", title: "second.png" },
+    { text: "first.png", title: "first.png" },
+  ]);
   await expect(defaultZone.locator(".selection-latest .download-btn")).toHaveText("Download ZIP");
   await expect(defaultZone.locator(".selection-latest .zoom-btn")).toHaveCount(0);
   await expect(defaultZone.locator(".bulk-actions")).toHaveCount(1);

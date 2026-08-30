@@ -846,6 +846,7 @@
         const name = document.createElement("code");
         name.className = "selection-summary-name";
         name.textContent = selectedItem.filename;
+        name.title = selectedItem.filename;
         const metadata = document.createElement("span");
         metadata.className = "selection-summary-meta";
         metadata.textContent = `${fmtBytes(selectedItem.size)} · ${fmtDateTime(selectedItem.created_at)}`;
