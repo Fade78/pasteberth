@@ -7,15 +7,11 @@ pas une primitive de lecture ou de suppression arbitraire.
 """
 from __future__ import annotations
 
-import ctypes
-import errno
-import fcntl
 import json
 import logging
-import os
+import os  # Compatibility seam for tests that patch the process-wide os module.
 import re
 import secrets
-import stat
 import unicodedata
 from abc import ABC, abstractmethod
 from contextvars import ContextVar
@@ -32,7 +28,16 @@ from pasteberth.images import (
     ImageInfo,
     mime_for,
 )
-from pasteberth.paths import first_symlink_component, open_directory
+from pasteberth.platformfs import (
+    BusyError,
+    DirectoryHandle,
+    EntryChangedError,
+    EntryExistsError,
+    FileHandle,
+    UnsafeLinkError,
+    UnsupportedFilesystemError,
+    platform_fs,
+)
 
 log = logging.getLogger("pasteberth.storage")
 
@@ -51,25 +56,6 @@ _MAX_META_BYTES = 64 * 1024
 def _meta_keys_ok(raw: dict) -> bool:
     return set(raw) in (_META_KEYS, _META_KEYS_NEW)
 _SPACE_MARGIN_BYTES = 64 * 1024
-_O_DIRECTORY = getattr(os, "O_DIRECTORY", 0)
-_O_NOFOLLOW = getattr(os, "O_NOFOLLOW", 0)
-_O_NONBLOCK = getattr(os, "O_NONBLOCK", 0)
-_RENAME_NOREPLACE = 1
-
-try:
-    _libc = ctypes.CDLL(None, use_errno=True)
-    _renameat2 = _libc.renameat2
-    _renameat2.argtypes = [
-        ctypes.c_int,
-        ctypes.c_char_p,
-        ctypes.c_int,
-        ctypes.c_char_p,
-        ctypes.c_uint,
-    ]
-    _renameat2.restype = ctypes.c_int
-except (AttributeError, OSError):
-    _renameat2 = None
-
 _TXN_MARKER_RE = re.compile(r"^\.pbtxn-([0-9a-f]{24})\.json$")
 _TXN_COMMIT_RE = re.compile(r"^\.pbtxn-([0-9a-f]{24})\.commit$")
 _DATA_TEMP_RE = re.compile(r"^\.pbdata-[0-9a-f]{24}\.tmp$")
@@ -204,55 +190,17 @@ def generated_filename(name: object) -> bool:
     return isinstance(name, str) and bool(_GENERATED_FILENAME_RE.fullmatch(name))
 
 
-def _rename_noreplace(directory_fd: int, source: str, target: str) -> None:
-    """Déplace ``source`` vers ``target`` sans jamais remplacer la cible."""
-    if _renameat2 is not None:
-        result = _renameat2(
-            directory_fd,
-            os.fsencode(source),
-            directory_fd,
-            os.fsencode(target),
-            _RENAME_NOREPLACE,
-        )
-        if result == 0:
-            return
-        error_number = ctypes.get_errno()
-        raise OSError(error_number, os.strerror(error_number), source, target)
+def _rename_noreplace(
+    directory: DirectoryHandle,
+    source: str,
+    target: str,
+) -> None:
+    """Delegate no-replace rename to the selected platform backend.
 
-    # Linux provides renameat2 in all supported deployments. The fallback is
-    # only for older Unix libc implementations; link() still refuses an
-    # occupied destination, but source removal is necessarily less atomic.
-    try:
-        source_info = os.stat(
-            source,
-            dir_fd=directory_fd,
-            follow_symlinks=False,
-        )
-        source_identity = (source_info.st_dev, source_info.st_ino)
-    except OSError:
-        raise
-    os.link(
-        source,
-        target,
-        src_dir_fd=directory_fd,
-        dst_dir_fd=directory_fd,
-        follow_symlinks=False,
-    )
-    # If unlinking the source fails, or the source was replaced meanwhile,
-    # leave the extra hardlink in place. Removing it would require a second
-    # race-prone identity check and could delete a foreign target that
-    # appeared after link().
-    try:
-        current_info = os.stat(
-            source,
-            dir_fd=directory_fd,
-            follow_symlinks=False,
-        )
-    except OSError:
-        return
-    if (current_info.st_dev, current_info.st_ino) != source_identity:
-        return
-    os.unlink(source, dir_fd=directory_fd)
+    The helper remains as a narrow seam for the v1.5 transaction tests that
+    inject failures around publication.
+    """
+    platform_fs().rename_noreplace(directory, source, target)
 
 
 @dataclass(frozen=True)
@@ -363,6 +311,7 @@ class LocalDestination(Destination):
     def __init__(self, directory: Path, *, create_directory: bool = True):
         self.directory = Path(directory)
         self.create_directory = create_directory
+        self._fs = platform_fs()
         self._cleanup_pair_check = ContextVar(
             "pasteberth_cleanup_pair_check",
             default=None,
@@ -386,7 +335,7 @@ class LocalDestination(Destination):
         # Refuser au runtime casserait les zones partagées légitimes et
         # pousserait à contourner la protection.
         try:
-            symlink = first_symlink_component(self.directory)
+            symlink = self._fs.first_symlink_component(self.directory)
         except (OSError, ValueError) as exc:
             raise DestinationError(
                 f"inspection impossible de {self.directory} : {exc}"
@@ -394,19 +343,19 @@ class LocalDestination(Destination):
         if symlink is not None:
             raise DestinationError(f"chemin zone symbolique refusé : {symlink}")
         try:
-            fd = open_directory(
+            with self._fs.open_directory(
                 self.directory,
                 create=self.create_directory,
                 mode=0o700,
-            )
-            os.close(fd)
+            ):
+                pass
         except FileNotFoundError as exc:
             if not self.create_directory:
                 raise DestinationError(f"répertoire inexistant : {self.directory}") from exc
             raise DestinationError(
                 f"impossible de créer {self.directory} : {exc}"
             ) from exc
-        except (OSError, ValueError) as exc:
+        except (OSError, ValueError, UnsupportedFilesystemError) as exc:
             raise DestinationError(
                 f"impossible d'ouvrir {self.directory} : {exc}"
             ) from exc
@@ -415,79 +364,37 @@ class LocalDestination(Destination):
     def _directory_fd(self):
         self._ensure_dir()
         try:
-            fd = open_directory(self.directory)
+            directory = self._fs.open_directory(self.directory)
         except OSError as exc:
             raise DestinationError(f"ouverture impossible de {self.directory} : {exc}") from exc
         try:
-            yield fd
+            yield directory
         finally:
-            os.close(fd)
+            directory.close()
 
     @contextmanager
     def operation_lock(self, *, exclusive: bool, blocking: bool = True):
         """Verrouille les opérations même entre processus du même utilisateur."""
-        lock_name = ".pasteberth.lock"
         with self._directory_fd() as directory_fd:
-            fd = -1
-            locked = False
             try:
-                fd = os.open(
-                    lock_name,
-                    os.O_RDWR | os.O_CREAT | _O_NOFOLLOW,
-                    0o600,
-                    dir_fd=directory_fd,
-                )
-                try:
-                    fd = self._regular_fd(fd, lock_name)
-                except BaseException:
-                    fd = -1
-                    raise
-                os.fchmod(fd, 0o600)
-                lock_flags = fcntl.LOCK_EX if exclusive else fcntl.LOCK_SH
-                if not blocking:
-                    lock_flags |= fcntl.LOCK_NB
-                try:
-                    fcntl.flock(fd, lock_flags)
-                except OSError as exc:
-                    if not blocking and exc.errno in (errno.EACCES, errno.EAGAIN):
-                        raise DestinationBusyError(
-                            f"destination occupée : {self.directory}"
-                        ) from exc
-                    raise
-                locked = True
-                yield
+                with self._fs.acquire_lock(
+                    directory_fd,
+                    exclusive=exclusive,
+                    blocking=blocking,
+                ):
+                    yield
+            except BusyError as exc:
+                raise DestinationBusyError(
+                    f"destination occupée : {self.directory}"
+                ) from exc
             except DestinationError:
                 raise
-            except OSError as exc:
+            except (OSError, UnsupportedFilesystemError) as exc:
                 raise DestinationError(
                     f"verrouillage impossible de {self.directory} : {exc}"
                 ) from exc
-            finally:
-                if fd >= 0:
-                    try:
-                        if locked:
-                            fcntl.flock(fd, fcntl.LOCK_UN)
-                    finally:
-                        os.close(fd)
 
-    @staticmethod
-    def _regular_fd(fd: int, name: str) -> int:
-        try:
-            info = os.fstat(fd)
-        except OSError:
-            os.close(fd)
-            raise
-        if not stat.S_ISREG(info.st_mode):
-            os.close(fd)
-            raise DestinationError(f"fichier non régulier : {name!r}")
-        uid_getter = getattr(os, "getuid", None)
-        uid = uid_getter() if uid_getter is not None else None
-        if uid is not None and getattr(info, "st_uid", uid) != uid:
-            os.close(fd)
-            raise DestinationError(f"fichier non détenu par le processus : {name!r}")
-        return fd
-
-    def _open_file(self, directory_fd: int, name: str, flags: int) -> int:
+    def _open_file(self, directory: DirectoryHandle, name: str, mode: str = "rb") -> FileHandle:
         is_sidecar_name = (
             isinstance(name, str)
             and name.endswith(".json")
@@ -496,43 +403,44 @@ class LocalDestination(Destination):
         if not valid_filename(name) and not is_sidecar_name and not _internal_marker_name(name):
             raise DestinationError(f"nom de fichier invalide : {name!r}")
         try:
-            fd = os.open(name, flags | _O_NOFOLLOW | _O_NONBLOCK, dir_fd=directory_fd)
-            return self._regular_fd(fd, name)
+            return self._fs.open_existing(directory, name, mode=mode)
         except FileNotFoundError:
             raise
-        except DestinationError:
+        except (DestinationError, UnsafeLinkError):
             raise
-        except OSError as exc:
+        except (OSError, UnsupportedFilesystemError) as exc:
             raise DestinationError(f"ouverture impossible de {name!r} : {exc}") from exc
 
-    def _write_transaction_file(self, directory_fd: int, name: str, transaction: dict) -> None:
+    def _write_transaction_file(
+        self,
+        directory_fd: DirectoryHandle,
+        name: str,
+        transaction: dict,
+    ) -> None:
         """Publie un marqueur de transaction sans remplacer un nom existant."""
         if not _internal_marker_name(name):
             raise ValueError(f"nom de transaction invalide : {name!r}")
         temp_name = name.rsplit(".", 1)[0] + ".tmp"
-        fd = -1
+        file_handle = None
         temp_identity = None
         try:
-            fd = os.open(
+            file_handle = self._fs.create_exclusive(
+                directory_fd,
                 temp_name,
-                os.O_WRONLY | os.O_CREAT | os.O_EXCL | _O_NOFOLLOW,
-                0o600,
-                dir_fd=directory_fd,
+                mode="w",
+                permissions=0o600,
             )
-            info = os.fstat(fd)
-            temp_identity = (info.st_dev, info.st_ino)
-            with os.fdopen(fd, "w", encoding="utf-8") as fh:
-                fd = -1
+            temp_identity = file_handle.identity
+            with file_handle as fh:
                 json.dump(transaction, fh, ensure_ascii=False, separators=(",", ":"))
-                fh.flush()
-                os.fsync(fh.fileno())
+                fh.sync()
             self._move_expected(directory_fd, temp_name, name, temp_identity)
             self._journal_identities[name] = temp_identity
             self._fsync_directory(directory_fd)
         except BaseException:
-            if fd >= 0:
+            if file_handle is not None and not file_handle.closed:
                 try:
-                    os.close(fd)
+                    file_handle.close()
                 except OSError:
                     pass
             if temp_identity is not None:
@@ -675,11 +583,10 @@ class LocalDestination(Destination):
                 raise ValueError(f"identité de renommage absente : {key}")
         return raw
 
-    def _active_transaction_names(self, directory_fd: int) -> set[str]:
+    def _active_transaction_names(self, directory_fd: DirectoryHandle) -> set[str]:
         names: set[str] = set()
         try:
-            with os.scandir(directory_fd) as scan:
-                entries = list(scan)
+            entries = self._fs.entries(directory_fd)
         except OSError as exc:
             raise DestinationError(
                 f"lecture impossible de {self.directory} : {exc}"
@@ -708,16 +615,17 @@ class LocalDestination(Destination):
                 continue
         return names
 
-    def _remember_journal_entry(self, directory_fd: int, entry: os.DirEntry) -> None:
+    def _remember_journal_entry(self, directory_fd: DirectoryHandle, entry) -> None:
         try:
-            self._journal_identities[entry.name] = (
-                os.fstat(directory_fd).st_dev,
-                entry.inode(),
-            )
+            self._journal_identities[entry.name] = entry.identity
         except OSError:
             pass
 
-    def _journal_identity(self, directory_fd: int, name: str) -> tuple[int, int] | None:
+    def _journal_identity(
+        self,
+        directory_fd: DirectoryHandle,
+        name: str,
+    ) -> tuple[int, int] | None:
         expected = self._journal_identities.get(name)
         if expected is not None:
             return expected
@@ -725,20 +633,21 @@ class LocalDestination(Destination):
 
     def _unlink_expected(
         self,
-        directory_fd: int,
+        directory_fd: DirectoryHandle,
         name: str,
         expected: tuple[int, int] | None,
     ) -> bool:
         try:
-            info = os.stat(name, dir_fd=directory_fd, follow_symlinks=False)
+            info = self._fs.entry_info(directory_fd, name)
         except FileNotFoundError:
             return True
-        if not stat.S_ISREG(info.st_mode):
+        if info is None:
+            return True
+        if not info.is_regular:
             raise DestinationError(f"fichier temporaire non régulier : {name!r}")
-        uid_getter = getattr(os, "getuid", None)
-        if uid_getter is not None and info.st_uid != uid_getter():
+        if not self._fs.is_owned(info):
             return False
-        actual = (info.st_dev, info.st_ino)
+        actual = info.identity
         if expected is not None and actual != expected:
             return False
         quarantine_name = f".pbtrash-{secrets.token_hex(12)}.data"
@@ -747,28 +656,25 @@ class LocalDestination(Destination):
         except (DestinationError, OSError):
             return False
         try:
-            quarantine_info = os.stat(
-                quarantine_name,
-                dir_fd=directory_fd,
-                follow_symlinks=False,
-            )
+            quarantine_info = self._fs.entry_info(directory_fd, quarantine_name)
         except FileNotFoundError:
             return True
-        if not stat.S_ISREG(quarantine_info.st_mode):
+        if quarantine_info is None:
+            return True
+        if not quarantine_info.is_regular:
             return False
-        if (quarantine_info.st_dev, quarantine_info.st_ino) != actual:
+        if quarantine_info.identity != actual:
             return False
         try:
-            os.unlink(quarantine_name, dir_fd=directory_fd)
+            return self._fs.remove_expected(directory_fd, quarantine_name, actual)
         except FileNotFoundError:
             return True
-        except OSError:
+        except (OSError, UnsupportedFilesystemError):
             return False
-        return True
 
     def _restore_noreplace(
         self,
-        directory_fd: int,
+        directory_fd: DirectoryHandle,
         source: str,
         target: str,
         expected: tuple[int, int],
@@ -781,17 +687,21 @@ class LocalDestination(Destination):
             return False
         return self._entry_identity(directory_fd, target) == expected
 
-    @staticmethod
-    def _entry_identity_any(directory_fd: int, name: str) -> tuple[int, int] | None:
+    def _entry_identity_any(
+        self,
+        directory_fd: DirectoryHandle,
+        name: str,
+    ) -> tuple[int, int] | None:
         try:
-            info = os.stat(name, dir_fd=directory_fd, follow_symlinks=False)
+            return self._fs.identity(directory_fd, name, require_regular=False)
         except FileNotFoundError:
             return None
-        return (info.st_dev, info.st_ino)
+        except UnsafeLinkError:
+            return None
 
     def _move_expected(
         self,
-        directory_fd: int,
+        directory_fd: DirectoryHandle,
         source: str,
         target: str,
         expected: tuple[int, int],
@@ -811,7 +721,7 @@ class LocalDestination(Destination):
 
     def _link_expected(
         self,
-        directory_fd: int,
+        directory_fd: DirectoryHandle,
         source: str,
         target: str,
         expected: tuple[int, int],
@@ -820,21 +730,17 @@ class LocalDestination(Destination):
         if self._entry_identity(directory_fd, source) != expected:
             raise StorageConflictError(f"fichier modifié pendant l'opération : {source!r}")
         try:
-            os.link(
-                source,
-                target,
-                src_dir_fd=directory_fd,
-                dst_dir_fd=directory_fd,
-                follow_symlinks=False,
-            )
-        except FileExistsError as exc:
+            self._fs.link_expected(directory_fd, source, target, expected)
+        except (EntryExistsError, FileExistsError) as exc:
             raise StorageConflictError(f"cible apparue pendant l'opération : {target!r}") from exc
+        except (EntryChangedError, UnsafeLinkError) as exc:
+            raise StorageConflictError(f"fichier modifié pendant l'opération : {source!r}") from exc
         if self._entry_identity_any(directory_fd, target) != expected:
             raise StorageConflictError(f"fichier étranger apparu pendant l'opération : {target!r}")
 
     def _restore_any(
         self,
-        directory_fd: int,
+        directory_fd: DirectoryHandle,
         source: str,
         target: str,
         expected: tuple[int, int],
@@ -849,7 +755,7 @@ class LocalDestination(Destination):
 
     def _remove_expected(
         self,
-        directory_fd: int,
+        directory_fd: DirectoryHandle,
         name: str,
         expected: tuple[int, int] | None,
     ) -> bool:
@@ -1053,22 +959,20 @@ class LocalDestination(Destination):
                 continue
         return keep
 
-    @staticmethod
     def _recovery_names_for_identity(
+        self,
         directory_fd: int,
         expected: tuple[int, int] | None,
     ) -> tuple[str, ...]:
         if expected is None:
             return ()
         try:
-            with os.scandir(directory_fd) as scan:
-                return tuple(
-                    entry.name
-                    for entry in scan
-                    if _TRASH_RE.fullmatch(entry.name)
-                    and LocalDestination._entry_identity_any(directory_fd, entry.name)
-                    == expected
-                )
+            return tuple(
+                entry.name
+                for entry in self._fs.entries(directory_fd)
+                if _TRASH_RE.fullmatch(entry.name)
+                and self._entry_identity_any(directory_fd, entry.name) == expected
+            )
         except OSError:
             return ()
 
@@ -1484,7 +1388,7 @@ class LocalDestination(Destination):
                 self._fsync_directory(directory_fd)
         return complete
 
-    def _recover_deletions(self, directory_fd: int, entries: list[os.DirEntry]) -> set[str]:
+    def _recover_deletions(self, directory_fd: DirectoryHandle, entries) -> set[str]:
         protected: set[str] = set()
         for entry in entries:
             if _delete_token(entry.name) is None:
@@ -2004,7 +1908,7 @@ class LocalDestination(Destination):
         except (DestinationError, OSError):
             return False
 
-    def _recover_renames(self, directory_fd: int, entries: list[os.DirEntry]) -> set[str]:
+    def _recover_renames(self, directory_fd: DirectoryHandle, entries) -> set[str]:
         markers: dict[str, tuple[str, dict]] = {}
         commits: dict[str, tuple[str, dict]] = {}
         protected: set[str] = set()
@@ -2251,7 +2155,7 @@ class LocalDestination(Destination):
 
     def _cleanup_committed_transaction(
         self,
-        directory_fd: int,
+        directory_fd: DirectoryHandle,
         transaction: dict,
         marker_name: str,
         commit_name: str,
@@ -2468,7 +2372,7 @@ class LocalDestination(Destination):
         except (DestinationError, OSError):
             return False
 
-    def _recover_transactions(self, directory_fd: int, entries: list[os.DirEntry]) -> set[str]:
+    def _recover_transactions(self, directory_fd: DirectoryHandle, entries) -> set[str]:
         markers: dict[str, tuple[str, dict]] = {}
         commits: dict[str, tuple[str, dict]] = {}
         protected: set[str] = set()
@@ -2522,23 +2426,19 @@ class LocalDestination(Destination):
                 log.warning("annulation de transaction impossible : %s", marker_name)
         return protected
 
-    @staticmethod
-    def _fsync_directory(directory_fd: int) -> None:
+    def _fsync_directory(self, directory_fd: DirectoryHandle) -> None:
         try:
-            os.fsync(directory_fd)
-        except OSError as exc:
+            self._fs.flush_directory(directory_fd)
+        except (OSError, UnsupportedFilesystemError) as exc:
             raise DestinationError(f"synchronisation du répertoire impossible : {exc}") from exc
 
     def _meta_name(self, filename: str) -> str:
         return filename + ".json"
 
-    def _read_meta(self, directory_fd: int, name: str) -> dict:
+    def _read_meta(self, directory_fd: DirectoryHandle, name: str) -> dict:
         """Lit un sidecar depuis un descripteur, avec une taille bornée."""
-        fd = -1
         try:
-            fd = self._open_file(directory_fd, name, os.O_RDONLY)
-            with os.fdopen(fd, "rb") as fh:
-                fd = -1
+            with self._open_file(directory_fd, name, "rb") as fh:
                 encoded = fh.read(_MAX_META_BYTES + 1)
         except FileNotFoundError:
             raise
@@ -2546,12 +2446,6 @@ class LocalDestination(Destination):
             raise
         except OSError as exc:
             raise DestinationError(f"lecture impossible du sidecar {name!r}") from exc
-        finally:
-            if fd >= 0:
-                try:
-                    os.close(fd)
-                except OSError:
-                    pass
         if len(encoded) > _MAX_META_BYTES:
             raise DestinationError(f"sidecar trop volumineux : {name!r}")
         try:
@@ -2622,18 +2516,18 @@ class LocalDestination(Destination):
 
     def _require_owned(
         self,
-        directory_fd: int,
+        directory_fd: DirectoryHandle,
         filename: str,
         *,
         allow_stale_sidecar: bool = False,
-    ) -> tuple[int, tuple[int, int]]:
+    ) -> tuple[FileHandle, tuple[int, int]]:
         """N'opère que sur un fichier avec sidecar régulier présent."""
         if not valid_filename(filename):
             raise DestinationError(f"nom de fichier invalide : {filename!r}")
         meta_name = self._meta_name(filename)
-        fd = -1
+        file_handle = None
         try:
-            fd = self._open_file(directory_fd, filename, os.O_RDONLY)
+            file_handle = self._open_file(directory_fd, filename, "rb")
             # Keep the opened inode while checking the sidecar. A replacement
             # of the public name cannot redirect read() to a foreign inode.
             meta_identity = self._entry_identity(directory_fd, meta_name)
@@ -2641,26 +2535,26 @@ class LocalDestination(Destination):
             if self._entry_identity(directory_fd, meta_name) != meta_identity:
                 raise StorageConflictError(f"sidecar modifié pendant l'opération : {filename!r}")
             item = self._validated_item(raw, filename)
-            if not allow_stale_sidecar and os.fstat(fd).st_size != item.size:
+            if not allow_stale_sidecar and file_handle.size != item.size:
                 raise ValueError("taille incohérente")
-            os.lseek(fd, 0, os.SEEK_SET)
+            file_handle.seek(0)
             if meta_identity is None:
                 raise UnknownImageError(f"fichier inconnu de Pasteberth : {filename!r}")
-            return fd, meta_identity
+            return file_handle, meta_identity
         except FileNotFoundError as exc:
-            if fd >= 0:
-                os.close(fd)
+            if file_handle is not None and not file_handle.closed:
+                file_handle.close()
             raise UnknownImageError(f"fichier inconnu de Pasteberth : {filename!r}") from exc
-        except (DestinationError, TypeError, ValueError, KeyError) as exc:
-            if fd >= 0:
-                os.close(fd)
+        except (DestinationError, OSError, TypeError, ValueError, KeyError) as exc:
+            if file_handle is not None and not file_handle.closed:
+                file_handle.close()
             raise DestinationError(f"sidecar illisible pour {filename!r}") from exc
 
     def _generate_name(self, ext: str) -> str:
         stamp = datetime.now().astimezone().strftime("%Y-%m-%d_%H-%M-%S")
         return f"{stamp}_{secrets.token_hex(3)}{ext}"
 
-    def _write_meta_atomic(self, directory_fd: int, meta: dict) -> None:
+    def _write_meta_atomic(self, directory_fd: DirectoryHandle, meta: dict) -> None:
         target = meta["filename"] + ".json"
         temp_name = self._write_meta_temp(directory_fd, meta)
         temp_identity = self._entry_identity(directory_fd, temp_name)
@@ -2677,29 +2571,26 @@ class LocalDestination(Destination):
                 pass
             raise
 
-    def _write_meta_temp(self, directory_fd: int, meta: dict) -> str:
+    def _write_meta_temp(self, directory_fd: DirectoryHandle, meta: dict) -> str:
         temp_name = f".pbmeta-{secrets.token_hex(12)}.tmp"
-        fd = -1
+        file_handle = None
         temp_identity = None
         try:
-            fd = os.open(
+            file_handle = self._fs.create_exclusive(
+                directory_fd,
                 temp_name,
-                os.O_WRONLY | os.O_CREAT | os.O_EXCL | _O_NOFOLLOW,
-                0o600,
-                dir_fd=directory_fd,
+                mode="w",
+                permissions=0o600,
             )
-            info = os.fstat(fd)
-            temp_identity = (info.st_dev, info.st_ino)
-            with os.fdopen(fd, "w", encoding="utf-8") as fh:
-                fd = -1
+            temp_identity = file_handle.identity
+            with file_handle as fh:
                 json.dump(meta, fh, ensure_ascii=False, separators=(",", ":"))
-                fh.flush()
-                os.fsync(fh.fileno())
+                fh.sync()
             return temp_name
         except BaseException:
-            if fd >= 0:
+            if file_handle is not None and not file_handle.closed:
                 try:
-                    os.close(fd)
+                    file_handle.close()
                 except OSError:
                     pass
             if temp_identity is not None:
@@ -2709,29 +2600,26 @@ class LocalDestination(Destination):
                     pass
             raise
 
-    def _write_data_temp(self, directory_fd: int, data: bytes) -> str:
+    def _write_data_temp(self, directory_fd: DirectoryHandle, data: bytes) -> str:
         temp_name = f".pbdata-{secrets.token_hex(12)}.tmp"
-        fd = -1
+        file_handle = None
         temp_identity = None
         try:
-            fd = os.open(
+            file_handle = self._fs.create_exclusive(
+                directory_fd,
                 temp_name,
-                os.O_WRONLY | os.O_CREAT | os.O_EXCL | _O_NOFOLLOW,
-                0o600,
-                dir_fd=directory_fd,
+                mode="wb",
+                permissions=0o600,
             )
-            info = os.fstat(fd)
-            temp_identity = (info.st_dev, info.st_ino)
-            with os.fdopen(fd, "wb") as fh:
-                fd = -1
+            temp_identity = file_handle.identity
+            with file_handle as fh:
                 fh.write(data)
-                fh.flush()
-                os.fsync(fh.fileno())
+                fh.sync()
             return temp_name
         except BaseException:
-            if fd >= 0:
+            if file_handle is not None and not file_handle.closed:
                 try:
-                    os.close(fd)
+                    file_handle.close()
                 except OSError:
                     pass
             if temp_identity is not None:
@@ -2741,7 +2629,12 @@ class LocalDestination(Destination):
                     pass
             raise
 
-    def _install_new(self, directory_fd: int, temp_name: str, target_name: str) -> None:
+    def _install_new(
+        self,
+        directory_fd: DirectoryHandle,
+        temp_name: str,
+        target_name: str,
+    ) -> None:
         """Installe un fichier temporaire sans remplacer une création concurrente."""
         expected = self._entry_identity(directory_fd, temp_name)
         if expected is None:
@@ -2749,32 +2642,32 @@ class LocalDestination(Destination):
         self._move_expected(directory_fd, temp_name, target_name, expected)
 
     @staticmethod
-    def _entry_exists(directory_fd: int, name: str) -> bool:
+    def _entry_exists(directory_fd: DirectoryHandle, name: str) -> bool:
         try:
-            os.stat(name, dir_fd=directory_fd, follow_symlinks=False)
+            info = platform_fs().entry_info(directory_fd, name)
         except FileNotFoundError:
             return False
-        except OSError as exc:
+        except (OSError, UnsupportedFilesystemError) as exc:
             raise DestinationError(f"inspection impossible de {name!r} : {exc}") from exc
         # Occupied symlinks and non-regular entries are foreign conflicts too;
         # callers must not try to open or replace them.
-        return True
+        return info is not None
 
     @staticmethod
-    def _entry_identity(directory_fd: int, name: str) -> tuple[int, int] | None:
+    def _entry_identity(
+        directory_fd: DirectoryHandle,
+        name: str,
+    ) -> tuple[int, int] | None:
         try:
-            info = os.stat(name, dir_fd=directory_fd, follow_symlinks=False)
+            return platform_fs().identity(directory_fd, name)
         except FileNotFoundError:
             return None
-        except OSError as exc:
+        except (OSError, UnsupportedFilesystemError) as exc:
             raise DestinationError(f"inspection impossible de {name!r} : {exc}") from exc
-        if not stat.S_ISREG(info.st_mode):
-            raise DestinationError(f"fichier non régulier : {name!r}")
-        return (info.st_dev, info.st_ino)
 
     def _save_named(
         self,
-        directory_fd: int,
+        directory_fd: DirectoryHandle,
         data: bytes,
         info: ImageInfo,
         filename: str,
@@ -2800,7 +2693,7 @@ class LocalDestination(Destination):
             raise DestinationError(f"sidecar orphelin sans fichier : {filename!r}")
         if target_exists:
             try:
-                owned_fd, meta_identity = self._require_owned(directory_fd, filename)
+                owned_file, meta_identity = self._require_owned(directory_fd, filename)
             except DestinationError as exc:
                 # A target with a malformed or stale sidecar is not a managed
                 # replacement candidate. Keep it intact and expose a conflict.
@@ -2808,10 +2701,9 @@ class LocalDestination(Destination):
                     f"fichier et sidecar incohérents : {filename!r}"
                 ) from exc
             try:
-                file_stat = os.fstat(owned_fd)
-                target_identity = (file_stat.st_dev, file_stat.st_ino)
+                target_identity = owned_file.identity
             finally:
-                os.close(owned_fd)
+                owned_file.close()
             if not allow_replace:
                 raise ReplacementRequiredError(
                     f"remplacement explicite requis pour {filename!r}"
@@ -3034,10 +2926,10 @@ class LocalDestination(Destination):
     def space_info(self) -> SpaceInfo:
         try:
             with self._directory_fd() as directory_fd:
-                statvfs = os.fstatvfs(directory_fd)
-                total = statvfs.f_blocks * statvfs.f_frsize
-                available = statvfs.f_bavail * statvfs.f_frsize
-        except OSError as exc:
+                native = self._fs.volume_space(directory_fd)
+                total = native.total_bytes
+                available = native.available_bytes
+        except (OSError, UnsupportedFilesystemError) as exc:
             raise DestinationError(f"mesure de l'espace libre impossible : {exc}") from exc
         if total <= 0:
             raise DestinationError("filesystem sans capacité mesurable")
@@ -3047,8 +2939,8 @@ class LocalDestination(Destination):
     def device_id(self) -> int:
         try:
             with self._directory_fd() as directory_fd:
-                return os.fstat(directory_fd).st_dev
-        except OSError as exc:
+                return self._fs.volume_identity(directory_fd)
+        except (OSError, UnsupportedFilesystemError) as exc:
             raise DestinationError(f"mesure du filesystem impossible : {exc}") from exc
 
     def ensure_space(self, incoming_bytes: int, minimum_percent: float) -> None:
@@ -3065,9 +2957,8 @@ class LocalDestination(Destination):
         """Réconcilie les fichiers de travail anciens issus d'un crash."""
         with self._directory_fd() as directory_fd:
             try:
-                with os.scandir(directory_fd) as scan:
-                    entries = list(scan)
-            except OSError as exc:
+                entries = self._fs.entries(directory_fd)
+            except (OSError, UnsupportedFilesystemError) as exc:
                 raise DestinationError(
                     f"lecture impossible de {self.directory} : {exc}"
                 ) from exc
@@ -3146,9 +3037,8 @@ class LocalDestination(Destination):
         items: list[StoredImage] = []
         with self._directory_fd() as directory_fd:
             try:
-                with os.scandir(directory_fd) as scan:
-                    entries = sorted(scan, key=lambda e: e.name)
-            except OSError as exc:
+                entries = sorted(self._fs.entries(directory_fd), key=lambda e: e.name)
+            except (OSError, UnsupportedFilesystemError) as exc:
                 raise DestinationError(
                     f"lecture impossible de {self.directory} : {exc}"
                 ) from exc
@@ -3246,7 +3136,7 @@ class LocalDestination(Destination):
                     log.warning("transaction active, élément ignoré : %s", filename)
                     continue
                 try:
-                    image_fd = self._open_file(directory_fd, filename, os.O_RDONLY)
+                    image_file = self._open_file(directory_fd, filename, "rb")
                 except FileNotFoundError:
                     log.warning("sidecar orphelin conservé : %s", entry.name)
                     continue
@@ -3254,9 +3144,9 @@ class LocalDestination(Destination):
                     log.warning("image liée au sidecar illisible, ignorée : %s", entry.name)
                     continue
                 try:
-                    actual_size = os.fstat(image_fd).st_size
+                    actual_size = image_file.size
                 finally:
-                    os.close(image_fd)
+                    image_file.close()
                 try:
                     item = self._validated_item(raw, filename, actual_size)
                 except (TypeError, ValueError, KeyError):
@@ -3278,14 +3168,13 @@ class LocalDestination(Destination):
             active_names = self._active_transaction_names(directory_fd)
             if source in active_names or target in active_names:
                 raise StorageConflictError("transaction en cours sur le renommage")
-            owned_fd, source_meta_identity = self._require_owned(directory_fd, source)
+            owned_file, source_meta_identity = self._require_owned(directory_fd, source)
             try:
-                info = os.fstat(owned_fd)
-                source_identity = (info.st_dev, info.st_ino)
+                source_identity = owned_file.identity
                 raw = self._read_meta(directory_fd, self._meta_name(source))
-                item = self._validated_item(raw, source, info.st_size)
+                item = self._validated_item(raw, source, owned_file.size)
             finally:
-                os.close(owned_fd)
+                owned_file.close()
             if source_meta_identity is None:
                 raise StorageConflictError(f"sidecar disparu : {source!r}")
 
@@ -3432,17 +3321,16 @@ class LocalDestination(Destination):
                 raise StorageConflictError(
                     f"transaction en cours pour le nom : {filename!r}"
                 )
-            owned_fd, meta_identity = self._require_owned(
+            owned_file, meta_identity = self._require_owned(
                 directory_fd,
                 filename,
                 allow_stale_sidecar=allow_stale_sidecar,
             )
             try:
-                info = os.fstat(owned_fd)
-                target_identity = (info.st_dev, info.st_ino)
+                target_identity = owned_file.identity
                 meta_name = self._meta_name(filename)
             finally:
-                os.close(owned_fd)
+                owned_file.close()
             if target_identity is None or meta_identity is None:
                 raise StorageConflictError(f"fichier ou sidecar disparu : {filename!r}")
             token = secrets.token_hex(12)
@@ -3480,10 +3368,9 @@ class LocalDestination(Destination):
 
     def read(self, filename: str) -> bytes:
         with self._directory_fd() as directory_fd:
-            fd, _meta_identity = self._require_owned(directory_fd, filename)
+            file_handle, _meta_identity = self._require_owned(directory_fd, filename)
             try:
-                with os.fdopen(fd, "rb") as fh:
-                    fd = -1
+                with file_handle as fh:
                     return fh.read()
             except FileNotFoundError as exc:
                 raise UnknownImageError(f"fichier inconnu de Pasteberth : {filename!r}") from exc
@@ -3491,22 +3378,15 @@ class LocalDestination(Destination):
                 if isinstance(exc, DestinationError):
                     raise
                 raise DestinationError(f"lecture impossible ({exc})") from exc
-            finally:
-                if fd >= 0:
-                    try:
-                        os.close(fd)
-                    except OSError:
-                        pass
 
     @contextmanager
     def open_read(self, filename: str):
         """Ouvre un fichier géré sans relâcher le verrou de la destination."""
         with self._directory_fd() as directory_fd:
-            fd = -1
+            file_handle = None
             try:
-                fd, _meta_identity = self._require_owned(directory_fd, filename)
-                with os.fdopen(fd, "rb") as fh:
-                    fd = -1
+                file_handle, _meta_identity = self._require_owned(directory_fd, filename)
+                with file_handle as fh:
                     yield fh
             except FileNotFoundError as exc:
                 raise UnknownImageError(
@@ -3517,11 +3397,8 @@ class LocalDestination(Destination):
                     raise
                 raise DestinationError(f"lecture impossible ({exc})") from exc
             finally:
-                if fd >= 0:
-                    try:
-                        os.close(fd)
-                    except OSError:
-                        pass
+                if file_handle is not None and not file_handle.closed:
+                    file_handle.close()
 
     def reference_path(self, filename: str) -> str:
         return str(self.directory / filename)

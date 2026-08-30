@@ -114,3 +114,6 @@ class WindowsPlatformFS(PlatformFS):
 
     def audit_permissions(self, path: Path, *, directory: bool) -> PermissionAudit:
         self._unsupported()
+
+    def is_owned(self, entry) -> bool:
+        self._unsupported()

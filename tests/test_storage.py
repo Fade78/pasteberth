@@ -528,7 +528,7 @@ class TestSauvegarde(Base):
         self.dest.save(b"old", info, filename=target.name)
 
         def fail_after_deleting_one_backup(directory_fd, transaction, marker_name, commit_name):
-            os.unlink(transaction["data_backup"], dir_fd=directory_fd)
+            (directory_fd.path / transaction["data_backup"]).unlink()
             raise OSError("nettoyage interrompu")
 
         with mock.patch.object(
@@ -2365,7 +2365,7 @@ class TestRepertoires(unittest.TestCase):
         source = target_dir / "source.bin"
         target = target_dir / "target.bin"
         source.write_bytes(b"source")
-        real_unlink = storage_module.os.unlink
+        real_unlink = os.unlink
 
         def replace_target_before_source_unlink(name, *args, **kwargs):
             if name == source.name:
@@ -2375,9 +2375,9 @@ class TestRepertoires(unittest.TestCase):
             return real_unlink(name, *args, **kwargs)
 
         with dest._directory_fd() as directory_fd:
-            with mock.patch.object(storage_module, "_renameat2", None):
+            with mock.patch.object(storage_module.platform_fs(), "_renameat2", None):
                 with mock.patch.object(
-                    storage_module.os,
+                    os,
                     "unlink",
                     side_effect=replace_target_before_source_unlink,
                 ):

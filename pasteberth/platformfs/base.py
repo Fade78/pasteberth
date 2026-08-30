@@ -53,6 +53,7 @@ class EntryInfo:
     size: int
     is_regular: bool
     is_symlink: bool
+    owner: int | str | None = None
 
 
 @dataclass(frozen=True)
@@ -281,6 +282,9 @@ class PlatformFS:
         *,
         directory: bool,
     ) -> PermissionAudit:
+        raise NotImplementedError
+
+    def is_owned(self, entry: EntryInfo) -> bool:
         raise NotImplementedError
 
     @staticmethod

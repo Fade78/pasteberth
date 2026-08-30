@@ -94,6 +94,16 @@ class PosixPlatformFS(PlatformFS):
         self.capabilities.require("safe_directory_open", "safe_file_open")
 
     @staticmethod
+    def _native_fd(directory: DirectoryHandle | int) -> int:
+        if isinstance(directory, PosixDirectoryHandle):
+            return directory.fd
+        # Kept for the v1.5 private-helper tests while callers migrate to
+        # DirectoryHandle.  Native descriptor handling remains in this module.
+        if isinstance(directory, int):
+            return directory
+        raise TypeError("handle POSIX attendu")
+
+    @staticmethod
     def _path(path: Path) -> Path:
         path = Path(path)
         if not path.is_absolute():
@@ -237,23 +247,22 @@ class PosixPlatformFS(PlatformFS):
             size=info.st_size,
             is_regular=stat.S_ISREG(info.st_mode),
             is_symlink=stat.S_ISLNK(info.st_mode),
+            owner=getattr(info, "st_uid", None),
         )
 
     def entry_info(self, directory: DirectoryHandle, name: str) -> EntryInfo | None:
         self.validate_component(name)
-        if not isinstance(directory, PosixDirectoryHandle):
-            raise TypeError("handle POSIX attendu")
+        directory_fd = self._native_fd(directory)
         try:
-            info = os.stat(name, dir_fd=directory.fd, follow_symlinks=False)
+            info = os.stat(name, dir_fd=directory_fd, follow_symlinks=False)
         except FileNotFoundError:
             return None
         return self._entry_info_from_stat(name, info)
 
     def entries(self, directory: DirectoryHandle) -> tuple[EntryInfo, ...]:
-        if not isinstance(directory, PosixDirectoryHandle):
-            raise TypeError("handle POSIX attendu")
+        directory_fd = self._native_fd(directory)
         result: list[EntryInfo] = []
-        with os.scandir(directory.fd) as scan:
+        with os.scandir(directory_fd) as scan:
             for entry in scan:
                 try:
                     info = entry.stat(follow_symlinks=False)
@@ -295,15 +304,14 @@ class PosixPlatformFS(PlatformFS):
     ) -> None:
         self.validate_component(source)
         self.validate_component(target)
-        if not isinstance(directory, PosixDirectoryHandle):
-            raise TypeError("handle POSIX attendu")
+        directory_fd = self._native_fd(directory)
         self._check_expected(directory, source, expected)
         try:
             os.link(
                 source,
                 target,
-                src_dir_fd=directory.fd,
-                dst_dir_fd=directory.fd,
+                src_dir_fd=directory_fd,
+                dst_dir_fd=directory_fd,
                 follow_symlinks=False,
             )
         except FileExistsError as exc:
@@ -311,7 +319,7 @@ class PosixPlatformFS(PlatformFS):
         if self.identity(directory, target) != expected:
             raise EntryChangedError(f"cible étrangère apparue : {target!r}")
 
-    def rename_noreplace(
+    def rename_noreplace_fallback(
         self,
         directory: DirectoryHandle,
         source: str,
@@ -322,8 +330,7 @@ class PosixPlatformFS(PlatformFS):
         """Portable fallback: link then unlink, never replacing the target."""
         self.validate_component(source)
         self.validate_component(target)
-        if not isinstance(directory, PosixDirectoryHandle):
-            raise TypeError("handle POSIX attendu")
+        directory_fd = self._native_fd(directory)
         source_identity = self.identity(directory, source)
         if expected is not None and source_identity != expected:
             raise EntryChangedError(f"source modifiée : {source!r}")
@@ -333,8 +340,8 @@ class PosixPlatformFS(PlatformFS):
             os.link(
                 source,
                 target,
-                src_dir_fd=directory.fd,
-                dst_dir_fd=directory.fd,
+                src_dir_fd=directory_fd,
+                dst_dir_fd=directory_fd,
                 follow_symlinks=False,
             )
         except FileExistsError as exc:
@@ -345,7 +352,22 @@ class PosixPlatformFS(PlatformFS):
             raise EntryChangedError(f"source modifiée : {source!r}")
         if self.identity(directory, target) != source_identity:
             raise EntryChangedError(f"cible étrangère apparue : {target!r}")
-        os.unlink(source, dir_fd=directory.fd)
+        os.unlink(source, dir_fd=directory_fd)
+
+    def rename_noreplace(
+        self,
+        directory: DirectoryHandle,
+        source: str,
+        target: str,
+        *,
+        expected: FileIdentity | None = None,
+    ) -> None:
+        return self.rename_noreplace_fallback(
+            directory,
+            source,
+            target,
+            expected=expected,
+        )
 
     def remove_expected(
         self,
@@ -356,15 +378,14 @@ class PosixPlatformFS(PlatformFS):
         self.validate_component(name)
         if expected is None:
             return False
-        if not isinstance(directory, PosixDirectoryHandle):
-            raise TypeError("handle POSIX attendu")
+        directory_fd = self._native_fd(directory)
         actual = self.identity(directory, name)
         if actual is None:
             return True
         if actual != expected:
             return False
         try:
-            os.unlink(name, dir_fd=directory.fd)
+            os.unlink(name, dir_fd=directory_fd)
         except FileNotFoundError:
             return True
         return True
@@ -417,17 +438,15 @@ class PosixPlatformFS(PlatformFS):
                     os.close(fd)
 
     def flush_directory(self, directory: DirectoryHandle) -> None:
-        if not isinstance(directory, PosixDirectoryHandle):
-            raise TypeError("handle POSIX attendu")
+        directory_fd = self._native_fd(directory)
         try:
-            os.fsync(directory.fd)
+            os.fsync(directory_fd)
         except OSError as exc:
             raise OSError(f"synchronisation du répertoire impossible : {exc}") from exc
 
     def volume_space(self, directory: DirectoryHandle) -> VolumeSpace:
-        if not isinstance(directory, PosixDirectoryHandle):
-            raise TypeError("handle POSIX attendu")
-        info = os.fstatvfs(directory.fd)
+        directory_fd = self._native_fd(directory)
+        info = os.fstatvfs(directory_fd)
         total = info.f_blocks * info.f_frsize
         available = info.f_bavail * info.f_frsize
         if total <= 0:
@@ -435,9 +454,7 @@ class PosixPlatformFS(PlatformFS):
         return VolumeSpace(total, available)
 
     def volume_identity(self, directory: DirectoryHandle) -> int:
-        if not isinstance(directory, PosixDirectoryHandle):
-            raise TypeError("handle POSIX attendu")
-        return os.fstat(directory.fd).st_dev
+        return os.fstat(self._native_fd(directory)).st_dev
 
     def first_symlink_component(self, path: Path) -> Path | None:
         path = Path(path)
@@ -470,3 +487,7 @@ class PosixPlatformFS(PlatformFS):
             private = False
         detail = None if private else "propriétaire ou permissions trop larges"
         return PermissionAudit(path, private, owner, mode, detail)
+
+    def is_owned(self, entry: EntryInfo) -> bool:
+        uid_getter = getattr(os, "getuid", None)
+        return uid_getter is None or entry.owner == uid_getter()
