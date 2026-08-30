@@ -241,6 +241,15 @@ class TestParsing(unittest.TestCase):
         )
         self.assertTrue(any("mauvaise_cle" in w for w in cfg.warnings))
 
+    def test_faute_groupes_suggere_la_cle_anglaise(self):
+        path = write_config(self.tmp)
+        path.write_text(
+            path.read_text().replace("\n[auth]\n", "\ngroupes = []\n\n[auth]\n", 1),
+            encoding="utf-8",
+        )
+        cfg = load_config(path)
+        self.assertTrue(any("groupes" in w and "groups" in w for w in cfg.warnings))
+
     def test_auth_hash_dans_config_averti_et_ignore(self):
         path = write_config(self.tmp, auth_enabled=True)
         text = path.read_text()

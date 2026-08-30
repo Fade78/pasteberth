@@ -222,7 +222,8 @@ def _best_contrast(color: str) -> float:
 
 def _warn_unknown(table: dict, known: set[str], where: str, warnings: list[str]) -> None:
     for key in sorted(set(table) - known):
-        warnings.append(f"{where}: clé inconnue '{key}' ignorée")
+        suggestion = " ; utilisez 'groups'" if where == "config" and key == "groupes" else ""
+        warnings.append(f"{where}: clé inconnue '{key}' ignorée{suggestion}")
 
 
 def _parse_auth(raw: object, warnings: list[str]) -> AuthConfig:
@@ -601,7 +602,8 @@ def check_startup_policy(cfg: Config) -> bool:
     if not loopback_only and not cfg.tls.enabled and not cfg.allow_insecure_http_remote:
         raise ConfigError(
             f"refus de démarrer : écoute HTTP non chiffrée sur '{cfg.listen_address}' "
-            "(non-loopback) ; activez [tls] ou utilisez un reverse proxy HTTPS.\n"
+            "(non-loopback) ; activez [tls] pour cette adresse ou liez Pasteberth "
+            "à loopback derrière un reverse proxy HTTPS.\n"
             "Pour forcer une écoute HTTP sur un réseau privé, ajoutez explicitement :\n"
             "  allow_insecure_http_remote = true"
         )

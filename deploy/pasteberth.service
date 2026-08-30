@@ -5,9 +5,9 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-# Default path for the documented clone; adapt it if the repository is elsewhere.
-WorkingDirectory=%h/Depots/pasteberth
-ExecStart=%h/Depots/pasteberth/bin/pasteberth
+# Example paths only; adapt them to the repository and configuration you use.
+WorkingDirectory=%h/PasteBerth
+ExecStart=%h/PasteBerth/bin/pasteberth --config %h/PasteBerth/config.toml
 Restart=on-failure
 RestartSec=2
 TimeoutStopSec=90
@@ -22,7 +22,9 @@ RestrictSUIDSGID=true
 # service will refuse to start if a declared path is missing):
 #ProtectSystem=full
 #ProtectHome=read-only
-#ReadWritePaths=%h/Depots %h/.config/pasteberth %h/.local/share/pasteberth
+#ReadWritePaths=%h/PasteBerth/storage %h/PasteBerth/captures
+# Add every configured zone directory and any parent created by
+# create_directory=true. Keep zones outside /tmp and /var/tmp with PrivateTmp=true.
 
 [Install]
 WantedBy=default.target

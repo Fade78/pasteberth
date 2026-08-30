@@ -43,6 +43,11 @@ class TestVersion(unittest.TestCase):
         self.assertEqual(proc.returncode, 0)
         self.assertIn(f"pasteberth {__version__}", proc.stdout)
 
+    def test_aide_expose_la_configuration_globale(self):
+        proc = run_cli(["--help"])
+        self.assertEqual(proc.returncode, 0)
+        self.assertIn("--config", proc.stdout)
+
 
 class TestErreursDemarrage(unittest.TestCase):
     def setUp(self):
@@ -194,6 +199,17 @@ class TestPasswd(unittest.TestCase):
         self.assertNotIn(secret, content)
         self.assertTrue(content.startswith("scrypt$"))
 
+    def test_configuration_invalide_n_ecrit_pas_de_hash(self):
+        cfg_path = write_config(self.tmp, password_file="relative/passwd")
+        self.stdin = "mot-de-passe-inutile\nmot-de-passe-inutile\n"
+
+        proc = self._passwd_cmd(cfg_path)
+
+        self.assertEqual(proc.returncode, 2)
+        self.assertIn("configuration invalide", proc.stderr)
+        self.assertIn("aucun hash n'a été écrit", proc.stderr)
+        self.assertFalse((cfg_path.parent / "passwd").exists())
+
 
 class TestConfigurationDepot(unittest.TestCase):
     def setUp(self):
@@ -211,6 +227,8 @@ class TestConfigurationDepot(unittest.TestCase):
         self.assertIn('id = "default"', content)
         self.assertIn("allowed_hosts = []", content)
         self.assertIn("storage/default", content)
+        self.assertIn("structural pixel budget", content)
+        self.assertIn("Keep this listener on loopback", content)
         self.assertIn("configuration générée", proc.stdout)
 
     def test_generation_necrase_pas_par_defaut(self):
@@ -221,12 +239,6 @@ class TestConfigurationDepot(unittest.TestCase):
         self.assertEqual(target.read_text(encoding="utf-8"), "sentinelle\n")
 
     def test_audit_mode_depot_sans_configuration(self):
-        port_busy = False
-        with socket.socket() as probe:
-            try:
-                probe.bind(("127.0.0.1", 8765))
-            except OSError:
-                port_busy = True
         proc = run_cli(
             ["audit"],
             cwd=self.tmp,
@@ -236,7 +248,7 @@ class TestConfigurationDepot(unittest.TestCase):
                 "XDG_CONFIG_HOME": str(self.tmp / "xdg"),
             },
         )
-        self.assertEqual(proc.returncode, 2 if port_busy else 1)
+        self.assertEqual(proc.returncode, 1)
         self.assertIn("stockage par défaut", proc.stdout)
 
     def test_audit_allowed_hosts_vide_avertit_wildcard(self):

@@ -76,6 +76,7 @@ class TestContratsFrontend(unittest.TestCase):
         self.assertIn("dialog#replace:not([open])", self.style_css)
         self.assertIn("dialog-fallback-backdrop", self.style_css)
         self.assertIn("dialog-fallback", self.style_css)
+        self.assertIn('id="pv-backdrop"', self.index_html)
         self.assertNotIn('aria-live="polite"', self.index_html)
 
     def test_refresh_ordonne_et_actions_clavier(self):
@@ -131,6 +132,7 @@ class TestContratsFrontend(unittest.TestCase):
         self.assertIn("askReplacement", self.app_js)
         self.assertIn('id="replace"', self.index_html)
         self.assertIn('id="replace-backdrop"', self.index_html)
+        self.assertIn('id="replace-zone"', self.index_html)
         self.assertIn('id="replace-confirm"', self.index_html)
         self.assertIn('id="replace-cancel"', self.index_html)
         self.assertNotIn("Only images are accepted", self.app_js)
@@ -170,6 +172,12 @@ class TestContratsFrontend(unittest.TestCase):
     def test_raccourcis_clavier(self):
         self.assertIn('event.key === "c"', self.app_js)
         self.assertIn("/^[1-9]$/.test(event.key)", self.app_js)
+        self.assertIn('key === "a" || key === "u"', self.app_js)
+        self.assertIn("setTabZoneSelection", self.app_js)
+        self.assertIn('event.ctrlKey || event.metaKey || event.altKey', self.app_js)
+        self.assertIn('setAttribute("aria-current"', self.app_js)
+        self.assertIn("trapFallbackDialog", self.app_js)
+        self.assertIn("applicationDialogOpen", self.app_js)
 
     def test_groupes_respectent_la_zone_visible_et_le_focus(self):
         self.assertIn("function getVisibleZones", self.app_js)

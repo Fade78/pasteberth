@@ -29,12 +29,13 @@
 <main id="grid" class="grid"></main>
 
 <footer class="help">
-  Shortcuts: <kbd>1</kbd>–<kbd>9</kbd> select a zone · <kbd>C</kbd> copy the selected link · click a thumbnail to select it · drag and drop directly onto a zone
+  Select a zone button, tab-zone link, or <kbd>1</kbd>–<kbd>9</kbd> to set the paste target · <kbd>Ctrl</kbd>/<kbd>Command</kbd>+<kbd>V</kbd> pastes there · <kbd>C</kbd> copies the selected link · in tab view <kbd>A</kbd> opens all visible zones and <kbd>U</kbd> closes them without changing the paste target · click a thumbnail to select content · drag and drop directly onto a zone
 </footer>
 
 <div id="toast" class="toast" role="status" hidden></div>
 
-<dialog id="pv" aria-label="Preview">
+<div id="pv-backdrop" class="dialog-fallback-backdrop" hidden></div>
+<dialog id="pv" aria-label="Preview" aria-modal="true">
   <img id="pv-img" alt="enlarged preview" hidden>
   <pre id="pv-text" hidden></pre>
   <div class="pv-bar">
@@ -43,21 +44,21 @@
       <button type="button" id="pv-copy" class="copy-btn">Copy link</button>
       <button type="button" id="pv-copy-image" class="copy-image-btn">Copy Image</button>
       <button type="button" id="pv-download" class="download-btn">Download</button>
-      <button type="button" id="pv-clear" class="clear-btn">Clear</button>
-      <button type="button" id="pv-delete" class="delete-btn">Delete</button>
-      <button type="button" id="pv-close" class="ghost-btn">Close</button>
+      <button type="button" id="pv-clear" class="clear-btn" aria-label="Clear the clipboard">Clear</button>
+      <button type="button" id="pv-delete" class="delete-btn" aria-label="Delete this content from the disk">Delete</button>
+      <button type="button" id="pv-close" class="ghost-btn" autofocus>Close</button>
     </div>
   </div>
   <div id="pv-toast" class="toast" role="status" hidden></div>
 </dialog>
 
 <div id="replace-backdrop" class="dialog-fallback-backdrop" hidden></div>
-<dialog id="replace" aria-labelledby="replace-title" aria-describedby="replace-message">
+<dialog id="replace" aria-labelledby="replace-title" aria-describedby="replace-message replace-filename" aria-modal="true">
   <h2 id="replace-title">Replace existing file?</h2>
-  <p id="replace-message">A Pasteberth file already uses this name:</p>
+  <p id="replace-message">A Pasteberth file already uses this name in zone <span id="replace-zone"></span>:</p>
   <code id="replace-filename"></code>
   <div class="replace-actions">
-    <button type="button" id="replace-cancel" class="ghost-btn">Cancel</button>
+    <button type="button" id="replace-cancel" class="ghost-btn" autofocus>Cancel</button>
     <button type="button" id="replace-confirm" class="replace-btn">Replace</button>
   </div>
 </dialog>

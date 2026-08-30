@@ -37,7 +37,7 @@ agent/script ── filesystem-drop ─────▶ captures/<zone>/ ──�
 The browser **never** needs to access the returned path. This is the path seen
 by the harness, on the machine where Pasteberth runs.
 
-The current version is `1.4.1`.
+The current version is `1.4.2`.
 
 ---
 
@@ -80,9 +80,11 @@ processes, and terminal tools.
 ## How It Works
 
 - **One zone per project**: each zone has an independent identifier, label,
-  color, directory, and retention policy. Click a zone to make it active, then
-  use Ctrl+V or drag and drop. The filesystem command targets a zone by its
-  configured server-side directory, not by its UI label or identifier.
+  color, directory, and retention policy. Click a zone or its selection button
+  to make it the active paste target, then use Ctrl+V or drag and drop. Moving
+  focus to an action or history item does not change that target. The
+  filesystem command targets a zone by its configured server-side directory,
+  not by its UI label or identifier.
 - **Image, text, and file content**: Ctrl+V preserves clipboard content; a
   dragged file is stored under its original name. If it replaces a Pasteberth-
   managed file with the same name, the browser first asks for confirmation.
@@ -146,7 +148,7 @@ An existing Pasteberth-managed name is refused by default. Use `--replace` to
 make the replacement explicit:
 
 ```sh
-pasteberth filesystem-drop --replace \
+pasteberth filesystem-drop --replace --config config.toml \
   /absolute/path/to/PasteBerth/captures/project-alpha /tmp/report.txt
 ```
 
@@ -204,17 +206,14 @@ itself; no installation script or root access is required.
 git clone https://glb.didierb.name/didier/pasteberth.git
 cd pasteberth
 ./bin/pasteberth --generate-config
+# edit config.toml: zones, paths, and deployment options
 ./bin/pasteberth passwd
-./bin/pasteberth
-```
-
-Before the first start, check the environment:
-
-```sh
 ./bin/pasteberth audit --config config.toml
+./bin/pasteberth --config config.toml
 ```
 
-An audit that reports only warnings returns `1`; configuration errors return
+The audit in this workflow checks the environment before the first start. An
+audit that reports only warnings returns `1`; configuration errors return
 `2`.
 It is safe to run while an instance is already listening: an occupied configured
 port is reported as a warning, while other bind failures remain configuration
@@ -230,33 +229,51 @@ pasteberth
 
 ## Configuration
 
-After generation, the local file is `config.toml` at the repository root and
-remains ignored by Git. An explicit configuration can also be provided with
-`--config PATH` or `$PASTEBERTH_CONFIG`. An older XDG configuration at
+After generation, the default local file is `config.toml` at the repository
+root and is ignored by Git. An explicit configuration can also be provided with
+`--config PATH` or `$PASTEBERTH_CONFIG`; custom paths are not automatically
+ignored by Git and must be protected manually. An older XDG configuration at
 `~/.config/pasteberth/config.toml` remains recognized. See the commented
 [`config.example.toml`](config.example.toml).
 
-Without `config.toml`, `pasteberth` intentionally starts in minimal mode,
-loopback-only, with storage at `<repository>/storage/default` and no
-authentication. A warning is displayed at every start. The same warning
+At runtime, configuration discovery has this priority: explicit `--config`,
+`$PASTEBERTH_CONFIG`, repository-root `config.toml`, XDG
+`~/.config/pasteberth/config.toml`, then the built-in minimal mode. The
+`--generate-config` command writes to the explicit path or environment path,
+then to the repository-root `config.toml`; it does not generate into the XDG
+path. Consequently, generating a repository config can shadow an existing XDG
+config on the next run. Use the same `--config PATH` for `passwd`, `audit`,
+the server, and filesystem commands when more than one configuration exists.
+
+Without a discovered configuration, `pasteberth` intentionally starts in
+minimal mode, loopback-only, with storage at `<repository>/storage/default`
+and no authentication. A warning is displayed at every start. The same warning
 appears if a modified configuration continues to target this default storage.
 This mode is for a first local trial, not for exposure through a reverse proxy.
 
 `pasteberth --generate-config` generates a secure configuration with
 authentication enabled. Then manually edit `config.toml` according to the
-desired zones and paths. The file remains ignored by Git.
+desired zones and paths. By default, `--generate-config` refuses to replace an
+existing file; `--force` overwrites the target, so review the path before using
+it. The default repository config is ignored by Git, but a custom config path is
+not automatically ignored.
+
+Configuration is loaded at startup. Restart the server after changing zones,
+listeners, TLS, proxy trust, host allowlists, upload limits, groups, or auth
+settings. The password hash is the exception: its contents are reloaded on each
+authentication attempt.
 
 | Key | Default | Role |
 |---|---|---|
 | `listen_address` | `"127.0.0.1"` | listening address; non-loopback requires TLS or an explicit private-network HTTP opt-in |
 | `port` | `8765` | TCP port |
 | `max_upload_size` | `"20MiB"` | per-upload limit (20 MiB by default, 50 MiB maximum) |
-| `max_image_pixels` | `25000000` | decoding budget (25 MP by default, 50 MP maximum) |
+| `max_image_pixels` | `25000000` | structural image pixel limit (25 MP by default, 50 MP maximum) |
 | `accept_img` | `true` | accept structurally valid PNG, JPEG, and WebP images |
 | `accept_doc` | `true` | accept valid UTF-8 text content |
 | `accept_bin` | `true` | accept opaque binary content |
-| `trusted_proxies` | `[]` | only these peers may set `X-Forwarded-*`; configure the actual reverse proxy IPs explicitly |
-| `allowed_hosts` | `[]` | hostnames accepted by Host/Origin checks; empty = wildcard (audit warns). List hostnames to enforce a strict allowlist |
+| `trusted_proxies` | `[]` | only these peers may set `X-Forwarded-*`; configure the actual reverse proxy IPs explicitly. Trusting loopback trusts any local process that can connect |
+| `allowed_hosts` | `[]` | hostnames accepted by Host/Origin checks; empty = wildcard (audit warns). Prefer a non-empty list for exposed deployments |
 | `allow_unauthenticated_local` | `false` | explicit opt-in for anonymous loopback/proxy mode |
 | `allow_unauthenticated_remote` | `false` | explicit unlock (discouraged) |
 | `allow_insecure_http_remote` | `false` | separate opt-in for non-loopback HTTP (private network only) |
@@ -341,10 +358,16 @@ different zones; equivalent effective selections are reported as redundant.
 The group controls expose local display preferences for empty groups, zone
 counts, and the selected group's layout. `layout = "area"` keeps the current
 zone grid. `layout = "tab"` shows zone names in a column and opens selected
-zones in the main view. Hovering or focusing a zone name makes it the next
-paste target; clicking opens or closes it. Shift-click adds or removes a zone
-without closing the other open zones. The active zone is cleared when changing
-groups.
+zones in the main view. In area view, clicking a zone card or its zone button
+makes it the paste target. In tab view, hovering or focusing a zone name makes
+it the next paste target; clicking opens or closes it. Shift-click adds or
+removes a zone without closing the other open zones. `Ctrl+V` or `Command+V`
+pastes to the active target; focusing action buttons or history items does not
+change it, while a direct drop always targets the zone under the drop. In tab
+view, `A` opens all visible zones in the current group and `U` closes them;
+these shortcuts do not change the active paste target. Clicking a thumbnail
+selects the content shown in that zone's upper panel. The active zone is
+cleared when changing groups.
 
 Zones must be distinct, writable target directories. Private mode `0700` is
 recommended; a more open mode produces an audit warning but does not prevent
@@ -360,9 +383,11 @@ temporary files can be reconciled after an interrupted write.
 Shared writable directories therefore imply trust between the users who can
 modify their entries; use `0700` when that trust is not appropriate.
 
-Images are limited to `16 384 × 16 384` pixels and `25 MP` by default, which
-covers usual 4K to 6K displays. 8K images exceeding `25 MP` require an explicit
-budget extension.
+Images are limited to `16 384 × 16 384` pixels and a structural pixel budget of
+`25 MP` by default, which covers usual 4K to 6K displays. 8K images exceeding
+`25 MP` require an explicit limit increase, up to the hard maximum of `50 MP`.
+This check is bounded structural validation; it does not fully decode the image
+bitstream.
 
 For a dropped file, `preserve_name=1` can retain its original filename. Names
 are limited to 200 characters and 240 UTF-8 bytes; `/`, `\`, NUL, CR/LF, `.`,
@@ -373,34 +398,35 @@ rejected. An invalid name returns `400`. Names starting with a dot, such as
 ## Password
 
 ```sh
-pasteberth passwd            # prompt + confirmation, salted scrypt hash
-                             # writes to password_file or next to config.toml (0600)
+pasteberth passwd --config config.toml  # prompt + confirmation, salted scrypt hash
+                                        # writes to password_file or next to config.toml (0600)
 ```
 
 The password is never stored in plaintext or written to config.toml; the hash
 is verified with `hashlib.scrypt` plus a constant-time comparison. A change
 takes effect immediately (reloaded on every attempt), without restarting the
 service, and invalidates existing sessions. The server refuses to start if
-authentication is enabled without a readable, valid `passwd` file.
+authentication is enabled without a readable, valid `passwd` file. If the
+selected configuration is invalid, `passwd` stops without writing any hash;
+fix the configuration and run `audit` first.
 
 ## Launching & systemd service
 
 ```sh
-pasteberth                         # foreground, default storage if needed
-pasteberth audit                   # check without modification
-systemctl --user enable --now pasteberth.service   # optional
-journalctl --user -u pasteberth -f                 # logs
+pasteberth audit --config config.toml              # check without modification
+pasteberth --config config.toml                    # foreground
 ```
 
 The supplied unit (`deploy/pasteberth.service`) is optional and requires no
-root. Adapt its `WorkingDirectory`, `ExecStart`, and configuration path to the
-actual repository before enabling it. Example if the repository is in
-`~/PasteBerth` and the configuration is in `config/`:
+root. Install it only after the configuration has been generated, edited,
+authenticated with `passwd`, and checked with `audit`. Adapt its
+`WorkingDirectory`, `ExecStart`, and `--config` path to the actual repository
+before enabling it. The template uses `~/PasteBerth` as an example:
 
 ```ini
 [Service]
 WorkingDirectory=%h/PasteBerth
-ExecStart=%h/PasteBerth/bin/pasteberth --config %h/PasteBerth/config/config.toml
+ExecStart=%h/PasteBerth/bin/pasteberth --config %h/PasteBerth/config.toml
 ```
 
 Then install the unit in the user manager:
@@ -408,16 +434,28 @@ Then install the unit in the user manager:
 ```sh
 mkdir -p ~/.config/systemd/user
 cp deploy/pasteberth.service ~/.config/systemd/user/pasteberth.service
+# edit ~/.config/systemd/user/pasteberth.service if the paths differ
 systemctl --user daemon-reload
 systemctl --user enable --now pasteberth.service
+journalctl --user -u pasteberth -f
 ```
+
+The unit uses `PrivateTmp=true`: do not configure a zone below `/tmp` or
+`/var/tmp` unless you deliberately disable that isolation, because the service
+would see a private temporary directory that other host processes cannot use.
+If you enable the commented `ProtectSystem`/`ProtectHome` hardening, add every
+zone directory and every parent that `create_directory = true` may create to
+`ReadWritePaths`; also include the configured password path if the service must
+write it. These paths must match the installed unit, not just the example.
 
 A startup refusal protects against accidental exposure:
 **authentication disabled without explicit opt-in = stop with an explicit
 message** (`allow_unauthenticated_local` or `allow_unauthenticated_remote`, as
 appropriate). A non-loopback HTTP listener also requires
-`allow_insecure_http_remote = true`; the recommended configuration remains a
-loopback backend behind an HTTPS reverse proxy.
+`allow_insecure_http_remote = true`; the recommended configuration remains an
+authenticated loopback backend behind an HTTPS reverse proxy. Changing any
+configuration used by the unit requires `systemctl --user restart
+pasteberth.service`; changing only the password hash does not.
 
 For the user service to survive the last logout and start at boot, enable linger
 for the relevant account:
@@ -442,27 +480,40 @@ certificate = "/absolute/path/cert.pem"
 private_key = "/absolute/path/key.pem"
 ```
 
-With a non-loopback listener, enable TLS or use an HTTPS reverse proxy. The
-`allow_insecure_http_remote = true` option should only be used on a controlled
-private network.
+For TLS terminated by Caddy or nginx, keep Pasteberth bound to loopback and
+proxy to it over the local connection. A non-loopback Pasteberth listener must
+use direct `[tls] enabled = true`; an external HTTPS reverse proxy does not make
+a separate non-loopback HTTP listener safe. The
+`allow_insecure_http_remote = true` option is an explicit exception for a
+controlled private network only.
+
+Authentication is a separate choice. An unauthenticated loopback backend
+requires `allow_unauthenticated_local = true`, including when a reverse proxy
+exposes it to remote clients. An unauthenticated non-loopback listener requires
+`allow_unauthenticated_remote = true` as well.
 
 By default `allowed_hosts` is empty, which disables the Host check (wildcard):
-any Host header is accepted, and the browser Origin must still match it. To
-enforce a strict allowlist, list the hostnames you expose (hostname only,
+any Host header is accepted, and the browser Origin must still match it. For an
+exposed deployment, list every hostname clients may use (hostname only,
 without scheme, port, or path) — `pasteberth audit` warns while the list is
-empty:
+empty. Leaving it empty is a deliberate tradeoff only when an upstream proxy
+independently enforces the canonical hostnames:
 
-For a multi-station deployment, leave this key absent or set it to `[]` when
-the public hostname is supplied by the deployment rather than fixed in the
-configuration. Replacing the default with local-only hostnames causes remote
-clients to receive `403 forbidden_host`. Use a non-empty list only when every
-client reaches the service through one of the listed hostnames.
+For a multi-station deployment, include all public hostnames in the list. Do not
+replace a public hostname with local-only names: remote clients then receive
+`403 forbidden_host`.
 
 ```toml
 listen_address = "127.0.0.1"
-trusted_proxies = ["127.0.0.1"]  # only if this is the actual proxy peer
+trusted_proxies = ["127.0.0.1"]  # only if the proxy is the only trusted local client
 allowed_hosts = ["pasteberth.example.internal"]
 ```
+
+`trusted_proxies` is checked by the peer IP of the connection. Trusting
+`127.0.0.1` therefore trusts every local process that can connect to the
+Pasteberth listener, not just Caddy or nginx. Use it only when local clients
+are trusted or the proxy-to-backend path is otherwise isolated; leave it empty
+if that trust boundary cannot be guaranteed.
 
 ### Caddy (recommended)
 
@@ -484,7 +535,7 @@ server {
         proxy_set_header Host $host;
         proxy_set_header X-Forwarded-Proto https;
         proxy_set_header X-Forwarded-For $remote_addr;
-        client_max_body_size 25m;
+        client_max_body_size 50m;
     }
 }
 ```
@@ -492,7 +543,9 @@ server {
 In both cases: listen on `127.0.0.1` for Pasteberth, and let
 `trusted_proxies` contain only the proxy's IP. It is empty by default, so a
 direct local client cannot spoof an IP with `X-Forwarded-For`; configure it
-only when the listener is reachable exclusively through the listed proxy.
+only when the listener is reachable exclusively through the listed proxy and
+all processes in that address scope are trusted. The proxy body limit should
+be at least the configured `max_upload_size` (20 MiB by default, 50 MiB maximum).
 `X-Forwarded-Proto/For` headers from an unlisted peer are **ignored**.
 
 ## API
@@ -565,8 +618,9 @@ blindly retrying.
 
 ## Security
 
-- Passwords: salted scrypt (N=16384), constant-time comparison, `passwd` file
-  0600 next to the configuration and ignored by Git; delay + progressive
+- Passwords: salted scrypt (N=16384), constant-time comparison, a `passwd` file
+  0600 next to the configuration by default (or at `[auth] password_file`) and
+  ignored by Git only for the repository-default filename; delay + progressive
   per-IP lockout (honoring XFF only through a trusted proxy).
 - Login requests are limited to 4 KiB, scrypt checks are globally bounded, and
   uploads share a 128 MiB memory budget; uploads remain limited to 20 MiB by
@@ -645,7 +699,8 @@ corresponding Playwright browser is installed.
   deletion of stored content outside retention is available from the UI.
 - Single-password authentication in V1; filesystem permissions can nevertheless
   organize multiple zones or users.
-- TLS delegated to the reverse proxy or terminated directly by Pasteberth.
+- TLS is delegated to a reverse proxy with a loopback Pasteberth backend, or
+  terminated directly by Pasteberth on a non-loopback listener.
 - Mixed pastes are serialized as HTML with base64-embedded images (~33% larger
   than the raw image); very large screenshots can hit `max_upload_size` where
   an image-only upload would fit.

@@ -142,11 +142,11 @@ test("charge les zones et expose une sélection clavier accessible", async ({ pa
   const defaultZone = page.locator('[data-zone="default"]');
   const secondary = page.locator('[data-zone="secondary"]');
   await expect(defaultZone.getByRole("button", { name: "Select zone Default" }))
-    .toHaveAttribute("aria-pressed", "false");
+    .toHaveAttribute("aria-current", "false");
 
   await page.locator("body").press("2");
   await expect(secondary.getByRole("button", { name: "Select zone Secondary" }))
-    .toHaveAttribute("aria-pressed", "true");
+    .toHaveAttribute("aria-current", "true");
   await expect(secondary).toHaveClass(/active/);
   await expect(defaultZone).not.toHaveClass(/active/);
 });
@@ -177,6 +177,73 @@ test("refuse un collage sans zone active", async ({ page }) => {
   await expect.poll(() => page.locator(".latest").count()).toBe(before);
 });
 
+test("les contrôles d'action ne changent pas la cible de collage", async ({ page }) => {
+  await openApp(page);
+  const defaultZone = page.locator('[data-zone="default"]');
+  const secondary = page.locator('[data-zone="secondary"]');
+  await defaultZone.locator(".zone-select").click();
+  await dispatchPaste(page);
+  await secondary.locator(".zone-select").click();
+  await defaultZone.locator(".copy-btn").focus();
+  await expect(secondary.locator(".zone-select")).toHaveAttribute("aria-current", "true");
+
+  const pasteRequest = page.waitForRequest(request => (
+    request.method() === "POST" && request.url().includes("/api/zones/secondary/images")
+  ));
+  await dispatchPaste(page);
+  await pasteRequest;
+  await expect(secondary.locator(".latest")).toBeVisible();
+  await expect(defaultZone.locator(".zone-select")).toHaveAttribute("aria-current", "false");
+});
+
+test("les dialogues isolent le collage et les raccourcis globaux", async ({ page }) => {
+  await openApp(page);
+  const defaultZone = page.locator('[data-zone="default"]');
+  const secondary = page.locator('[data-zone="secondary"]');
+  await defaultZone.locator(".zone-select").click();
+  await dispatchPaste(page);
+  await defaultZone.locator(".thumb-big").press("Enter");
+  await expect(page.locator("#pv")).toBeVisible();
+  await expect(page.locator("#pv")).toHaveAttribute("aria-label", /Preview of/);
+  await expect(page.locator("#pv-close")).toBeFocused();
+
+  await page.keyboard.press("2");
+  await page.keyboard.press("a");
+  await page.keyboard.press("u");
+  await page.keyboard.press("c");
+  await dispatchPaste(page);
+  await expect(defaultZone.locator(".thumb-wrap")).toHaveCount(1);
+  await expect(defaultZone.locator(".zone-select")).toHaveAttribute("aria-current", "true");
+  await expect(secondary.locator(".zone-select")).toHaveAttribute("aria-current", "false");
+  await page.locator("#pv-close").click();
+  await expect(page.locator("#pv")).toBeHidden();
+});
+
+test("la confirmation de remplacement commence par Cancel et restaure le focus", async ({ page }) => {
+  await openApp(page);
+  const defaultZone = page.locator('[data-zone="default"]');
+  await dispatchBinaryDrop(page, ".zone[data-zone=\"default\"]");
+  await defaultZone.locator(".zone-select").focus();
+  await dispatchBinaryDrop(page, ".zone[data-zone=\"default\"]");
+  await expect(page.locator("#replace")).toBeVisible();
+  await expect(page.locator("#replace-cancel")).toBeFocused();
+  await expect(page.locator("#replace-message")).toContainText("Default");
+  await expect(page.locator("#replace")).toHaveAttribute(
+    "aria-describedby",
+    "replace-message replace-filename",
+  );
+  await page.keyboard.press("2");
+  await page.keyboard.press("c");
+  await dispatchPaste(page);
+  await expect(defaultZone.locator(".thumb-wrap")).toHaveCount(1);
+  await expect(defaultZone.locator(".zone-select")).toHaveAttribute("aria-current", "true");
+
+  await page.keyboard.press("Enter");
+  await expect(page.locator("#replace")).toBeHidden();
+  await expect(defaultZone.locator(".thumb-wrap")).toHaveCount(1);
+  await expect(defaultZone.locator(".zone-select")).toBeFocused();
+});
+
 test("désélectionne la zone absente du groupe actif", async ({ page }) => {
   await openApp(page);
   await page.getByRole("button", { name: "Select zone Default" }).click();
@@ -184,17 +251,17 @@ test("désélectionne la zone absente du groupe actif", async ({ page }) => {
 
   await expect(page.locator(".zone")).toHaveCount(1);
   await expect(page.locator('[data-zone="secondary"] .zone-select'))
-    .toHaveAttribute("aria-pressed", "false");
+    .toHaveAttribute("aria-current", "false");
 
   await page.evaluate(() => document.dispatchEvent(new Event("visibilitychange")));
   await expect(page.locator('[data-zone="secondary"] .zone-select'))
-    .toHaveAttribute("aria-pressed", "false");
+    .toHaveAttribute("aria-current", "false");
 
   await page.locator('.group-tab[data-group="Secondary"]').click();
   await page.locator('[data-zone="secondary"] .zone-select').click();
   await page.getByRole("button", { name: "All" }).click();
   await expect(page.locator('[data-zone="secondary"] .zone-select'))
-    .toHaveAttribute("aria-pressed", "false");
+    .toHaveAttribute("aria-current", "false");
 
   let uploadSeen = false;
   page.on("request", (request) => {
@@ -213,7 +280,7 @@ test("le focus Tab sélectionne la première zone visible", async ({ page }) => 
   await page.getByRole("button", { name: "Group options" }).focus();
   await page.keyboard.press("Tab");
   await expect(page.locator('[data-zone="secondary"] .zone-select'))
-    .toHaveAttribute("aria-pressed", "true");
+    .toHaveAttribute("aria-current", "true");
 });
 
 test("conserve le focus sur le groupe après son changement au clavier", async ({ page }) => {
@@ -234,9 +301,38 @@ test("le layout tab ouvre une zone et permet une sélection multiple au Shift-cl
   const defaultLink = page.locator('.tab-zone-link[data-zone="default"]');
   const secondaryLink = page.locator('.tab-zone-link[data-zone="secondary"]');
   await defaultLink.focus();
-  await expect(defaultLink).toHaveAttribute("aria-pressed", "true");
+  await page.keyboard.press("2");
+  await expect(secondaryLink).toHaveAttribute("aria-current", "true");
+  await page.keyboard.press("a");
+  await expect(page.locator(".tab-zone-main .zone")).toHaveCount(2);
+  await expect(defaultLink).toBeFocused();
+  await expect(secondaryLink).toHaveAttribute("aria-current", "true");
+  await page.evaluate(() => document.dispatchEvent(new KeyboardEvent("keydown", {
+    key: "a",
+    ctrlKey: true,
+    bubbles: true,
+  })));
+  await expect(page.locator(".tab-zone-main .zone")).toHaveCount(2);
+  await page.evaluate(() => document.dispatchEvent(new KeyboardEvent("keydown", {
+    key: "u",
+    ctrlKey: true,
+    bubbles: true,
+  })));
+  await expect(page.locator(".tab-zone-main .zone")).toHaveCount(2);
+  await page.keyboard.press("u");
+  await expect(page.locator(".tab-zone-main .zone")).toHaveCount(0);
+  await expect(defaultLink).toBeFocused();
+  await expect(secondaryLink).toHaveAttribute("aria-current", "true");
+  await defaultLink.click();
+  await expect(page.locator(".tab-zone-main .zone")).toHaveCount(1);
+  const zoneSelect = page.locator('.tab-zone-main .zone[data-zone="default"] .zone-select');
+  await zoneSelect.focus();
+  await page.keyboard.press("u");
+  await expect(page.locator(".tab-zone-main .zone")).toHaveCount(1);
+  await defaultLink.click();
+  await expect(page.locator(".tab-zone-main .zone")).toHaveCount(0);
   await secondaryLink.hover();
-  await expect(secondaryLink).toHaveAttribute("aria-pressed", "true");
+  await expect(secondaryLink).toHaveAttribute("aria-current", "true");
   const pasteRequest = page.waitForRequest(request => (
     request.method() === "POST" && request.url().includes("/api/zones/secondary/images")
   ));
@@ -329,7 +425,7 @@ test("sélectionne automatiquement l'unique zone visible", async ({ page }) => {
   await page.goto("/", { waitUntil: "domcontentloaded" });
   await expect(page.locator("#status-text")).toHaveText("online");
   await expect(page.locator('[data-zone="default"] .zone-select'))
-    .toHaveAttribute("aria-pressed", "true");
+    .toHaveAttribute("aria-current", "true");
 });
 
 test("sans groupes configurés, conserve toutes les zones sans barre de groupes", async ({ page }) => {
@@ -381,7 +477,7 @@ test("colle une image et ouvre son aperçu au clavier", async ({ page }) => {
   );
   await expect(defaultZone.locator(".history-index")).toBeVisible();
   await expect(defaultZone.locator(".thumb-wrap")).toHaveCount(1);
-  await expect(defaultZone.locator(".thumb-wrap")).toHaveAttribute("aria-pressed", "true");
+  await expect(defaultZone.locator(".thumb-wrap")).toHaveAttribute("aria-current", "true");
   await defaultZone.getByRole("button", { name: "Copy link" }).click();
   await expect(page.locator("#toast")).toContainText("Link copied");
   await defaultZone.getByRole("button", { name: "Copy image to the clipboard" }).click();
@@ -403,7 +499,7 @@ test("colle une image et ouvre son aperçu au clavier", async ({ page }) => {
   await page.getByRole("button", { name: "Close" }).click();
   await expect(page.locator("#pv")).not.toBeVisible();
 
-  await defaultZone.getByRole("button", { name: "Enlarge the image" }).click();
+  await defaultZone.getByRole("button", { name: /Enlarge the image/ }).click();
   await expect(page.locator("#pv")).toBeVisible();
   await page.locator("#pv-clear").click();
   await expect(page.locator("#pv-toast")).toContainText("Clipboard cleared");
@@ -494,7 +590,7 @@ test("sélectionne une image depuis l'index", async ({ page }) => {
   await expect(defaultZone.locator(".thumb-wrap")).toHaveCount(2);
 
   await defaultZone.locator(".thumb-wrap").last().click();
-  await expect(defaultZone.locator(".thumb-wrap").last()).toHaveAttribute("aria-pressed", "true");
+  await expect(defaultZone.locator(".thumb-wrap").last()).toHaveAttribute("aria-current", "true");
   await expect(defaultZone.locator(".latest .fname")).toHaveText(firstName);
 });
 
@@ -505,7 +601,7 @@ test("accepte le glisser-déposer sur une zone", async ({ page }) => {
   const secondary = page.locator('[data-zone="secondary"]');
   await expect(secondary.locator(".latest")).toBeVisible();
   await expect(secondary.locator(".fname")).toHaveText("dropped.png");
-  await expect(secondary.locator(".zone-select")).toHaveAttribute("aria-pressed", "true");
+  await expect(secondary.locator(".zone-select")).toHaveAttribute("aria-current", "true");
 });
 
 test("conserve le nom et confirme le remplacement d'un binaire déposé", async ({ page }) => {
@@ -518,6 +614,10 @@ test("conserve le nom et confirme le remplacement d'un binaire déposé", async 
   await expect(defaultZone.locator(".download-btn")).toHaveAttribute(
     "aria-label",
     "Download ZIP",
+  );
+  await expect(defaultZone.locator(".file-box")).toHaveAttribute(
+    "aria-label",
+    "Download archive.zip",
   );
   const downloadPromise = page.waitForEvent("download");
   await defaultZone.locator(".download-btn").click();
@@ -555,7 +655,7 @@ test("utilise le fallback du dialogue de remplacement sans API native", async ({
     secondaryBox.y + secondaryBox.height / 2,
   );
   await expect(defaultZone.getByRole("button", { name: "Select zone Default" }))
-    .toHaveAttribute("aria-pressed", "true");
+    .toHaveAttribute("aria-current", "true");
   await expect(page.locator("#replace")).toBeVisible();
   await dispatchBinaryDrop(page, '.zone[data-zone="default"]');
   await page.locator("#replace-confirm").click();
@@ -576,6 +676,41 @@ test("utilise le fallback du dialogue de remplacement sans API native", async ({
   await dispatchBinaryDrop(page, '.zone[data-zone="default"]');
   await page.locator("#replace-confirm").click();
   await expect(defaultZone.locator(".thumb-wrap")).toHaveCount(1);
+});
+
+test("utilise le fallback du dialogue de preview sans API native", async ({ page }) => {
+  await page.addInitScript(() => {
+    Object.defineProperty(HTMLDialogElement.prototype, "showModal", { value: undefined });
+    Object.defineProperty(HTMLDialogElement.prototype, "close", { value: undefined });
+  });
+  await openApp(page);
+  const defaultZone = page.locator('[data-zone="default"]');
+  const secondary = page.locator('[data-zone="secondary"]');
+  await defaultZone.locator(".zone-select").click();
+  await dispatchPaste(page);
+  await defaultZone.locator(".thumb-big").press("Enter");
+  await expect(page.locator("#pv")).toBeVisible();
+  await expect(page.locator("#pv")).toHaveClass(/dialog-fallback/);
+  await expect(page.locator("#pv-backdrop")).toBeVisible();
+  await expect(page.locator("#pv-close")).toBeFocused();
+
+  const secondaryBox = await secondary.boundingBox();
+  await page.mouse.click(
+    secondaryBox.x + secondaryBox.width / 2,
+    secondaryBox.y + secondaryBox.height / 2,
+  );
+  await expect(page.locator("#pv")).toBeVisible();
+  await expect(defaultZone.locator(".zone-select")).toHaveAttribute("aria-current", "true");
+  await expect(secondary.locator(".zone-select")).toHaveAttribute("aria-current", "false");
+
+  await page.keyboard.press("Tab");
+  await expect(page.locator("#pv-copy")).toBeFocused();
+  await page.keyboard.press("Shift+Tab");
+  await expect(page.locator("#pv-close")).toBeFocused();
+  await page.keyboard.press("Escape");
+  await expect(page.locator("#pv")).toBeHidden();
+  await expect(page.locator("#pv-backdrop")).toBeHidden();
+  await expect(defaultZone.locator(".thumb-big")).toBeFocused();
 });
 
 test("affiche un fichier cache depose dans l'index apres rechargement", async ({ page }) => {
@@ -603,7 +738,7 @@ test("supprime une image depuis la carte", async ({ page }) => {  await openApp(
   const filename = await defaultZone.locator(".fname").textContent();
 
   page.on("dialog", (dialog) => dialog.accept());
-  await defaultZone.getByRole("button", { name: "Delete this image from the disk" }).click();
+  await defaultZone.getByRole("button", { name: /Delete .* from the disk/ }).click();
 
   await expect(defaultZone.locator(".latest")).toHaveCount(0);
   await expect(defaultZone.locator(".drop-hint")).toBeVisible();
@@ -642,7 +777,7 @@ test("ne réaffiche pas une image supprimée après un refresh périmé", async 
 
   const filename = await defaultZone.locator(".fname").textContent();
   page.on("dialog", (dialog) => dialog.accept());
-  await defaultZone.getByRole("button", { name: "Delete this image from the disk" }).click();
+  await defaultZone.getByRole("button", { name: /Delete .* from the disk/ }).click();
   await expect(defaultZone.locator(".latest")).toHaveCount(0);
   releaseRefresh();
   await expect.poll(() => defaultZone.locator(".latest").count()).toBe(0);
@@ -676,10 +811,39 @@ test("colle du texte et l'affiche", async ({ page }) => {
   expect(textDownload.suggestedFilename()).toBe(textName);
   await defaultZone.locator(".file-box").click();
   await expect(page.locator("#pv")).toBeVisible();
+  await expect(page.locator("#pv")).toHaveAttribute("aria-label", `Preview of ${textName}`);
   await expect(page.locator("#pv-text")).toHaveText("# hello world");
   await expect(page.locator("#pv-copy-image")).toHaveText("Copy Text");
   await expect(page.locator("#pv-download")).toHaveText("Download MD");
   await page.getByRole("button", { name: "Close" }).click();
+});
+
+test("les previews restent utilisables sur un écran étroit", async ({ page }) => {
+  await page.setViewportSize({ width: 320, height: 640 });
+  await openApp(page);
+  const defaultZone = page.locator('[data-zone="default"]');
+  await defaultZone.locator(".zone-select").click();
+  await dispatchPaste(page);
+  await defaultZone.locator(".thumb-big").click();
+  await expect(page.locator("#pv")).toBeVisible();
+  await expect(page.locator("#pv button")).toHaveCount(6);
+  for (const button of await page.locator("#pv button").all()) await expect(button).toBeVisible();
+  let widths = await page.evaluate(() => ({
+    client: document.documentElement.clientWidth,
+    scroll: document.documentElement.scrollWidth,
+  }));
+  expect(widths.scroll).toBeLessThanOrEqual(widths.client);
+  await page.locator("#pv-close").click();
+
+  await dispatchTextPaste(page, "narrow text");
+  await defaultZone.locator(".file-box").click();
+  await expect(page.locator("#pv-text")).toHaveText("narrow text");
+  for (const button of await page.locator("#pv button").all()) await expect(button).toBeVisible();
+  widths = await page.evaluate(() => ({
+    client: document.documentElement.clientWidth,
+    scroll: document.documentElement.scrollWidth,
+  }));
+  expect(widths.scroll).toBeLessThanOrEqual(widths.client);
 });
 
 test("prefere text plain a html dans un presse-papiers mixte", async ({ page }) => {

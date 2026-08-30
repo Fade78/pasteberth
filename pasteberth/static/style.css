@@ -605,6 +605,8 @@ dialog#pv {
   border-radius: var(--radius);
   padding: 12px;
   max-width: min(92vw, 1100px);
+  max-height: 92vh;
+  overflow: auto;
 }
 
 dialog#pv:not([open]), dialog#replace:not([open]) { display: none; }
@@ -676,7 +678,7 @@ dialog.dialog-fallback[open] {
 }
 
 .pv-bar .ref { flex: 1; min-width: 200px; }
-.pv-actions { display: flex; gap: 8px; }
+.pv-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 .pv-actions .copy-btn, .pv-actions .copy-image-btn, .pv-actions .download-btn, .pv-actions .clear-btn, .pv-actions .delete-btn { margin-top: 0; }
 
 /* ---------------------------------------------------------------- footer */
@@ -794,5 +796,8 @@ kbd {
   .meta .dims { font-size: 0.68rem; }
   .thumbs { gap: 4px; }
   .thumb { width: 40px; height: 40px; }
+  .thumb-content { width: 40px; height: 40px; }
+  .pv-actions { flex: 1 1 100%; }
+  .pv-actions button { flex: 1 1 auto; }
   .help { font-size: 0.68rem; }
 }

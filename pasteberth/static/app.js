@@ -50,12 +50,15 @@
   const pvDownload = document.getElementById("pv-download");
   const pvClear = document.getElementById("pv-clear");
   const pvDelete = document.getElementById("pv-delete");
+  const previewBackdrop = document.getElementById("pv-backdrop");
   const replacementDialog = document.getElementById("replace");
   const replacementBackdrop = document.getElementById("replace-backdrop");
   const replacementFilename = document.getElementById("replace-filename");
+  const replacementZone = document.getElementById("replace-zone");
   const replacementCancel = document.getElementById("replace-cancel");
   const replacementConfirm = document.getElementById("replace-confirm");
   const replacementQueue = [];
+  const dialogInvokers = new WeakMap();
   let activeReplacementPrompt = null;
 
   // ------------------------------------------------------------- utilities
@@ -532,7 +535,7 @@
     const select = document.createElement("button");
     select.type = "button";
     select.className = "zone-select";
-    select.setAttribute("aria-pressed", String(zone.id === state.activeId));
+    select.setAttribute("aria-current", String(zone.id === state.activeId));
     select.setAttribute("aria-label", `Select zone ${zone.label}`);
     select.innerHTML =
       '<span class="zone-marker" aria-hidden="true"></span>' +
@@ -546,7 +549,9 @@
     if (zone.images.length === 0) {
       const hint = document.createElement("div");
       hint.className = "drop-hint";
-      hint.textContent = "Ctrl+V to paste or drag a file here";
+      hint.textContent = zone.id === state.activeId
+        ? "Active paste target: Ctrl/Command+V to paste or drag a file here"
+        : "Select this zone to make it the paste target, or drag a file here";
       el.appendChild(hint);
     } else {
       const selected = selectedItem(zone);
@@ -638,7 +643,9 @@
       zoom.textContent = item.kind === "image" ? "Zoom" : "Preview";
       zoom.setAttribute(
         "aria-label",
-        item.kind === "image" ? "Enlarge the image" : "Preview the text",
+        item.kind === "image"
+          ? `Enlarge the image ${item.filename}`
+          : `Preview ${item.filename}`,
       );
       zoom.dataset.ref = item.reference;
       zoom.dataset.preview = item.preview_url;
@@ -649,7 +656,7 @@
     del.type = "button";
     del.className = "delete-btn";
     del.textContent = "Delete";
-    del.setAttribute("aria-label", "Delete this image from the disk");
+    del.setAttribute("aria-label", `Delete ${item.filename} from the disk`);
     del.dataset.zone = zoneId;
     del.dataset.filename = item.filename;
     const actions = document.createElement("div");
@@ -665,11 +672,11 @@
       img.className = "thumb-big";
       img.dataset.itemId = item.id;
       setPreviewSource(img, item.preview_url);
-      img.alt = "latest image";
+      img.alt = `Latest image ${item.filename}`;
       img.loading = "lazy";
       img.tabIndex = 0;
       img.setAttribute("role", "button");
-      img.setAttribute("aria-label", "Open the latest image preview");
+      img.setAttribute("aria-label", `Open preview of ${item.filename}`);
       card.append(img, right);
     } else {
       const box = document.createElement("div");
@@ -678,7 +685,12 @@
       box.textContent = item.kind === "text" ? "TXT" : "FILE";
       box.tabIndex = 0;
       box.setAttribute("role", "button");
-      box.setAttribute("aria-label", "Open the latest content preview");
+      box.setAttribute(
+        "aria-label",
+        item.kind === "binary"
+          ? `Download ${item.filename}`
+          : `Open preview of ${item.filename}`,
+      );
       card.append(box, right);
     }
     return card;
@@ -698,7 +710,7 @@
       wrap.type = "button";
       wrap.className = "thumb-wrap";
       if (item.id === selectedId) wrap.classList.add("selected");
-      wrap.setAttribute("aria-pressed", String(item.id === selectedId));
+      wrap.setAttribute("aria-current", String(item.id === selectedId));
       wrap.setAttribute("aria-label", `Select ${item.filename}`);
       wrap.title = `${item.filename} — ${fmtDateTime(item.created_at)}`;
       wrap.dataset.itemId = item.id;
@@ -806,7 +818,7 @@
       link.className = "tab-zone-link";
       link.dataset.zone = zone.id;
       link.textContent = zone.label;
-      link.setAttribute("aria-pressed", String(zone.id === state.activeId));
+      link.setAttribute("aria-current", String(zone.id === state.activeId));
       link.setAttribute("aria-expanded", String(state.openZoneIds.includes(zone.id)));
       link.setAttribute("aria-controls", "tab-zone-main");
       link.addEventListener("mouseenter", () => setActive(zone.id));
@@ -847,6 +859,73 @@
     }
   }
 
+  function isDialogOpen(dialog) {
+    return Boolean(dialog && dialog.hasAttribute("open"));
+  }
+
+  function applicationDialogOpen() {
+    return isDialogOpen(pv) || isDialogOpen(replacementDialog);
+  }
+
+  function dialogFocusable(dialog) {
+    return [...dialog.querySelectorAll(
+      "button, [href], input, select, textarea, [tabindex]:not([tabindex='-1'])",
+    )].filter(control => !control.disabled && !control.hidden);
+  }
+
+  function rememberDialogInvoker(dialog, invoker) {
+    const candidate = invoker && typeof invoker.focus === "function"
+      ? invoker
+      : document.activeElement;
+    if (candidate && candidate !== dialog) dialogInvokers.set(dialog, candidate);
+  }
+
+  function restoreDialogInvoker(dialog) {
+    const invoker = dialogInvokers.get(dialog);
+    dialogInvokers.delete(dialog);
+    if (invoker && invoker.isConnected && !invoker.disabled) invoker.focus();
+  }
+
+  function focusDialog(dialog) {
+    const target = dialog.querySelector("[autofocus]") || dialogFocusable(dialog)[0];
+    if (target) target.focus();
+  }
+
+  function trapFallbackDialog(event, dialog) {
+    const controls = dialogFocusable(dialog);
+    if (!controls.length) {
+      event.preventDefault();
+      return;
+    }
+    const current = document.activeElement;
+    const index = controls.indexOf(current);
+    if (event.shiftKey) {
+      if (index <= 0) {
+        event.preventDefault();
+        controls[controls.length - 1].focus();
+      }
+    } else if (index === -1 || index === controls.length - 1) {
+      event.preventDefault();
+      controls[0].focus();
+    }
+  }
+
+  function setTabZoneSelection(selectAll) {
+    const group = state.groups.find(item => item.name === state.activeGroupId);
+    if (groupLayout(group) !== "tab") return false;
+    const activeZoneId = state.activeId;
+    const focusedZoneId = document.activeElement?.classList.contains("tab-zone-link")
+      ? document.activeElement.dataset.zone
+      : null;
+    state.openZoneIds = selectAll ? getVisibleZones().map(zone => zone.id) : [];
+    renderAll();
+    if (focusedZoneId) {
+      grid.querySelector(`.tab-zone-link[data-zone="${CSS.escape(focusedZoneId)}"]`)?.focus();
+    }
+    if (state.activeId !== activeZoneId) setActive(activeZoneId);
+    return true;
+  }
+
   function rerenderZone(zoneId) {
     const zone = state.zones.find(z => z.id === zoneId);
     const old = grid.querySelector(`.zone[data-zone="${CSS.escape(zoneId)}"]`);
@@ -883,12 +962,18 @@
       const active = el.dataset.zone === zoneId;
       el.classList.toggle("active", active);
       const select = el.querySelector(".zone-select");
-      if (select) select.setAttribute("aria-pressed", String(active));
+      if (select) select.setAttribute("aria-current", String(active));
+      const hint = el.querySelector(".drop-hint");
+      if (hint) {
+        hint.textContent = active
+          ? "Active paste target: Ctrl/Command+V to paste or drag a file here"
+          : "Select this zone to make it the paste target, or drag a file here";
+      }
     }
     for (const link of grid.querySelectorAll(".tab-zone-link")) {
       const active = link.dataset.zone === zoneId;
       link.classList.toggle("active", active);
-      link.setAttribute("aria-pressed", String(active));
+      link.setAttribute("aria-current", String(active));
     }
     if (announce) {
       const zone = state.zones.find(z => z.id === zoneId);
@@ -1184,7 +1269,7 @@
     if (activeRefreshController) activeRefreshController.abort();
     try {
       if (preserveName && !allowReplace && file.name && hasManagedName(zoneId, file.name)) {
-        allowReplace = await askReplacement(file.name);
+        allowReplace = await askReplacement(file.name, zoneId);
         if (!allowReplace) return;
       }
       const fd = new FormData();
@@ -1222,7 +1307,7 @@
         && file.name
         && !allowReplace
       ) {
-        const confirmed = await askReplacement(file.name);
+        const confirmed = await askReplacement(file.name, zoneId);
         if (confirmed) {
           await upload(zoneId, file, { preserveName: true, allowReplace: true });
         }
@@ -1247,14 +1332,15 @@
     if (activeReplacementPrompt || !replacementQueue.length) return;
     activeReplacementPrompt = replacementQueue.shift();
     replacementFilename.textContent = activeReplacementPrompt.filename;
+    const zone = state.zones.find(item => item.id === activeReplacementPrompt.zoneId);
+    replacementZone.textContent = zone ? zone.label : activeReplacementPrompt.zoneId;
     replacementDialog.returnValue = "";
-    openDialog(replacementDialog);
-    replacementConfirm.focus();
+    openDialog(replacementDialog, activeReplacementPrompt.invoker);
   }
 
-  function askReplacement(filename) {
+  function askReplacement(filename, zoneId) {
     return new Promise((resolve) => {
-      replacementQueue.push({ filename, resolve });
+      replacementQueue.push({ filename, zoneId, resolve, invoker: document.activeElement });
       showNextReplacementPrompt();
     });
   }
@@ -1265,6 +1351,7 @@
     activeReplacementPrompt = null;
     prompt.resolve(allowReplace);
     showNextReplacementPrompt();
+    if (!activeReplacementPrompt) restoreDialogInvoker(replacementDialog);
   }
 
   function closeReplacementPrompt(allowReplace) {
@@ -1273,23 +1360,28 @@
     settleReplacementPrompt(allowReplace);
   }
 
-  function openDialog(dialog) {
+  function openDialog(dialog, invoker = document.activeElement) {
+    rememberDialogInvoker(dialog, invoker);
+    const backdrop = dialog === pv ? previewBackdrop : replacementBackdrop;
     if (typeof dialog.showModal === "function") {
       dialog.classList.remove("dialog-fallback");
-      if (dialog === replacementDialog) replacementBackdrop.hidden = true;
+      if (backdrop) backdrop.hidden = true;
       dialog.showModal();
     } else {
       dialog.classList.add("dialog-fallback");
-      if (dialog === replacementDialog) replacementBackdrop.hidden = false;
+      if (backdrop) backdrop.hidden = false;
+      dialog.setAttribute("aria-modal", "true");
       dialog.setAttribute("open", "");
     }
+    focusDialog(dialog);
   }
 
   function closeDialog(dialog, returnValue = "") {
+    const backdrop = dialog === pv ? previewBackdrop : replacementBackdrop;
     if (dialog.classList.contains("dialog-fallback")) {
       dialog.classList.remove("dialog-fallback");
       dialog.removeAttribute("open");
-      if (dialog === replacementDialog) replacementBackdrop.hidden = true;
+      if (backdrop) backdrop.hidden = true;
       return false;
     }
     if (typeof dialog.close === "function" && dialog.open) {
@@ -1297,6 +1389,7 @@
       return true;
     }
     dialog.removeAttribute("open");
+    if (backdrop) backdrop.hidden = true;
     return false;
   }
 
@@ -1305,7 +1398,7 @@
       return state.activeId;
     }
     if (state.activeId) setActive(null);
-    toast("Choose a zone first (click its card)", "error");
+    toast("Choose a zone first (select its zone button or click its card)", "error");
     for (const el of grid.querySelectorAll(".zone")) {
       el.classList.remove("attention");
       void el.offsetWidth; // restart the animation
@@ -1341,11 +1434,18 @@
       setActive(tabLink.dataset.zone);
       return;
     }
-    const zoneCard = event.target.closest(".zone");
-    if (zoneCard) setActive(zoneCard.dataset.zone);
+    const zoneSelect = event.target.closest(".zone-select");
+    if (zoneSelect) {
+      const zoneCard = zoneSelect.closest(".zone");
+      if (zoneCard) setActive(zoneCard.dataset.zone);
+    }
   });
 
   window.addEventListener("paste", (event) => {
+    if (applicationDialogOpen()) {
+      event.preventDefault();
+      return;
+    }
     const items = event.clipboardData && event.clipboardData.items;
     if (!items) return;
     let imageItem = null;
@@ -1519,29 +1619,48 @@
   });
 
   document.addEventListener("keydown", (event) => {
-    if (replacementDialog.classList.contains("dialog-fallback")) {
+    const fallbackDialog = [pv, replacementDialog]
+      .find(dialog => dialog.classList.contains("dialog-fallback"));
+    if (fallbackDialog) {
       if (event.key === "Escape") {
         event.preventDefault();
-        closeReplacementPrompt(false);
+        if (fallbackDialog === pv) closePreview();
+        else closeReplacementPrompt(false);
       } else if (event.key === "Tab") {
-        const controls = [replacementCancel, replacementConfirm];
-        const current = document.activeElement;
-        if (!replacementDialog.contains(current)) {
-          event.preventDefault();
-          controls[event.shiftKey ? 1 : 0].focus();
-        } else if (event.shiftKey && current === controls[0]) {
-          event.preventDefault();
-          controls[1].focus();
-        } else if (!event.shiftKey && current === controls[1]) {
-          event.preventDefault();
-          controls[0].focus();
-        }
+        trapFallbackDialog(event, fallbackDialog);
+      }
+      return;
+    }
+    if (applicationDialogOpen()) {
+      const key = event.key.toLowerCase();
+      if (key === "a" || key === "u" || key === "c" || /^[1-9]$/.test(event.key)) {
+        event.preventDefault();
       }
       return;
     }
     if (event.ctrlKey || event.metaKey || event.altKey) return;
     const tag = (event.target.tagName || "").toLowerCase();
-    if (tag === "input" || tag === "textarea") return;
+    if (tag === "input" || tag === "textarea" || tag === "select") return;
+    const key = event.key.toLowerCase();
+    if (key === "a" || key === "u") {
+      const target = event.target;
+      const button = target?.closest?.("button");
+      const interactive = target?.closest?.(
+        "button, a, input, textarea, select, [contenteditable='true'], [role='button']",
+      );
+      const allowedButton = button && (
+        button.classList.contains("tab-zone-link")
+        || (button.classList.contains("group-tab")
+          && !button.classList.contains("group-options-btn"))
+      );
+      if ((interactive && !allowedButton) || target?.closest?.("dialog, [contenteditable='true']")) {
+        return;
+      }
+      if (setTabZoneSelection(key === "a")) {
+        event.preventDefault();
+        return;
+      }
+    }
     if (/^[1-9]$/.test(event.key)) {
       const zone = getVisibleZones()[Number(event.key) - 1];
       if (zone) setActive(zone.id, { announce: true });
@@ -1583,17 +1702,28 @@
     pvCopyImage.dataset.mime = "image/png";
     pvDelete.dataset.zone = zoneId || "";
     pvDelete.dataset.filename = storedFilename;
+    setPreviewItemLabels(storedFilename);
     openDialog(pv);
   }
 
-  function openTextPreview(text) {
+  function setPreviewItemLabels(filename) {
+    const label = `Preview of ${filename}`;
+    pv.setAttribute("aria-label", label);
+    pvImg.alt = label;
+    pvText.setAttribute("aria-label", label);
+    pvDelete.setAttribute("aria-label", `Delete ${filename} from the disk`);
+  }
+
+  function openTextPreview(text, filename, invoker) {
     pvText.textContent = text;
     pvText.hidden = false;
     pvImg.hidden = true;
-    openDialog(pv);
+    setPreviewItemLabels(filename);
+    openDialog(pv, invoker);
   }
 
   async function openContentPreview(item, zoneId) {
+    const invoker = document.activeElement;
     const generation = invalidatePreviewLoad();
     setPreviewSource(pvImg, "");
     setPreviewCopyLabel(item.kind);
@@ -1607,6 +1737,7 @@
     pvCopyImage.dataset.preview = item.preview_url;
     pvCopyImage.dataset.kind = item.kind;
     pvCopyImage.dataset.mime = item.mime || "";
+    setPreviewItemLabels(item.filename);
     if (item.kind === "text") {
       const controller = new AbortController();
       activePreviewController = controller;
@@ -1624,7 +1755,7 @@
           text = ((doc.body && doc.body.textContent) || "").trim();
         }
         if (generation !== previewGeneration) return;
-        openTextPreview(text);
+        openTextPreview(text, item.filename, invoker);
       } catch (err) {
         if (err && err.name === "AbortError") return;
         if (generation !== previewGeneration) return;
@@ -1644,6 +1775,7 @@
       pvText.hidden = true;
       pvImg.hidden = false;
       delete pvDelete.dataset.zone;
+      restoreDialogInvoker(pv);
     }
   }
   pvCopy.addEventListener("click", () => copyLink(pvRef.textContent));
@@ -1668,6 +1800,7 @@
     pvText.hidden = true;
     pvImg.hidden = false;
     delete pvDelete.dataset.zone;
+    restoreDialogInvoker(pv);
   });
 
   replacementCancel.addEventListener("click", () => closeReplacementPrompt(false));

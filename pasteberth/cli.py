@@ -7,7 +7,7 @@
     pasteberth filesystem-delete [--config PATH] [--force] DIRECTORY FILE...
     pasteberth passwd  [--config PATH]
     pasteberth audit   [--config PATH]
-    pasteberth --generate-config
+    pasteberth [--config PATH] --generate-config [--force]
 """
 from __future__ import annotations
 
@@ -324,19 +324,22 @@ def _cmd_filesystem_drop(args: argparse.Namespace) -> int:
 def _generated_config_text(root: Path) -> str:
     storage = (root / "storage" / "default").as_posix()
     return f'''# Pasteberth local configuration.
-# This file is intentionally outside Git and can be edited manually.
+# The default repository-root config.toml is ignored by Git. Custom config paths
+# are not automatically ignored; keep this file and its password out of Git.
 
 listen_address = "127.0.0.1"
 port = 8765
 max_upload_size = "20MiB"
-max_image_pixels = 25000000
+max_image_pixels = 25000000        # structural pixel budget; maximum 50 MP
 # Trust no forwarded headers by default; list only the actual reverse proxy IP.
 trusted_proxies = []
-# Empty list = wildcard (Host check disabled); list the public hostnames to enforce it.
+# Empty list = wildcard (Host check disabled); prefer listing every public hostname.
 allowed_hosts = []
 allow_unauthenticated_local = false
 allow_unauthenticated_remote = false
-# Non-loopback HTTP is refused by default; use an HTTPS reverse proxy.
+# Loopback without auth also applies when a reverse proxy exposes this backend.
+# Keep this listener on loopback when TLS terminates in a reverse proxy.
+# A non-loopback listener requires direct TLS or the explicit private-network opt-in.
 allow_insecure_http_remote = false
 # Accepted content kinds (all true by default).
 accept_bin = true
@@ -694,17 +697,19 @@ def _cmd_passwd(args: argparse.Namespace) -> int:
     if "\x00" in str(config_path):
         print(f"chemin de configuration invalide : {config_path}", file=sys.stderr)
         return 2
-    # La politique de sécurité ne bloque pas passwd : il doit rester possible
-    # de préparer la configuration avant le premier démarrage.
-    password_file = config_path.parent / "passwd"
-
-    if config_path.exists():
-        try:
-            cfg = load_config(config_path)
-            check_startup_policy(cfg)
-            password_file = cfg.password_file()
-        except ConfigError as exc:
-            print(f"note : {config_path} comporte des problèmes ({exc})", file=sys.stderr)
+    if not config_path.is_file():
+        print(f"configuration introuvable : {config_path}", file=sys.stderr)
+        return 2
+    try:
+        cfg = load_config(config_path)
+    except ConfigError as exc:
+        print(
+            f"pasteberth : configuration invalide ({config_path})\n  {exc}\n"
+            "aucun hash n'a été écrit",
+            file=sys.stderr,
+        )
+        return 2
+    password_file = cfg.password_file()
 
     pw1 = getpass.getpass("Nouveau mot de passe : ")
     if len(pw1) < 8:
@@ -737,16 +742,20 @@ def build_parser() -> argparse.ArgumentParser:
         description="Pont clipboard navigateur <-> filesystem du harness.",
     )
     parser.add_argument("--version", action="version", version=f"pasteberth {__version__}")
-    parser.add_argument("--config", dest="global_config", help=argparse.SUPPRESS)
+    parser.add_argument(
+        "--config",
+        dest="global_config",
+        help="chemin global du fichier de configuration (avant la commande)",
+    )
     parser.add_argument(
         "--generate-config",
         action="store_true",
-        help="génère la configuration locale par défaut sans démarrer le serveur",
+        help="génère une configuration sans démarrer le serveur",
     )
     parser.add_argument(
         "--force",
         action="store_true",
-        help="autorise le remplacement d'une configuration générée",
+        help="écrase la configuration cible existante",
     )
     sub = parser.add_subparsers(dest="command", required=False)
 
@@ -792,7 +801,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_pw = sub.add_parser("passwd", help="définit ou change le mot de passe")
     p_pw.add_argument(
-        "--config", default=argparse.SUPPRESS, help="chemin du config.toml (le hash va à côté)"
+        "--config", default=argparse.SUPPRESS, help="chemin du config.toml (le hash suit [auth])"
     )
     p_pw.set_defaults(func=_cmd_passwd)
 

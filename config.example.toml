@@ -6,20 +6,25 @@
 # The password is NEVER written here: `pasteberth passwd` stores a salted
 # scrypt hash in a separate `passwd` file, configured below or next to config.toml.
 
-listen_address = "127.0.0.1"      # non-loopback: HTTPS reverse proxy recommended
+listen_address = "127.0.0.1"      # keep loopback when TLS terminates in a proxy
 port = 8765
 max_upload_size = "20MiB"         # 20 MiB per upload; absolute maximum 50 MiB
-max_image_pixels = 25000000        # 25 MP default; absolute maximum 50 MP
+max_image_pixels = 25000000        # structural pixel budget; default 25 MP, max 50 MP
 
 # Proxies allowed to set X-Forwarded-* (IP or CIDR).
 # Never include addresses reachable from the Internet.
 # Trust no forwarded headers by default; list only the actual reverse proxy IP.
+# 127.0.0.1 trusts every local process that can connect to this listener.
 trusted_proxies = []
-# Empty list = wildcard (Host check disabled); list hostnames to enforce it.
+# Empty list = wildcard (Host check disabled); prefer listing every public hostname.
+# Use [] only when an upstream proxy independently enforces canonical hostnames.
 allowed_hosts = []
 
-# Explicitly refuse non-loopback startup without authentication unless enabled:
-allow_unauthenticated_local = false  # including behind a reverse proxy
+# Authentication and network safety are separate policies:
+# loopback without auth requires allow_unauthenticated_local (also applies behind a proxy)
+# non-loopback without auth requires allow_unauthenticated_remote
+# non-loopback HTTP without TLS additionally requires allow_insecure_http_remote
+allow_unauthenticated_local = false
 allow_unauthenticated_remote = false
 allow_insecure_http_remote = false   # true only on a controlled private network
 
@@ -44,7 +49,7 @@ session_ttl_hours = 72            # server-side session lifetime
 # password_file = "/absolute/path/to/passwd"  # regular 0600 file
 
 # --------------------------------------------------------------- default zone
-# id                : logical API/UI identifier ([a-z0-9_-])
+# id                : logical API/UI identifier (first [a-z0-9], then [a-z0-9_-], max 64)
 # directory         : ABSOLUTE path as seen by the SERVER; used by the harness
 #                      and as the target path for filesystem operations
 # retain            : number of stored contents kept per zone (circular retention)
