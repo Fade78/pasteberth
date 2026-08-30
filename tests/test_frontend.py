@@ -67,6 +67,26 @@ class TestContratsFrontend(unittest.TestCase):
     def test_drag_and_drop_sur_zones(self):
         self.assertIn('"drop"', self.app_js)
         self.assertIn('"dragover"', self.app_js)
+        self.assertIn("function uploadBatch", self.app_js)
+        self.assertIn("dataTransfer.files", self.app_js)
+        self.assertIn('id="file-picker"', self.index_html)
+
+    def test_selection_multiple_et_actions_de_zone(self):
+        self.assertIn("selectedItemsByZone", self.app_js)
+        self.assertIn("selectionAnchorByZone", self.app_js)
+        self.assertIn("function selectHistoryItem", self.app_js)
+        self.assertIn("event.shiftKey", self.app_js)
+        self.assertIn("event.ctrlKey || event.metaKey", self.app_js)
+        self.assertIn("function copySelectedLinks", self.app_js)
+        self.assertIn("function downloadArchive", self.app_js)
+        self.assertIn("function deleteSelected", self.app_js)
+        self.assertIn("reference_separator", self.app_js)
+        self.assertIn("bulk-selected", self.style_css)
+
+    def test_etat_busy_zone(self):
+        self.assertIn('zone_busy: "This zone is busy', self.app_js)
+        self.assertIn("batchBusyZoneIds", self.app_js)
+        self.assertIn("scheduleBusyRefresh", self.app_js)
 
     def test_responsive_et_dialog(self):
         self.assertIn("@media", self.style_css)

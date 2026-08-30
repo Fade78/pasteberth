@@ -17,12 +17,16 @@
     offline: false,
     selectedByZone: Object.create(null),
     retryTimer: null,
+    busyRefreshTimer: null,
     toastTimer: null,
     // Groups
     groups: [],              // [{name, selection, pattern, layout, zone_ids, ...}]
     activeGroupId: null,     // null = implicit All when no group is selected
     openZoneIds: [],
     groupLayouts: Object.create(null),
+    selectedItemsByZone: Object.create(null),
+    selectionAnchorByZone: Object.create(null),
+    batchBusyZoneIds: new Set(),
     hideEmptyGroups: false,
     showZoneCounts: true,
     initialized: false,
@@ -57,6 +61,7 @@
   const replacementZone = document.getElementById("replace-zone");
   const replacementCancel = document.getElementById("replace-cancel");
   const replacementConfirm = document.getElementById("replace-confirm");
+  const filePicker = document.getElementById("file-picker");
   const replacementQueue = [];
   const dialogInvokers = new WeakMap();
   let activeReplacementPrompt = null;
@@ -173,6 +178,7 @@
         storage_conflict: "Name taken by an unmanaged file",
         replacement_required: "This name already exists; confirm replacement",
         destination_error: "The image destination is unavailable",
+        zone_busy: "This zone is busy; try again shortly",
         preview_busy: "Too many previews are currently being served",
         rate_limited: "Too many attempts; try again later",
         upload_busy: "Too many uploads are currently in memory",
@@ -182,6 +188,8 @@
       const err = new Error(message);
       err.code = code;
       err.status = res.status;
+      const retryAfter = Number(res.headers.get("Retry-After"));
+      if (Number.isFinite(retryAfter) && retryAfter >= 0) err.retryAfter = retryAfter;
       throw err;
     }
     return payload;
@@ -523,11 +531,210 @@
     el.style.setProperty("--line", rgba(readableFg(color), 0.18));
   }
 
+  function selectedItemIds(zoneId) {
+    const selected = state.selectedItemsByZone[zoneId];
+    return selected instanceof Set ? selected : new Set();
+  }
+
+  function selectedItems(zone) {
+    const selected = selectedItemIds(zone.id);
+    return zone.images.filter(item => selected.has(item.id));
+  }
+
+  function selectHistoryItem(zone, itemId, event) {
+    const ids = zone.images.map(item => item.id);
+    const itemIndex = ids.indexOf(itemId);
+    if (itemIndex < 0) return;
+    const toggle = event.ctrlKey || event.metaKey;
+    const previous = selectedItemIds(zone.id);
+    let next = new Set(previous);
+    if (event.shiftKey) {
+      let anchor = state.selectionAnchorByZone[zone.id];
+      if (!anchor || !ids.includes(anchor)) anchor = state.selectedByZone[zone.id] || itemId;
+      const anchorIndex = Math.max(0, ids.indexOf(anchor));
+      const start = Math.min(anchorIndex, itemIndex);
+      const end = Math.max(anchorIndex, itemIndex);
+      const range = ids.slice(start, end + 1);
+      if (!toggle) {
+        next = new Set(range);
+      } else {
+        const remove = range.every(id => next.has(id));
+        for (const id of range) {
+          if (remove) next.delete(id);
+          else next.add(id);
+        }
+      }
+    } else if (toggle) {
+      if (next.has(itemId)) next.delete(itemId);
+      else next.add(itemId);
+      state.selectionAnchorByZone[zone.id] = itemId;
+    } else {
+      next = new Set([itemId]);
+      state.selectionAnchorByZone[zone.id] = itemId;
+    }
+    state.selectedItemsByZone[zone.id] = next;
+    state.selectedByZone[zone.id] = itemId;
+    rerenderZone(zone.id);
+  }
+
+  function formatReferenceList(zone, items) {
+    const prefix = zone.reference_list_prefix ?? "";
+    const suffix = zone.reference_list_suffix ?? "";
+    const separator = zone.reference_separator ?? ",";
+    return `${prefix}${items.map(item => item.reference).join(separator)}${suffix}`;
+  }
+
+  async function copySelectedLinks(zone) {
+    const items = selectedItems(zone);
+    if (!items.length) return false;
+    const ok = await writeClipboard(formatReferenceList(zone, items));
+    if (ok) toast(`${items.length} links copied`);
+    else toast("Could not copy the links — select them manually", "error");
+    return ok;
+  }
+
+  function downloadArchive(zone, items) {
+    if (zone.busy || state.batchBusyZoneIds.has(zone.id)) {
+      toast("This zone is busy; try again shortly", "error");
+      return;
+    }
+    if (zone.allow_zip_download === false) {
+      toast("ZIP downloads are disabled for this zone", "error");
+      return;
+    }
+    const target = `pb-archive-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    const frame = document.createElement("iframe");
+    frame.name = target;
+    frame.hidden = true;
+    const form = document.createElement("form");
+    form.method = "post";
+    form.action = `/api/zones/${encodeURIComponent(zone.id)}/images/archive`;
+    form.target = target;
+    form.hidden = true;
+    for (const item of items) {
+      const input = document.createElement("input");
+      input.type = "hidden";
+      input.name = "filename";
+      input.value = item.filename;
+      form.appendChild(input);
+    }
+    document.body.append(frame, form);
+    form.submit();
+    toast(`Preparing ZIP with ${items.length} files`);
+    scheduleBusyRefresh();
+    window.setTimeout(() => {
+      frame.remove();
+      form.remove();
+    }, 60_000);
+  }
+
+  async function deleteSelected(zone, items) {
+    if (zone.busy || state.batchBusyZoneIds.has(zone.id)) {
+      toast("This zone is busy; try again shortly", "error");
+      return;
+    }
+    if (!window.confirm(`Delete ${items.length} selected files from the disk?`)) return;
+    state.batchBusyZoneIds.add(zone.id);
+    renderAll();
+    try {
+      const result = await apiWithZoneRetry(
+        `/api/zones/${encodeURIComponent(zone.id)}/images/batch-delete`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ filenames: items.map(item => item.filename) }),
+        },
+      );
+      await refresh();
+      const failed = result.failed || [];
+      if (failed.length) {
+        toast(`${result.deleted.length} files deleted, ${failed.length} failed`, "error");
+      } else {
+        toast(`${result.deleted.length} files deleted`);
+      }
+    } catch (err) {
+      toast(err.message, "error");
+    } finally {
+      state.batchBusyZoneIds.delete(zone.id);
+      renderAll();
+    }
+  }
+
+  async function apiWithZoneRetry(path, options, attempts = 3) {
+    for (let attempt = 0; ; attempt += 1) {
+      try {
+        return await api(path, options);
+      } catch (err) {
+        if (err.code !== "zone_busy" || attempt >= attempts - 1) throw err;
+        const delay = Math.min((err.retryAfter ?? 1) * 1000, 5000);
+        await new Promise(resolve => window.setTimeout(resolve, delay));
+      }
+    }
+  }
+
+  function renderBulkActions(zone) {
+    const items = selectedItems(zone);
+    if (items.length < 2) return null;
+    const actions = document.createElement("div");
+    actions.className = "bulk-actions";
+    actions.setAttribute("role", "group");
+    actions.setAttribute("aria-label", "Selected files");
+    const summary = document.createElement("span");
+    summary.className = "bulk-summary";
+    summary.textContent = `${items.length} files selected`;
+    summary.setAttribute("role", "status");
+    const copy = document.createElement("button");
+    copy.type = "button";
+    copy.className = "copy-btn";
+    copy.textContent = "Copy links";
+    copy.setAttribute("aria-label", `Copy ${items.length} links`);
+    copy.addEventListener("click", () => copySelectedLinks(zone));
+    const archive = document.createElement("button");
+    archive.type = "button";
+    archive.className = "download-btn";
+    archive.textContent = "Download ZIP";
+    archive.setAttribute("aria-label", `Download ${items.length} files as ZIP`);
+    archive.disabled = zone.allow_zip_download === false;
+    archive.title = archive.disabled ? "ZIP downloads are disabled for this zone" : "";
+    archive.addEventListener("click", () => downloadArchive(zone, items));
+    const remove = document.createElement("button");
+    remove.type = "button";
+    remove.className = "delete-btn";
+    remove.textContent = "Delete selected";
+    remove.setAttribute("aria-label", `Delete ${items.length} selected files`);
+    remove.addEventListener("click", () => deleteSelected(zone, items));
+    const clear = document.createElement("button");
+    clear.type = "button";
+    clear.className = "ghost-btn";
+    clear.textContent = "Clear selection";
+    clear.addEventListener("click", () => {
+      state.selectedItemsByZone[zone.id] = new Set();
+      state.selectionAnchorByZone[zone.id] = null;
+      rerenderZone(zone.id);
+    });
+    actions.append(summary, copy, archive, remove, clear);
+    const busy = zone.busy || state.batchBusyZoneIds.has(zone.id);
+    for (const control of [copy, archive, remove]) {
+      control.disabled = busy;
+      if (busy) control.title = "This zone is busy";
+    }
+    return actions;
+  }
+
+  function chooseFiles(zoneId) {
+    if (!filePicker) return;
+    filePicker.value = "";
+    filePicker.dataset.zone = zoneId;
+    filePicker.click();
+  }
+
   function renderZone(zone) {
     const el = document.createElement("section");
     el.className = "zone";
     el.dataset.zone = zone.id;
     if (zone.id === state.activeId) el.classList.add("active");
+    if (state.batchBusyZoneIds.has(zone.id)) el.classList.add("busy");
+    if (zone.busy) el.classList.add("server-busy");
     applyZoneColors(el, zone.color);
 
     const head = document.createElement("header");
@@ -543,8 +750,27 @@
       '<span class="zone-count"></span>';
     select.querySelector(".zone-label").textContent = zone.label;
     select.querySelector(".zone-count").textContent = `${zone.images.length} / ${zone.retain}`;
-    head.appendChild(select);
+    const uploadButton = document.createElement("button");
+    uploadButton.type = "button";
+    uploadButton.className = "zone-upload-btn";
+    uploadButton.textContent = "Add files";
+    uploadButton.setAttribute("aria-label", `Add files to ${zone.label}`);
+    uploadButton.disabled = zone.busy || state.batchBusyZoneIds.has(zone.id);
+    uploadButton.addEventListener("click", event => {
+      event.stopPropagation();
+      setActive(zone.id);
+      chooseFiles(zone.id);
+    });
+    head.append(select, uploadButton);
     el.appendChild(head);
+
+    if (zone.busy) {
+      const busy = document.createElement("div");
+      busy.className = "zone-lock";
+      busy.setAttribute("role", "status");
+      busy.textContent = "Zone busy; another operation is using it";
+      el.appendChild(busy);
+    }
 
     if (zone.images.length === 0) {
       const hint = document.createElement("div");
@@ -556,7 +782,9 @@
     } else {
       const selected = selectedItem(zone);
       el.appendChild(renderLatest(zone.id, selected));
-      el.appendChild(renderThumbs(zone.images, selected.id));
+      el.appendChild(renderThumbs(zone.images, selected.id, selectedItemIds(zone.id)));
+      const bulkActions = renderBulkActions(zone);
+      if (bulkActions) el.appendChild(bulkActions);
     }
     return el;
   }
@@ -696,7 +924,7 @@
     return card;
   }
 
-  function renderThumbs(items, selectedId) {
+  function renderThumbs(items, selectedId, selectedIds = new Set()) {
     const index = document.createElement("div");
     index.className = "history-index";
     const title = document.createElement("div");
@@ -710,7 +938,9 @@
       wrap.type = "button";
       wrap.className = "thumb-wrap";
       if (item.id === selectedId) wrap.classList.add("selected");
+      if (selectedIds.has(item.id)) wrap.classList.add("bulk-selected");
       wrap.setAttribute("aria-current", String(item.id === selectedId));
+      wrap.setAttribute("aria-pressed", String(selectedIds.has(item.id)));
       wrap.setAttribute("aria-label", `Select ${item.filename}`);
       wrap.title = `${item.filename} — ${fmtDateTime(item.created_at)}`;
       wrap.dataset.itemId = item.id;
@@ -1173,13 +1403,30 @@
     activeRefreshController = controller;
     try {
       const overview = await api("/api/zones", { signal: controller.signal });
+      const previousZones = new Map(state.zones.map(zone => [zone.id, zone]));
       const nextZones = [];
       for (const z of overview.zones) {
-        const data = await api(
-          `/api/zones/${encodeURIComponent(z.id)}/images`,
-          { signal: controller.signal },
-        );
-        nextZones.push(Object.assign({}, z, { images: data.images }));
+        const previous = previousZones.get(z.id);
+        if (z.busy) {
+          nextZones.push(Object.assign({}, z, {
+            images: previous ? previous.images : [],
+            busy: true,
+          }));
+          continue;
+        }
+        try {
+          const data = await api(
+            `/api/zones/${encodeURIComponent(z.id)}/images`,
+            { signal: controller.signal },
+          );
+          nextZones.push(Object.assign({}, z, { images: data.images, busy: false }));
+        } catch (err) {
+          if (err.code !== "zone_busy") throw err;
+          nextZones.push(Object.assign({}, z, {
+            images: previous ? previous.images : [],
+            busy: true,
+          }));
+        }
       }
       if (generation !== refreshGeneration) return;
 
@@ -1192,6 +1439,21 @@
         if (!zone || !zone.images.some(item => item.id === state.selectedByZone[zoneId])) {
           delete state.selectedByZone[zoneId];
         }
+      }
+      for (const zoneId of Object.keys(state.selectedItemsByZone)) {
+        const zone = state.zones.find(z => z.id === zoneId);
+        if (!zone) {
+          delete state.selectedItemsByZone[zoneId];
+          delete state.selectionAnchorByZone[zoneId];
+          continue;
+        }
+        const validIds = new Set(zone.images.map(item => item.id));
+        const selected = selectedItemIds(zoneId);
+        for (const itemId of selected) {
+          if (!validIds.has(itemId)) selected.delete(itemId);
+        }
+        const anchor = state.selectionAnchorByZone[zoneId];
+        if (anchor && !validIds.has(anchor)) state.selectionAnchorByZone[zoneId] = null;
       }
 
       // Initialize group state from localStorage
@@ -1224,6 +1486,12 @@
 
       state.initialized = true;
       setOnline(true);
+      if (nextZones.some(zone => zone.busy)) {
+        scheduleBusyRefresh();
+      } else if (state.busyRefreshTimer) {
+        clearTimeout(state.busyRefreshTimer);
+        state.busyRefreshTimer = null;
+      }
     } finally {
       if (activeRefreshController === controller) activeRefreshController = null;
     }
@@ -1244,6 +1512,14 @@
     }, 8000);
   }
 
+  function scheduleBusyRefresh() {
+    if (state.busyRefreshTimer) return;
+    state.busyRefreshTimer = setTimeout(async () => {
+      state.busyRefreshTimer = null;
+      await boot(true);
+    }, 1000);
+  }
+
   async function boot(silent = false) {
     try {
       await refresh();
@@ -1257,10 +1533,24 @@
 
   // ------------------------------------------------------------- upload
 
+  function recordUploadedItem(zoneId, item) {
+    const zone = state.zones.find(z => z.id === zoneId);
+    if (!zone) return;
+    // A named drop can replace an existing stored name. Keep one history entry.
+    zone.images = zone.images.filter(existing => existing.id !== item.id);
+    zone.images.unshift(item);
+    if (zone.images.length > zone.retain) zone.images.length = zone.retain;
+  }
+
   async function upload(
     zoneId,
     file,
-    { preserveName = false, allowReplace = false } = {},
+    {
+      preserveName = false,
+      allowReplace = false,
+      autoCopy = true,
+      notify = true,
+    } = {},
   ) {
     if (!file) return;
     const zoneEl = grid.querySelector(`.zone[data-zone="${CSS.escape(zoneId)}"]`);
@@ -1270,7 +1560,7 @@
     try {
       if (preserveName && !allowReplace && file.name && hasManagedName(zoneId, file.name)) {
         allowReplace = await askReplacement(file.name, zoneId);
-        if (!allowReplace) return;
+        if (!allowReplace) return null;
       }
       const fd = new FormData();
       // Le serveur conserve le nom seulement pour les fichiers déposés.
@@ -1281,26 +1571,30 @@
         { method: "POST", body: fd });
       refreshGeneration += 1;
       if (activeRefreshController) activeRefreshController.abort();
-      const zone = state.zones.find(z => z.id === zoneId);
-      if (zone) {
-        // A drag-and-drop can replace an existing stored name. Do not show a
-        // second history entry for the same server-side item.
-        zone.images = zone.images.filter(existing => existing.id !== item.id);
-        zone.images.unshift(item);
-        if (zone.images.length > zone.retain) zone.images.length = zone.retain;
-        state.selectedByZone[zoneId] = item.id;
-         refreshUploadedZone(zoneId);
+      recordUploadedItem(zoneId, item);
+      state.selectedByZone[zoneId] = item.id;
+      state.selectedItemsByZone[zoneId] = new Set([item.id]);
+      state.selectionAnchorByZone[zoneId] = item.id;
+      refreshUploadedZone(zoneId);
+      if (notify) {
+        toast(`${item.kind === "image" ? "Image" : "Content"} uploaded (${shortRef(item.reference)})`);
       }
-      toast(`${item.kind === "image" ? "Image" : "Content"} uploaded (${shortRef(item.reference)})`);
-      // Copie automatique best-effort : si elle échoue, on le signale
-      // explicitement (le bouton Copy link reste disponible).
-      writeClipboard(item.reference).then(ok => {
-        if (ok) toast("Link copied");
-        else toast("Link NOT copied — use the Copy link button", "error");
-      });
+      if (autoCopy) {
+        // Copie automatique best-effort : si elle échoue, on le signale
+        // explicitement (le bouton Copy link reste disponible).
+        writeClipboard(item.reference).then(ok => {
+          if (ok) toast("Link copied");
+          else toast("Link NOT copied — use the Copy link button", "error");
+        });
+      }
+      return item;
     } catch (err) {
-      if (err.status === 413) toast("Content is too large for this server", "error");
-      else if (err.status === 507) toast("Not enough disk space for this upload", "error");
+      if (err.status === 413) {
+        if (notify) toast("Content is too large for this server", "error");
+      }
+      else if (err.status === 507) {
+        if (notify) toast("Not enough disk space for this upload", "error");
+      }
       else if (
         err.code === "replacement_required"
         && preserveName
@@ -1309,17 +1603,72 @@
       ) {
         const confirmed = await askReplacement(file.name, zoneId);
         if (confirmed) {
-          await upload(zoneId, file, { preserveName: true, allowReplace: true });
+          return upload(zoneId, file, {
+            preserveName: true,
+            allowReplace: true,
+            autoCopy,
+            notify,
+          });
         }
       }
       else {
         if (err.code === "retention_error") {
           try { await refresh(); } catch (_) { /* keep the original error visible */ }
         }
-        toast(err.message, "error");
+        if (notify) toast(err.message, "error");
       }
     } finally {
       if (zoneEl) zoneEl.classList.remove("busy");
+    }
+  }
+
+  async function uploadBatch(zoneId, files) {
+    const batch = [...files].filter(Boolean);
+    if (!batch.length) return;
+    if (batch.length === 1) {
+      await upload(zoneId, batch[0], { preserveName: true });
+      return;
+    }
+    state.batchBusyZoneIds.add(zoneId);
+    renderAll();
+    refreshGeneration += 1;
+    if (activeRefreshController) activeRefreshController.abort();
+    const successful = [];
+    let failed = 0;
+    try {
+      // Keep each request independent: one bad file must not cancel the rest,
+      // and the normal single-upload size/memory limits still apply.
+      for (const file of batch) {
+        const item = await upload(zoneId, file, {
+          preserveName: true,
+          autoCopy: false,
+          notify: false,
+        });
+        if (item) successful.push(item);
+        else failed += 1;
+      }
+      const zone = state.zones.find(item => item.id === zoneId);
+      if (zone && successful.length) {
+        const selected = new Set(successful.map(item => item.id));
+        state.selectedItemsByZone[zoneId] = selected;
+        state.selectedByZone[zoneId] = successful[successful.length - 1].id;
+        state.selectionAnchorByZone[zoneId] = successful[successful.length - 1].id;
+      }
+      await refresh();
+      if (successful.length && failed) {
+        toast(`${successful.length} files uploaded, ${failed} failed`, "error");
+      } else if (successful.length) {
+        toast(`${successful.length} files uploaded`);
+      } else {
+        toast("No files were uploaded", "error");
+      }
+    } catch (err) {
+      if (err.status === 413) toast("Content is too large for this server", "error");
+      else if (err.status === 503) toast("The upload service is busy", "error");
+      else toast(err.message, "error");
+    } finally {
+      state.batchBusyZoneIds.delete(zoneId);
+      renderAll();
     }
   }
 
@@ -1418,6 +1767,11 @@
       if (zone) {
         zone.images = zone.images.filter(item => item.id !== filename);
         if (state.selectedByZone[zoneId] === filename) delete state.selectedByZone[zoneId];
+        const selected = selectedItemIds(zoneId);
+        selected.delete(filename);
+        if (state.selectionAnchorByZone[zoneId] === filename) {
+          state.selectionAnchorByZone[zoneId] = null;
+        }
         rerenderZone(zoneId);
       }
       toast(`Deleted ${filename}`);
@@ -1427,6 +1781,15 @@
   }
 
   // ------------------------------------------------------------- events
+
+  if (filePicker) {
+    filePicker.addEventListener("change", () => {
+      const zoneId = filePicker.dataset.zone;
+      const files = filePicker.files ? [...filePicker.files] : [];
+      delete filePicker.dataset.zone;
+      if (zoneId && files.length) uploadBatch(zoneId, files);
+    });
+  }
 
   grid.addEventListener("focusin", (event) => {
     const tabLink = event.target.closest(".tab-zone-link");
@@ -1545,8 +1908,8 @@
     const thumbWrap = event.target.closest(".thumb-wrap");
     if (thumbWrap) {
       const zoneEl = thumbWrap.closest(".zone");
-      state.selectedByZone[zoneEl.dataset.zone] = thumbWrap.dataset.itemId;
-      rerenderZone(zoneEl.dataset.zone);
+      const zone = state.zones.find(item => item.id === zoneEl?.dataset.zone);
+      if (zone) selectHistoryItem(zone, thumbWrap.dataset.itemId, event);
       return;
     }
     const bigThumb = event.target.closest(".thumb-big");
@@ -1613,9 +1976,16 @@
     event.preventDefault();
     zoneTarget.classList.remove("dragging");
     setActive(zoneTarget.dataset.zone);
-    const file = event.dataTransfer && event.dataTransfer.files && event.dataTransfer.files[0];
-    if (!file) return;
-    upload(zoneTarget.dataset.zone, file, { preserveName: true });
+    const zone = state.zones.find(item => item.id === zoneTarget.dataset.zone);
+    if (zone?.busy || state.batchBusyZoneIds.has(zoneTarget.dataset.zone)) {
+      toast("This zone is busy; try again shortly", "error");
+      return;
+    }
+    const files = event.dataTransfer && event.dataTransfer.files
+      ? [...event.dataTransfer.files]
+      : [];
+    if (!files.length) return;
+    uploadBatch(zoneTarget.dataset.zone, files);
   });
 
   document.addEventListener("keydown", (event) => {

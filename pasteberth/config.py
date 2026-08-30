@@ -117,6 +117,10 @@ class ZoneConfig:
     retain: int
     reference_prefix: str = "@"
     reference_suffix: str = ""
+    reference_list_prefix: str = ""
+    reference_list_suffix: str = ""
+    reference_separator: str = ","
+    allow_zip_download: bool = True
     color: str = "#243447"
     create_directory: bool = True
     min_free_percent: float = DEFAULT_MIN_FREE_PERCENT
@@ -291,7 +295,8 @@ def _parse_zone(raw_zone: object, index: int, warnings: list[str]) -> ZoneConfig
     _warn_unknown(
         table,
         {"id", "label", "type", "directory", "retain", "reference_prefix", "reference_suffix",
-         "color", "create_directory", "min_free_percent"},
+         "reference_list_prefix", "reference_list_suffix", "reference_separator",
+         "allow_zip_download", "color", "create_directory", "min_free_percent"},
         where,
         warnings,
     )
@@ -326,6 +331,28 @@ def _parse_zone(raw_zone: object, index: int, warnings: list[str]) -> ZoneConfig
     suffix = _get_str(table, "reference_suffix", where, default="", allow_empty=True)
     if len(suffix) > 16:
         raise ConfigError(f"{where}: 'reference_suffix' trop long (16 caractères max)")
+    list_prefix = _get_str(
+        table, "reference_list_prefix", where, default="", allow_empty=True
+    )
+    if len(list_prefix) > 16:
+        raise ConfigError(
+            f"{where}: 'reference_list_prefix' trop long (16 caractères max)"
+        )
+    list_suffix = _get_str(
+        table, "reference_list_suffix", where, default="", allow_empty=True
+    )
+    if len(list_suffix) > 16:
+        raise ConfigError(
+            f"{where}: 'reference_list_suffix' trop long (16 caractères max)"
+        )
+    separator = _get_str(
+        table, "reference_separator", where, default=",", allow_empty=True
+    )
+    if len(separator) > 16:
+        raise ConfigError(
+            f"{where}: 'reference_separator' trop long (16 caractères max)"
+        )
+    allow_zip_download = _get_bool(table, "allow_zip_download", where, default=True)
     color = _get_str(table, "color", where, default="#243447")
     if not _COLOR_RE.fullmatch(color):
         raise ConfigError(f"{where}: 'color' doit être au format #RRGGBB : {color!r}")
@@ -345,6 +372,10 @@ def _parse_zone(raw_zone: object, index: int, warnings: list[str]) -> ZoneConfig
         retain=retain,
         reference_prefix=prefix,
         reference_suffix=suffix,
+        reference_list_prefix=list_prefix,
+        reference_list_suffix=list_suffix,
+        reference_separator=separator,
+        allow_zip_download=allow_zip_download,
         color=color,
         create_directory=create_dir,
         min_free_percent=min_free_percent,
@@ -680,6 +711,10 @@ def build_default_config() -> Config:
                 retain=10,
                 reference_prefix="@",
                 reference_suffix="",
+                reference_list_prefix="",
+                reference_list_suffix="",
+                reference_separator=",",
+                allow_zip_download=True,
                 color="#304237",
             )
         },

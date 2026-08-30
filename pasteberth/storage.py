@@ -8,6 +8,7 @@ pas une primitive de lecture ou de suppression arbitraire.
 from __future__ import annotations
 
 import ctypes
+import errno
 import fcntl
 import json
 import logging
@@ -286,6 +287,10 @@ class UnknownImageError(DestinationError):
     """Le fichier n'est plus un objet Pasteberth connu."""
 
 
+class DestinationBusyError(DestinationError):
+    """La destination est déjà verrouillée par une autre opération."""
+
+
 class StorageLowError(DestinationError):
     """L'écriture ferait franchir le seuil d'espace libre configuré."""
 
@@ -343,6 +348,11 @@ class Destination(ABC):
 
     @abstractmethod
     def read(self, filename: str) -> bytes: ...
+
+    @abstractmethod
+    def open_read(self, filename: str):
+        """Ouvre un fichier géré pour une lecture maintenue sous verrou."""
+        ...
 
     @abstractmethod
     def reference_path(self, filename: str) -> str:
@@ -414,7 +424,7 @@ class LocalDestination(Destination):
             os.close(fd)
 
     @contextmanager
-    def operation_lock(self, *, exclusive: bool):
+    def operation_lock(self, *, exclusive: bool, blocking: bool = True):
         """Verrouille les opérations même entre processus du même utilisateur."""
         lock_name = ".pasteberth.lock"
         with self._directory_fd() as directory_fd:
@@ -433,7 +443,17 @@ class LocalDestination(Destination):
                     fd = -1
                     raise
                 os.fchmod(fd, 0o600)
-                fcntl.flock(fd, fcntl.LOCK_EX if exclusive else fcntl.LOCK_SH)
+                lock_flags = fcntl.LOCK_EX if exclusive else fcntl.LOCK_SH
+                if not blocking:
+                    lock_flags |= fcntl.LOCK_NB
+                try:
+                    fcntl.flock(fd, lock_flags)
+                except OSError as exc:
+                    if not blocking and exc.errno in (errno.EACCES, errno.EAGAIN):
+                        raise DestinationBusyError(
+                            f"destination occupée : {self.directory}"
+                        ) from exc
+                    raise
                 locked = True
                 yield
             except DestinationError:
@@ -3467,6 +3487,31 @@ class LocalDestination(Destination):
                     return fh.read()
             except FileNotFoundError as exc:
                 raise UnknownImageError(f"fichier inconnu de Pasteberth : {filename!r}") from exc
+            except (OSError, DestinationError) as exc:
+                if isinstance(exc, DestinationError):
+                    raise
+                raise DestinationError(f"lecture impossible ({exc})") from exc
+            finally:
+                if fd >= 0:
+                    try:
+                        os.close(fd)
+                    except OSError:
+                        pass
+
+    @contextmanager
+    def open_read(self, filename: str):
+        """Ouvre un fichier géré sans relâcher le verrou de la destination."""
+        with self._directory_fd() as directory_fd:
+            fd = -1
+            try:
+                fd, _meta_identity = self._require_owned(directory_fd, filename)
+                with os.fdopen(fd, "rb") as fh:
+                    fd = -1
+                    yield fh
+            except FileNotFoundError as exc:
+                raise UnknownImageError(
+                    f"fichier inconnu de Pasteberth : {filename!r}"
+                ) from exc
             except (OSError, DestinationError) as exc:
                 if isinstance(exc, DestinationError):
                     raise

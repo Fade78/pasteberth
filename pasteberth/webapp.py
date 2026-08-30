@@ -18,11 +18,13 @@ import ipaddress
 import json
 import logging
 import re
+import shutil
 import socket
 import ssl
 import threading
 import time
 import urllib.parse
+import zipfile
 from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler
 from pathlib import Path
@@ -42,6 +44,8 @@ _TEMPLATES_DIR = _PACKAGE_DIR / "templates"
 
 _ZONE_RE = r"([a-z0-9][a-z0-9_-]{0,63})"
 _FILENAME_RE = r"([^/\\\x00]{1,200})"
+_MAX_BATCH_NAMES = 10_000
+_MAX_BATCH_NAMES_BODY = 2 * 1024 * 1024
 
 _ROUTES: tuple[tuple[str, re.Pattern, str], ...] = tuple(
     (method, re.compile(pattern), name)
@@ -51,6 +55,8 @@ _ROUTES: tuple[tuple[str, re.Pattern, str], ...] = tuple(
         ("GET", r"^/api/groups$", "h_groups"),
         ("GET", rf"^/api/zones/{_ZONE_RE}/images$", "h_zone_images"),
         ("POST", rf"^/api/zones/{_ZONE_RE}/images$", "h_zone_upload"),
+        ("POST", rf"^/api/zones/{_ZONE_RE}/images/batch-delete$", "h_zone_delete_batch"),
+        ("POST", rf"^/api/zones/{_ZONE_RE}/images/archive$", "h_zone_archive"),
         ("DELETE", rf"^/api/zones/{_ZONE_RE}/images/{_FILENAME_RE}$", "h_zone_delete"),
         ("GET", rf"^/previews/{_ZONE_RE}/{_FILENAME_RE}$", "h_preview"),
         ("POST", r"^/login$", "h_login_post"),
@@ -150,6 +156,65 @@ class BodyMemoryBudget:
             self._used = max(0, self._used - charge)
 
 
+class _ChunkedWriter:
+    """Adaptateur non seekable pour écrire un ZIP en HTTP chunked."""
+
+    def __init__(self, handler):
+        self.handler = handler
+        self.offset = 0
+
+    def write(self, data) -> int:
+        data = bytes(data)
+        if not data:
+            return 0
+        self.handler.wfile.write(f"{len(data):X}\r\n".encode("ascii"))
+        self.handler.wfile.write(data)
+        self.handler.wfile.write(b"\r\n")
+        self.handler.wfile.flush()
+        self.offset += len(data)
+        self.handler._stream_last_activity = time.monotonic()
+        return len(data)
+
+    def tell(self) -> int:
+        return self.offset
+
+    def seekable(self) -> bool:
+        return False
+
+    def flush(self) -> None:
+        self.handler.wfile.flush()
+
+
+def _parse_filename_list(body: bytes, content_type: str) -> list[str]:
+    """Parse une liste de noms pour les opérations de zone."""
+    media_type = (content_type or "").split(";", 1)[0].strip().lower()
+    if media_type == "application/json":
+        try:
+            payload = json.loads(body.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise ValueError("JSON invalide") from exc
+        filenames = payload.get("filenames") if isinstance(payload, dict) else None
+    elif media_type == "application/x-www-form-urlencoded":
+        try:
+            fields = urllib.parse.parse_qs(
+                body.decode("utf-8"),
+                keep_blank_values=True,
+                max_num_fields=_MAX_BATCH_NAMES,
+            )
+        except (UnicodeDecodeError, ValueError) as exc:
+            raise ValueError("formulaire invalide") from exc
+        filenames = fields.get("filename", [])
+    else:
+        raise ValueError("Content-Type JSON ou formulaire attendu")
+    if not isinstance(filenames, list) or not filenames:
+        raise ValueError("la liste 'filenames' est requise")
+    if len(filenames) > _MAX_BATCH_NAMES:
+        raise ValueError("trop de fichiers demandés")
+    if not all(isinstance(filename, str) for filename in filenames):
+        raise ValueError("les noms de fichiers doivent être des chaînes")
+    return filenames
+
+
 _UPLOAD_MEMORY_BUDGET = 128 * 1024 * 1024
 _MAX_HEADER_BYTES = 64 * 1024
 
@@ -169,6 +234,16 @@ def make_handler(cfg: Config, service: PasteService, sessions: SessionStore,
         timeout = 60
 
         def _expire_request(self) -> None:
+            if getattr(self, "_streaming_response", False):
+                elapsed = time.monotonic() - getattr(
+                    self, "_stream_last_activity", time.monotonic()
+                )
+                if elapsed < self.timeout:
+                    timer = threading.Timer(self.timeout - elapsed, self._expire_request)
+                    timer.daemon = True
+                    self._request_timer = timer
+                    timer.start()
+                    return
             self.close_connection = True
             try:
                 self.connection.shutdown(socket.SHUT_RDWR)
@@ -178,9 +253,12 @@ def make_handler(cfg: Config, service: PasteService, sessions: SessionStore,
         def handle_one_request(self) -> None:
             # Le timeout socket est réinitialisé par les lectures ; ce timer
             # impose une vraie durée maximale à la requête entière.
+            self._response_started = False
+            self._streaming_response = False
             self.rfile.reset()
             timer = threading.Timer(self.timeout, self._expire_request)
             timer.daemon = True
+            self._request_timer = timer
             timer.start()
             try:
                 super().handle_one_request()
@@ -194,6 +272,10 @@ def make_handler(cfg: Config, service: PasteService, sessions: SessionStore,
                 self.close_connection = True
             finally:
                 timer.cancel()
+                active_timer = getattr(self, "_request_timer", None)
+                if active_timer is not None and active_timer is not timer:
+                    active_timer.cancel()
+                self._streaming_response = False
 
         def setup(self) -> None:
             super().setup()
@@ -463,6 +545,10 @@ def make_handler(cfg: Config, service: PasteService, sessions: SessionStore,
                 )
                 self._finish(status, "text/html; charset=utf-8", body, **kwargs)
 
+        def _service_error(self, exc: ServiceError) -> None:
+            extra = [("Retry-After", "1")] if exc.code == "zone_busy" else []
+            self._error(exc.status, exc.code, str(exc), extra_headers=extra)
+
         # ------------------------------------------------------------- lecture
 
         def _validate_request_framing(self) -> bool:
@@ -594,6 +680,9 @@ def make_handler(cfg: Config, service: PasteService, sessions: SessionStore,
                 self.close_connection = True
             except Exception:
                 log.exception("erreur interne sur %s", self.path[:200])
+                if getattr(self, "_response_started", False):
+                    self.close_connection = True
+                    return
                 try:
                     self._error(500, "internal", "erreur interne")
                 except Exception:
@@ -807,9 +896,9 @@ def make_handler(cfg: Config, service: PasteService, sessions: SessionStore,
             if not self._require_auth_api():
                 return
             try:
-                overview = service.overview()
+                overview = service.overview(blocking=False)
             except ServiceError as exc:
-                self._error(exc.status, exc.code, str(exc))
+                self._service_error(exc)
                 return
             self._json(200, overview)
 
@@ -824,7 +913,7 @@ def make_handler(cfg: Config, service: PasteService, sessions: SessionStore,
             try:
                 items = service.history(zid)
             except ServiceError as exc:
-                self._error(exc.status, exc.code, str(exc))
+                self._service_error(exc)
                 return
             self._json(200, {"zone": zid, "images": items})
 
@@ -902,11 +991,104 @@ def make_handler(cfg: Config, service: PasteService, sessions: SessionStore,
                     allow_replace=allow_replace and preserve_name,
                 )
             except ServiceError as exc:
-                self._error(exc.status, exc.code, str(exc))
+                self._service_error(exc)
                 return
             finally:
                 upload_memory.release(reservation)
             self._json(201, item)
+
+        def _read_filename_request(self) -> list[str] | None:
+            try:
+                body, _ = self._read_body(max_bytes=_MAX_BATCH_NAMES_BODY)
+            except BodyTooLarge:
+                self.close_connection = True
+                self._error(413, "too_large", "liste de fichiers trop grande")
+                return None
+            except ClientAbort:
+                raise
+            try:
+                return _parse_filename_list(
+                    body, self.headers.get("Content-Type") or ""
+                )
+            except ValueError as exc:
+                self._error(400, "invalid_request", str(exc))
+                return None
+
+        def _h_zone_delete_batch(self, zid: str) -> None:
+            if not self._require_auth_api():
+                return
+            filenames = self._read_filename_request()
+            if filenames is None:
+                return
+            try:
+                result = service.delete_many(zid, filenames, blocking=False)
+            except ServiceError as exc:
+                self._service_error(exc)
+                return
+            self._json(200, result)
+
+        def _send_zip_response(self, zid: str, destination, items) -> None:
+            self._response_started = True
+            self._streaming_response = True
+            self._stream_last_activity = time.monotonic()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/zip")
+            self.send_header("Transfer-Encoding", "chunked")
+            self.send_header("Cache-Control", "no-store")
+            self.send_header(
+                "Content-Disposition",
+                f'attachment; filename="pasteberth-{zid}.zip"',
+            )
+            if self.close_connection:
+                self.send_header("Connection", "close")
+            for key, value in self._security_headers():
+                self.send_header(key, value)
+            self.end_headers()
+
+            writer = _ChunkedWriter(self)
+            try:
+                with zipfile.ZipFile(
+                    writer,
+                    mode="w",
+                    compression=zipfile.ZIP_DEFLATED,
+                    allowZip64=True,
+                ) as archive:
+                    for item in items:
+                        zip_info = zipfile.ZipInfo(item.filename)
+                        zip_info.compress_type = zipfile.ZIP_DEFLATED
+                        zip_info.external_attr = 0o600 << 16
+                        with (
+                            destination.open_read(item.filename) as source,
+                            archive.open(zip_info, mode="w", force_zip64=True) as target,
+                        ):
+                            shutil.copyfileobj(source, target, length=64 * 1024)
+                self.wfile.write(b"0\r\n\r\n")
+                self.wfile.flush()
+                self._stream_last_activity = time.monotonic()
+                log.info(
+                    "archive zone=%s fichiers=%d taille_zip=%d",
+                    zid,
+                    len(items),
+                    writer.offset,
+                )
+            finally:
+                self._streaming_response = False
+
+        def _h_zone_archive(self, zid: str) -> None:
+            if not self._require_auth_api():
+                return
+            filenames = self._read_filename_request()
+            if filenames is None:
+                return
+            try:
+                with service.archive_files(zid, filenames, blocking=False) as (
+                    destination,
+                    items,
+                ):
+                    self._send_zip_response(zid, destination, items)
+            except ServiceError as exc:
+                self._service_error(exc)
+                return
 
         def _h_zone_delete(self, zid: str, filename: str) -> None:
             if not self._require_auth_api():
@@ -914,7 +1096,7 @@ def make_handler(cfg: Config, service: PasteService, sessions: SessionStore,
             try:
                 service.delete(zid, filename)
             except ServiceError as exc:
-                self._error(exc.status, exc.code, str(exc))
+                self._service_error(exc)
                 return
             self._json(200, {"deleted": filename})
 
@@ -933,7 +1115,7 @@ def make_handler(cfg: Config, service: PasteService, sessions: SessionStore,
                 try:
                     data, mime = service.preview(zid, filename)
                 except ServiceError as exc:
-                    self._error(exc.status, exc.code, str(exc))
+                    self._service_error(exc)
                     return
                 extra = []
                 if mime not in ("image/png", "image/jpeg", "image/webp"):

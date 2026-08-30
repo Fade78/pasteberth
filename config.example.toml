@@ -55,6 +55,9 @@ session_ttl_hours = 72            # server-side session lifetime
 # retain            : number of stored contents kept per zone (circular retention)
 # reference_prefix  : text prepended to the returned reference (empty allowed)
 # reference_suffix  : text appended to the returned reference (empty by default)
+# reference_list_prefix/suffix : delimit a copied list of references (empty default)
+# reference_separator : text between references in a copied list (default ",")
+# allow_zip_download : allow downloading selected contents as a ZIP (default true)
 # color             : zone background (#RRGGBB); text contrast is calculated
 # create_directory  : create the directory if missing (default true)
 # min_free_percent  : minimum filesystem free space before upload (default 2 %)
@@ -70,6 +73,10 @@ directory = "/absolute/path/to/pasteberth/storage/default"
 retain = 10
 reference_prefix = "@"
 reference_suffix = ""
+reference_list_prefix = ""
+reference_list_suffix = ""
+reference_separator = ","
+allow_zip_download = true
 color = "#304237"
 min_free_percent = 2.0
 

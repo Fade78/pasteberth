@@ -213,6 +213,16 @@ def write_config(
         lines.append(f'retain = {zone.get("retain", 3)}')
         lines.append(f'reference_prefix = "{zone.get("reference_prefix", "@")}"')
         lines.append(f'reference_suffix = "{zone.get("reference_suffix", "")}"')
+        lines.append(
+            f'reference_list_prefix = "{zone.get("reference_list_prefix", "")}"'
+        )
+        lines.append(
+            f'reference_list_suffix = "{zone.get("reference_list_suffix", "")}"'
+        )
+        lines.append(f'reference_separator = "{zone.get("reference_separator", ",")}"')
+        lines.append(
+            f'allow_zip_download = {str(zone.get("allow_zip_download", True)).lower()}'
+        )
         lines.append(f'color = "{zone.get("color", "#243447")}"')
         zone_min_free = zone.get("min_free_percent", min_free_percent)
         if zone_min_free is not None:

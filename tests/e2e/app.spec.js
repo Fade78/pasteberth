@@ -116,6 +116,22 @@ async function dispatchDrop(page, selector) {
   }, ONE_PIXEL_PNG);
 }
 
+async function dispatchMultiDrop(page, selector) {
+  await page.locator(selector).evaluate((element, base64) => {
+    const bytes = Uint8Array.from(atob(base64), (char) => char.charCodeAt(0));
+    const dataTransfer = new DataTransfer();
+    for (const name of ["first.png", "second.png"]) {
+      dataTransfer.items.add(new File([bytes], name, { type: "image/png" }));
+    }
+    const event = new DragEvent("drop", {
+      bubbles: true,
+      cancelable: true,
+      dataTransfer,
+    });
+    element.dispatchEvent(event);
+  }, ONE_PIXEL_PNG);
+}
+
 async function dispatchBinaryDrop(page, selector, name = "archive.zip") {
   await page.locator(selector).evaluate((element, name) => {
     const file = new File([new Uint8Array([0, 1, 2, 3])], name, {
@@ -504,6 +520,57 @@ test("colle une image et ouvre son aperçu au clavier", async ({ page }) => {
   await page.locator("#pv-clear").click();
   await expect(page.locator("#pv-toast")).toContainText("Clipboard cleared");
   await page.getByRole("button", { name: "Close" }).click();
+});
+
+test("dépose plusieurs fichiers séquentiellement et permet la sélection groupée", async ({ page }) => {
+  await openApp(page);
+  const defaultZone = page.locator('[data-zone="default"]');
+  await defaultZone.getByRole("button", { name: "Select zone Default" }).click();
+
+  await dispatchMultiDrop(page, '[data-zone="default"]');
+
+  await expect(defaultZone.locator(".thumb-wrap")).toHaveCount(2);
+  await expect(defaultZone.locator(".bulk-actions")).toHaveCount(1);
+  await expect(defaultZone.locator(".bulk-summary")).toHaveText("2 files selected");
+
+  const thumbnails = defaultZone.locator(".thumb-wrap");
+  await thumbnails.nth(0).click();
+  await thumbnails.nth(1).click({ modifiers: ["Shift"] });
+  await expect(defaultZone.locator(".bulk-summary")).toHaveText("2 files selected");
+  await expect(thumbnails).toHaveCount(2);
+  await expect(thumbnails.nth(0)).toHaveAttribute("aria-pressed", "true");
+  await expect(thumbnails.nth(1)).toHaveAttribute("aria-pressed", "true");
+});
+
+test("copie, télécharge et supprime la sélection d'une zone", async ({ page }) => {
+  await openApp(page);
+  const defaultZone = page.locator('[data-zone="default"]');
+  await defaultZone.getByRole("button", { name: "Select zone Default" }).click();
+  await dispatchMultiDrop(page, '[data-zone="default"]');
+  await expect(defaultZone.locator(".bulk-summary")).toHaveText("2 files selected");
+
+  await defaultZone.getByRole("button", { name: "Copy 2 links" }).click();
+  await expect(page.locator("#toast")).toContainText("2 links copied");
+
+  const downloadPromise = page.waitForEvent("download");
+  await defaultZone.getByRole("button", { name: "Download 2 files as ZIP" }).click();
+  const download = await downloadPromise;
+  expect(download.suggestedFilename()).toBe("pasteberth-default.zip");
+  await expect.poll(async () => {
+    const response = await page.request.get("/api/zones");
+    const overview = await response.json();
+    return overview.zones.find((zone) => zone.id === "default").busy;
+  }).toBe(false);
+  await page.waitForTimeout(500);
+
+  page.once("dialog", (dialog) => dialog.accept());
+  const deleteResponse = page.waitForResponse((response) => (
+    response.url().includes("/api/zones/default/images/batch-delete")
+      && response.status() === 200
+  ));
+  await defaultZone.getByRole("button", { name: "Delete 2 selected files" }).click();
+  await deleteResponse;
+  await expect(defaultZone.locator(".thumb-wrap")).toHaveCount(0);
 });
 
 test("réessaie une preview temporairement indisponible", async ({ page }) => {

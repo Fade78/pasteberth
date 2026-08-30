@@ -37,7 +37,7 @@ agent/script ── filesystem-drop ─────▶ captures/<zone>/ ──�
 The browser **never** needs to access the returned path. This is the path seen
 by the harness, on the machine where Pasteberth runs.
 
-The current version is `1.4.2`.
+The current version is `1.5.0`.
 
 ---
 
@@ -104,16 +104,21 @@ processes, and terminal tools.
 - **Content index**: the items at the bottom form the zone's complete history,
   newest first. Images are shown in thumbnail slots backed by the server's
   preview URL; the server does not generate resized thumbnails. Text and files
-  have a type marker. Click an item to select it in the upper panel; the
-  selected item is marked.
+  have a type marker. Click an item to select it in the upper panel; Shift-click
+  extends the selection to a range and Ctrl/Command-click adds or removes an
+  item. The selected items can be copied as one reference list, downloaded as
+  a ZIP, or deleted together.
+- **Multiple file drop**: dropping several files starts a sequential queue of
+  independent uploads. One invalid file does not cancel the others. A managed
+  filename collision asks for replacement before that file is written.
 - **Clipboard**: after an upload, Pasteberth tries to copy the exact reference
   to the clipboard. `Copy link` copies that reference, `Copy Image` copies the
   image itself, `Copy Text` copies text, and `Clear` replaces the clipboard
   contents with empty text, within the limits of the browser's Clipboard
   permissions.
 - **Exact references**: the server builds and returns the path; the frontend
-  copies it as-is, never reconstructing it client-side. The prefix and suffix
-  are configurable, for example to obtain `` `/path/image.png` ``.
+  copies each reference as-is, never reconstructing an item reference. The
+  item prefix/suffix and copied-list prefix/suffix/separator are configurable.
 - **Circular retention per zone** (`retain = N`): beyond N stored contents, the
   oldest entries are deleted — only files created by Pasteberth with their JSON
   sidecar.
@@ -282,7 +287,7 @@ authentication attempt.
 | `[auth] enabled` | `true` | password protection |
 | `[auth] session_ttl_hours` | `72` | server session lifetime |
 | `[auth] password_file` | next to `config.toml` | absolute path to the `passwd` hash (regular 0600 file) |
-| `[[zones]] …` | `default` | `id`, `label`, `type=local`, `directory`, `retain`, `reference_prefix`, `reference_suffix`, `color` (#RRGGBB), `create_directory`, `min_free_percent` |
+| `[[zones]] …` | `default` | `id`, `label`, `type=local`, `directory`, `retain`, `reference_prefix`, `reference_suffix`, `reference_list_prefix`, `reference_list_suffix`, `reference_separator`, `allow_zip_download`, `color` (#RRGGBB), `create_directory`, `min_free_percent` |
 | `[[groups]] …` | none | group `selection` (`all`, `pattern`, `other`), `pattern` required for `pattern`, `layout` (`area`, `tab`), `hide_empty`, `show_count` |
 
 `directory` is an **absolute path as seen by the server** — this is where
@@ -571,6 +576,18 @@ The `/api/zones` response includes the matching group names in each zone's
 `groups` field. Both endpoints are protected when authentication is enabled;
 there is no CORS support.
 
+Each zone entry also reports `busy`, `reference_list_prefix`,
+`reference_list_suffix`, `reference_separator`, and `allow_zip_download`.
+Long-running batch deletion and ZIP operations hold an exclusive server-side
+zone lock. Conflicting zone requests receive `423 zone_busy` with
+`Retry-After: 1`; clients should refresh the zone and retry after the lock is
+released.
+
+| Method | Path | Role |
+|---|---|---|
+| POST | `/api/zones/{id}/images/batch-delete` | delete several managed content files; the response separates `deleted` and `failed` entries |
+| POST | `/api/zones/{id}/images/archive` | stream selected managed content as a ZIP without a temporary server file; accepts repeated `filename` form fields or a JSON `filenames` array |
+
 Despite the route name, `/api/zones/{id}/images` and its `images` response key
 cover images, UTF-8 text, and opaque binary content. Raw requests accept the
 supported image, text, JSON, XML, and YAML MIME types, `application/octet-stream`,
@@ -678,7 +695,7 @@ filesystem-drop/rename/delete, configuration & startup policy, storage/retention
 auth/sessions/anti-brute-force, multipart parser, full HTTP integration
 (auth, CSRF/Origin, proxies, headers, secret leakage), concurrency
 (parallel uploads in the same/multiple zones, readers during writes, named
-replacement conflicts),
+replacement conflicts, zone locks, multi-delete and streamed ZIP archives),
 CLI (passwd, refusal of dangerous configuration), frontend contracts, and
 Playwright browser scenarios on a real Pasteberth server: loading and keyboard
 selection, group filtering and area/tab layouts, hover/focus paste targeting,

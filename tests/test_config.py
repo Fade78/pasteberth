@@ -83,6 +83,10 @@ class TestParsing(unittest.TestCase):
         self.assertEqual(cfg.groups, ())
         self.assertEqual(cfg.zones["default"].reference_prefix, "@")
         self.assertEqual(cfg.zones["default"].reference_suffix, "")
+        self.assertEqual(cfg.zones["default"].reference_list_prefix, "")
+        self.assertEqual(cfg.zones["default"].reference_list_suffix, "")
+        self.assertEqual(cfg.zones["default"].reference_separator, ",")
+        self.assertTrue(cfg.zones["default"].allow_zip_download)
         self.assertTrue(cfg.zones["default"].create_directory)
         self.assertEqual(cfg.zones["default"].min_free_percent, 2.0)
 
@@ -114,6 +118,26 @@ class TestParsing(unittest.TestCase):
             )
         )
         self.assertEqual(cfg.zones["plain"].reference_prefix, "")
+
+    def test_format_liste_et_zip_configurables(self):
+        cfg = load_config(
+            write_config(
+                self.tmp,
+                zones=[{
+                    "id": "custom",
+                    "directory": str(self.tmp / "custom"),
+                    "reference_list_prefix": "[",
+                    "reference_list_suffix": "]",
+                    "reference_separator": "; ",
+                    "allow_zip_download": False,
+                }],
+            )
+        )
+        zone = cfg.zones["custom"]
+        self.assertEqual(zone.reference_list_prefix, "[")
+        self.assertEqual(zone.reference_list_suffix, "]")
+        self.assertEqual(zone.reference_separator, "; ")
+        self.assertFalse(zone.allow_zip_download)
 
     def test_allowed_hosts(self):
         cfg = make_cfg(

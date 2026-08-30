@@ -299,6 +299,9 @@ code, kbd {
 }
 
 .zone-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
   color: var(--fg);
 }
 
@@ -314,6 +317,8 @@ code, kbd {
   font: inherit;
   text-align: left;
   cursor: pointer;
+  flex: 1 1 auto;
+  min-width: 0;
 }
 
 .zone-select:hover { color: var(--fg); }
@@ -344,6 +349,35 @@ code, kbd {
   border: 1px solid var(--line);
   border-radius: 999px;
   padding: 0.1rem 0.55rem;
+}
+
+.zone-upload-btn {
+  flex: 0 0 auto;
+  padding: 0.28rem 0.65rem;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--fg);
+  font: inherit;
+  font-size: 0.76rem;
+  cursor: pointer;
+}
+
+.zone-upload-btn:hover { background: rgba(255, 255, 255, 0.14); }
+.zone-upload-btn:disabled { cursor: not-allowed; opacity: 0.45; }
+
+.zone.server-busy {
+  border-style: dashed;
+  border-color: var(--accent);
+}
+
+.zone-lock {
+  color: var(--fg);
+  opacity: 0.72;
+  border: 1px dashed var(--line);
+  border-radius: 8px;
+  padding: 0.45rem 0.65rem;
+  font-size: 0.78rem;
 }
 
 .drop-hint {
@@ -454,6 +488,22 @@ code, kbd {
 .clear-btn { color: #ffd7d3; }
 .delete-btn { color: #ffb4ab; }
 
+.bulk-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 7px;
+  padding-top: 2px;
+  border-top: 1px solid var(--line);
+}
+
+.bulk-summary {
+  margin-right: auto;
+  color: var(--fg);
+  font-size: 0.78rem;
+  font-weight: 650;
+}
+
 .replace-btn {
   background: rgba(255, 123, 114, 0.16);
   color: #ffd7d3;
@@ -480,6 +530,11 @@ code, kbd {
 .zone-select:focus-visible,
 .thumb-big:focus-visible,
 .ghost-btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.zone-upload-btn:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
 }
@@ -534,6 +589,15 @@ code, kbd {
 .thumb-wrap.selected {
   border-color: var(--halo);
   box-shadow: 0 0 0 2px var(--halo-soft);
+}
+
+.thumb-wrap.bulk-selected {
+  background: var(--halo-soft);
+  border-color: var(--fg);
+}
+
+.thumb-wrap.bulk-selected.selected {
+  border-color: var(--halo);
 }
 
 .thumb {

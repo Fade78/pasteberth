@@ -1,12 +1,15 @@
 """Tests d'intégration HTTP sur serveur réel (socket) :
 auth, uploads, previews, CSRF/Origin, proxys, en-têtes, fuites."""
 import json
+import io
 import logging
 import re
 import tempfile
 import threading
 import time
 import unittest
+import urllib.parse
+import zipfile
 from pathlib import Path
 from unittest import mock
 
@@ -44,7 +47,11 @@ class Base(unittest.TestCase):
             {"id": zid, "label": zid.upper(), "retain": retain,
              "color": color, "directory": str(path),
              "reference_prefix": self.config_kwargs.get("reference_prefix", "@"),
-             "reference_suffix": self.config_kwargs.get("reference_suffix", "")}
+             "reference_suffix": self.config_kwargs.get("reference_suffix", ""),
+             "reference_list_prefix": self.config_kwargs.get("reference_list_prefix", ""),
+             "reference_list_suffix": self.config_kwargs.get("reference_list_suffix", ""),
+             "reference_separator": self.config_kwargs.get("reference_separator", ","),
+             "allow_zip_download": self.config_kwargs.get("allow_zip_download", True)}
             for zid, path, retain, color in [
                 ("default", self.zones_dirs["default"], 3, "#304237"),
                 ("secondary", self.zones_dirs["secondary"], 2, "#26394a"),
@@ -897,6 +904,115 @@ class TestReferenceFormatee(Base):
         item = json_of(resp)
         self.assertTrue(item["reference"].startswith("`/"))
         self.assertTrue(item["reference"].endswith(".png`"))
+
+
+class TestOperationsDeZone(Base):
+    def _upload_named(self, filename: str, data: bytes) -> dict:
+        body, ctype = build_multipart(
+            filename=filename,
+            data=data,
+            content_type="text/plain",
+            extra_fields={"preserve_name": "1"},
+        )
+        status, _, response = self.req(
+            "POST",
+            "/api/zones/default/images",
+            body=body,
+            headers={"Content-Type": ctype},
+        )
+        self.assertEqual(status, 201)
+        return json_of(response)
+
+    def _filename_form(self, *filenames: str) -> tuple[bytes, str]:
+        body = urllib.parse.urlencode(
+            [("filename", filename) for filename in filenames]
+        ).encode("utf-8")
+        return body, "application/x-www-form-urlencoded"
+
+    def test_archive_streame_sans_fichier_temporaire(self):
+        first = self._upload_named("first.txt", b"first")
+        second = self._upload_named("second.txt", b"second")
+        body, ctype = self._filename_form(first["filename"], second["filename"])
+
+        status, headers, archive_body = self.req(
+            "POST",
+            "/api/zones/default/images/archive",
+            body=body,
+            headers={"Content-Type": ctype},
+        )
+
+        self.assertEqual(status, 200)
+        self.assertEqual(headers["transfer-encoding"], "chunked")
+        self.assertEqual(headers["content-type"], "application/zip")
+        with zipfile.ZipFile(io.BytesIO(archive_body)) as archive:
+            self.assertEqual(archive.namelist(), [first["filename"], second["filename"]])
+            self.assertEqual(archive.read(first["filename"]), b"first")
+            self.assertEqual(archive.read(second["filename"]), b"second")
+
+    def test_suppression_multiple_rapporte_les_echecs(self):
+        first = self._upload_named("first.txt", b"first")
+        second = self._upload_named("second.txt", b"second")
+        body = json.dumps(
+            {"filenames": [first["filename"], second["filename"], "missing.txt"]}
+        ).encode("utf-8")
+
+        status, _, response = self.req(
+            "POST",
+            "/api/zones/default/images/batch-delete",
+            body=body,
+            headers={"Content-Type": "application/json"},
+        )
+
+        self.assertEqual(status, 200)
+        result = json_of(response)
+        self.assertEqual(result["deleted"], [first["filename"], second["filename"]])
+        self.assertEqual(result["failed"][0]["filename"], "missing.txt")
+
+    def test_zone_busy_est_visible_et_non_bloquant(self):
+        with self.server.service.zone_operation(
+            "default", kind="archive", exclusive=True
+        ):
+            status, _, response = self.req("GET", "/api/zones")
+            self.assertEqual(status, 200)
+            zone = next(item for item in json_of(response)["zones"] if item["id"] == "default")
+            self.assertTrue(zone["busy"])
+
+            status, headers, response = self.req(
+                "GET", "/api/zones/default/images"
+            )
+            self.assertEqual(status, 423)
+            self.assertEqual(headers["retry-after"], "1")
+            self.assertEqual(json_of(response)["error"]["code"], "zone_busy")
+
+
+class TestZipDesactive(Base):
+    config_kwargs = {"allow_zip_download": False}
+
+    def test_zip_desactive(self):
+        self.assertFalse(self.server.cfg.zones["default"].allow_zip_download)
+        body, ctype = build_multipart(
+            filename="blocked.txt",
+            data=b"blocked",
+            content_type="text/plain",
+            extra_fields={"preserve_name": "1"},
+        )
+        status, _, response = self.req(
+            "POST",
+            "/api/zones/default/images",
+            body=body,
+            headers={"Content-Type": ctype},
+        )
+        self.assertEqual(status, 201)
+        item = json_of(response)
+        body = urllib.parse.urlencode([("filename", item["filename"])]).encode("utf-8")
+        status, _, response = self.req(
+            "POST",
+            "/api/zones/default/images/archive",
+            body=body,
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+        )
+        self.assertEqual(status, 403)
+        self.assertEqual(json_of(response)["error"]["code"], "zip_disabled")
 
 
 class TestRetentionAPI(Base):
