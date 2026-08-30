@@ -11,14 +11,12 @@ from __future__ import annotations
 import base64
 import hashlib
 import hmac
-import os
-import stat
 import secrets
 import threading
 import time
 from pathlib import Path
 
-from pasteberth.paths import open_directory
+from pasteberth.platformfs import UnsupportedFilesystemError, platform_fs
 
 SCRYPT_N = 2**14
 SCRYPT_R = 8
@@ -26,8 +24,6 @@ SCRYPT_P = 1
 _DKLEN = 32
 _MAXMEM = 64 * 1024 * 1024
 _MAX_PASSWORD_FILE_BYTES = 16 * 1024
-_O_NOFOLLOW = getattr(os, "O_NOFOLLOW", 0)
-_O_NONBLOCK = getattr(os, "O_NONBLOCK", 0)
 
 
 # ---------------------------------------------------------------- passwords
@@ -108,26 +104,23 @@ def load_password_hash(path: Path) -> str | None:
     path = Path(path)
     if not path.is_absolute():
         path = Path.cwd() / path
-    parent_fd = -1
-    fd = -1
+    fs = platform_fs()
     try:
-        parent_fd = open_directory(path.parent)
-        fd = os.open(
-            path.name,
-            os.O_RDONLY | _O_NOFOLLOW | _O_NONBLOCK,
-            dir_fd=parent_fd,
-        )
-        stat_result = os.fstat(fd)
-        if not stat.S_ISREG(stat_result.st_mode):
-            raise RuntimeError(f"fichier passwd non régulier : {path}")
-        if stat_result.st_mode & 0o077:
-            raise RuntimeError(f"permissions trop ouvertes sur {path} (0600 requis)")
-        uid = getattr(os, "getuid", lambda: stat_result.st_uid)()
-        if stat_result.st_uid != uid:
-            raise RuntimeError(f"fichier passwd non détenu par le processus : {path}")
-        with os.fdopen(fd, "rb") as fh:
-            fd = -1
-            encoded = fh.read(_MAX_PASSWORD_FILE_BYTES + 1)
+        with fs.open_directory(path.parent) as parent:
+            with fs.open_existing(parent, path.name, mode="rb") as fh:
+                entry = fs.entry_info(parent, path.name)
+                if (
+                    entry is None
+                    or not entry.is_regular
+                    or entry.is_symlink
+                    or entry.identity != fh.identity
+                ):
+                    raise RuntimeError(f"fichier passwd non régulier : {path}")
+                if entry.mode is not None and entry.mode & 0o077:
+                    raise RuntimeError(f"permissions trop ouvertes sur {path} (0600 requis)")
+                if not fs.is_owned(entry):
+                    raise RuntimeError(f"fichier passwd non détenu par le processus : {path}")
+                encoded = fh.read(_MAX_PASSWORD_FILE_BYTES + 1)
         if len(encoded) > _MAX_PASSWORD_FILE_BYTES:
             raise RuntimeError(f"fichier passwd trop volumineux : {path}")
         raw = encoded.decode("utf-8").strip()
@@ -135,19 +128,8 @@ def load_password_hash(path: Path) -> str | None:
         return None
     except RuntimeError:
         raise
-    except (OSError, ValueError, UnicodeError) as exc:
+    except (OSError, ValueError, UnicodeError, UnsupportedFilesystemError) as exc:
         raise RuntimeError(f"lecture impossible de {path} : {exc}") from exc
-    finally:
-        if fd >= 0:
-            try:
-                os.close(fd)
-            except OSError:
-                pass
-        if parent_fd >= 0:
-            try:
-                os.close(parent_fd)
-            except OSError:
-                pass
     return raw.splitlines()[0] if raw else None
 
 
@@ -155,37 +137,38 @@ def save_password_hash(path: Path, password_hash: str) -> None:
     path = Path(path)
     if not path.is_absolute():
         path = Path.cwd() / path
-    parent_fd = open_directory(path.parent, create=True, mode=0o700)
+    fs = platform_fs()
     temp_name = f".passwd-{secrets.token_hex(12)}.tmp"
-    fd = -1
-    try:
-        fd = os.open(
-            temp_name,
-            os.O_WRONLY | os.O_CREAT | os.O_EXCL | _O_NOFOLLOW,
-            0o600,
-            dir_fd=parent_fd,
-        )
-        os.fchmod(fd, 0o600)
-        with os.fdopen(fd, "w", encoding="utf-8") as fh:
-            fd = -1
-            fh.write(password_hash + "\n")
-            fh.flush()
-            os.fsync(fh.fileno())
-        os.rename(temp_name, path.name, src_dir_fd=parent_fd, dst_dir_fd=parent_fd)
-        os.fsync(parent_fd)
-    except BaseException:
-        if fd >= 0:
-            try:
-                os.close(fd)
-            except OSError:
-                pass
+    with fs.open_directory(path.parent, create=True, mode=0o700) as parent:
+        file_handle = None
+        temp_identity = None
         try:
-            os.unlink(temp_name, dir_fd=parent_fd)
-        except OSError:
-            pass
-        raise
-    finally:
-        os.close(parent_fd)
+            file_handle = fs.create_exclusive(
+                parent,
+                temp_name,
+                mode="w",
+                permissions=0o600,
+            )
+            temp_identity = file_handle.identity
+            with file_handle as fh:
+                fh.write(password_hash + "\n")
+                fh.sync()
+            fs.replace(
+                parent,
+                temp_name,
+                path.name,
+                expected_source=temp_identity,
+            )
+            fs.flush_directory(parent)
+        except BaseException:
+            if file_handle is not None and not file_handle.closed:
+                file_handle.close()
+            if temp_identity is not None:
+                try:
+                    fs.remove_expected(parent, temp_name, temp_identity)
+                except OSError:
+                    pass
+            raise
 
 
 # ----------------------------------------------------------------- sessions
@@ -203,11 +186,7 @@ class SessionStore:
     def _password_epoch(self) -> tuple[int, int, int] | None:
         if self._password_file is None:
             return None
-        try:
-            stat_result = self._password_file.stat()
-        except OSError:
-            return None
-        return (stat_result.st_ino, stat_result.st_mtime_ns, stat_result.st_ctime_ns)
+        return platform_fs().path_version(self._password_file)
 
     def create(self) -> str:
         token = secrets.token_urlsafe(32)

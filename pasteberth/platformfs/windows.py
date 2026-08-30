@@ -90,6 +90,17 @@ class WindowsPlatformFS(PlatformFS):
     ):
         self._unsupported()
 
+    def replace(
+        self,
+        directory: DirectoryHandle,
+        source: str,
+        target: str,
+        *,
+        expected_source: FileIdentity | None = None,
+        expected_target: FileIdentity | None = None,
+    ):
+        self._unsupported()
+
     def acquire_lock(
         self,
         directory: DirectoryHandle,
@@ -107,6 +118,25 @@ class WindowsPlatformFS(PlatformFS):
         self._unsupported()
 
     def volume_identity(self, directory: DirectoryHandle) -> int:
+        self._unsupported()
+
+    def check_access(
+        self,
+        path: Path,
+        *,
+        read: bool = False,
+        write: bool = False,
+        execute: bool = False,
+    ):
+        self._unsupported()
+
+    def path_version(self, path: Path):
+        self._unsupported()
+
+    def owner_token(self) -> str:
+        self._unsupported()
+
+    def runtime_directory(self) -> Path:
         self._unsupported()
 
     def first_symlink_component(self, path: Path):

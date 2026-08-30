@@ -17,11 +17,9 @@ import getpass
 import logging
 import mimetypes
 import os
-import shutil
+import secrets
 import ssl
-import stat
 import sys
-import tempfile
 from pathlib import Path
 import socket
 
@@ -48,7 +46,7 @@ from pasteberth.config import (
     validate_directory_identities,
     repository_root,
 )
-from pasteberth.paths import first_symlink_component
+from pasteberth.platformfs import UnsafeLinkError, UnsupportedFilesystemError, platform_fs
 from pasteberth.service import PasteService, ServiceError
 from pasteberth.storage import DestinationError
 
@@ -200,7 +198,7 @@ def _command_path(raw: str) -> Path:
 def _zone_for_directory(cfg, raw_directory: str):
     try:
         directory = _command_path(raw_directory)
-        symlink = first_symlink_component(directory)
+        symlink = platform_fs().first_symlink_component(directory)
     except (OSError, ValueError) as exc:
         raise ConfigError(f"répertoire de zone invalide : {raw_directory!r} ({exc})") from exc
     if symlink is not None:
@@ -215,27 +213,17 @@ def _zone_for_directory(cfg, raw_directory: str):
 
 
 def _read_drop_source(path: Path, max_bytes: int) -> bytes:
-    nofollow = getattr(os, "O_NOFOLLOW", 0)
-    nonblock = getattr(os, "O_NONBLOCK", 0)
-    fd = -1
+    fs = platform_fs()
     try:
-        # Inspect before opening and keep O_NONBLOCK as a second line of
-        # defence against a FIFO replacing the regular source in between.
-        path_info = os.stat(path, follow_symlinks=False)
-        if not stat.S_ISREG(path_info.st_mode):
-            raise ValueError("la source n'est pas un fichier régulier")
-        fd = os.open(path, os.O_RDONLY | nofollow | nonblock)
-        info = os.fstat(fd)
-        if not stat.S_ISREG(info.st_mode):
-            raise ValueError("la source n'est pas un fichier régulier")
-        with os.fdopen(fd, "rb") as stream:
-            fd = -1
-            data = stream.read(max_bytes + 1)
-    except (OSError, ValueError) as exc:
+        with fs.open_directory(path.parent) as parent:
+            with fs.open_existing(parent, path.name, mode="rb") as stream:
+                # The backend opens a regular file without following a link;
+                # bounded reads keep the CLI from loading an oversized source.
+                data = stream.read(max_bytes + 1)
+    except UnsafeLinkError as exc:
+        raise ValueError("la source n'est pas un fichier régulier") from exc
+    except (OSError, ValueError, UnsupportedFilesystemError) as exc:
         raise ValueError(f"lecture impossible : {exc}") from exc
-    finally:
-        if fd >= 0:
-            os.close(fd)
     if len(data) > max_bytes:
         raise ValueError(
             f"fichier trop grand ({len(data)} > {max_bytes} octets)"
@@ -390,6 +378,9 @@ min_free_percent = 2.0
 
 def _cmd_generate_config(args: argparse.Namespace) -> int:
     target = config_path_for_generation(_config_arg(args))
+    target = target.expanduser()
+    if not target.is_absolute():
+        target = Path.cwd() / target
     if "\x00" in str(target):
         print(f"chemin de configuration invalide : {target}", file=sys.stderr)
         return 2
@@ -401,24 +392,36 @@ def _cmd_generate_config(args: argparse.Namespace) -> int:
         )
         return 2
     try:
-        target.parent.mkdir(parents=True, exist_ok=True)
-        fd, temporary = tempfile.mkstemp(
-            prefix=f".{target.name}.", suffix=".tmp", dir=target.parent
-        )
-        temporary_path = Path(temporary)
-        try:
-            with os.fdopen(fd, "w", encoding="utf-8") as stream:
-                stream.write(_generated_config_text(repository_root()))
-                stream.flush()
-                os.fsync(stream.fileno())
-                os.fchmod(stream.fileno(), 0o600)
-            os.replace(temporary_path, target)
-        finally:
+        fs = platform_fs()
+        with fs.open_directory(target.parent, create=True, mode=0o700) as parent:
+            temporary_name = f".{target.name}.{secrets.token_hex(12)}.tmp"
+            temporary = fs.create_exclusive(
+                parent,
+                temporary_name,
+                mode="w",
+                permissions=0o600,
+            )
+            temporary_identity = temporary.identity
             try:
-                temporary_path.unlink()
-            except FileNotFoundError:
-                pass
-    except OSError as exc:
+                with temporary as stream:
+                    stream.write(_generated_config_text(repository_root()))
+                    stream.sync()
+                fs.replace(
+                    parent,
+                    temporary_name,
+                    target.name,
+                    expected_source=temporary_identity,
+                )
+                fs.flush_directory(parent)
+            except BaseException:
+                if not temporary.closed:
+                    temporary.close()
+                try:
+                    fs.remove_expected(parent, temporary_name, temporary_identity)
+                except OSError:
+                    pass
+                raise
+    except (OSError, ValueError, UnsupportedFilesystemError) as exc:
         print(f"impossible d'écrire {target} : {exc}", file=sys.stderr)
         return 1
     print(f"configuration générée : {target}")
@@ -430,9 +433,10 @@ def _audit_zone(cfg, zone) -> tuple[list[str], list[str]]:
     errors: list[str] = []
     warnings: list[str] = []
     path = zone.directory
+    fs = platform_fs()
     try:
-        symlink = first_symlink_component(path)
-    except (OSError, ValueError) as exc:
+        symlink = fs.first_symlink_component(path)
+    except (OSError, ValueError, UnsupportedFilesystemError) as exc:
         errors.append(f"zone {zone.id}: inspection impossible ({exc})")
         return errors, warnings
     if symlink is not None:
@@ -444,47 +448,63 @@ def _audit_zone(cfg, zone) -> tuple[list[str], list[str]]:
         else:
             errors.append(f"zone {zone.id}: répertoire absent : {path}")
         return errors, warnings
-    if not path.is_dir():
+    try:
+        directory = fs.open_directory(path)
+    except FileNotFoundError:
+        errors.append(f"zone {zone.id}: répertoire absent : {path}")
+        return errors, warnings
+    except NotADirectoryError:
         errors.append(f"zone {zone.id}: n'est pas un répertoire : {path}")
         return errors, warnings
+    except (OSError, ValueError, UnsupportedFilesystemError) as exc:
+        errors.append(f"zone {zone.id}: inspection impossible ({exc})")
+        return errors, warnings
     try:
-        mode = stat.S_IMODE(path.stat().st_mode)
+        with directory:
+            audit = fs.audit_permissions(path, directory=True)
+            mode = audit.mode
         # Feature: avertissement seul, pas d'erreur — les zones partagées sont
         # légitimes (partage contrôlé entre utilisateurs). Refuser pousserait à
         # contourner la protection.
-        if mode & 0o077:
+        if mode is not None and mode & 0o077:
             warnings.append(
                 f"zone {zone.id}: permissions non privées ({oct(mode)}) : {path} "
                 "(0700 recommandé)"
             )
-    except OSError as exc:
+    except (OSError, UnsupportedFilesystemError) as exc:
         errors.append(f"zone {zone.id}: inspection impossible ({exc})")
-    if not os.access(path, os.W_OK | os.X_OK):
+    if not fs.check_access(path, write=True, execute=True):
         errors.append(f"zone {zone.id}: répertoire non accessible en écriture : {path}")
     lock_path = path / ".pasteberth.lock"
     try:
-        lock_stat = lock_path.lstat()
+        with fs.open_directory(path) as directory:
+            lock_info = fs.entry_info(directory, ".pasteberth.lock")
     except FileNotFoundError:
-        lock_stat = None
-    except OSError as exc:
+        lock_info = None
+    except (OSError, UnsupportedFilesystemError) as exc:
         errors.append(f"zone {zone.id}: inspection du verrou impossible ({exc})")
-        lock_stat = None
-    if lock_stat is not None:
-        if stat.S_ISLNK(lock_stat.st_mode):
+        lock_info = None
+    if lock_info is not None:
+        if lock_info.is_symlink:
             errors.append(f"zone {zone.id}: le verrou est un lien symbolique : {lock_path}")
-        elif not stat.S_ISREG(lock_stat.st_mode):
+        elif not lock_info.is_regular:
             errors.append(f"zone {zone.id}: le verrou n'est pas un fichier régulier : {lock_path}")
-        elif not os.access(lock_path, os.R_OK | os.W_OK):
+        elif not fs.check_access(lock_path, read=True, write=True):
             errors.append(f"zone {zone.id}: verrou non accessible en lecture/écriture : {lock_path}")
     try:
-        usage = shutil.disk_usage(path)
-        free_percent = usage.free * 100.0 / usage.total if usage.total else 0.0
+        with fs.open_directory(path) as directory:
+            usage = fs.volume_space(directory)
+        free_percent = (
+            usage.available_bytes * 100.0 / usage.total_bytes
+            if usage.total_bytes
+            else 0.0
+        )
         if free_percent < zone.min_free_percent:
             errors.append(
                 f"zone {zone.id}: espace libre {free_percent:.2f}% "
                 f"< minimum {zone.min_free_percent:.2f}%"
             )
-    except OSError as exc:
+    except (OSError, UnsupportedFilesystemError) as exc:
         warnings.append(f"zone {zone.id}: espace libre non mesurable ({exc})")
     return errors, warnings
 

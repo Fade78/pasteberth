@@ -18,7 +18,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from pasteberth.images import HARD_MAX_PIXELS, MAX_PIXELS
-from pasteberth.paths import first_symlink_component, open_directory
+from pasteberth.platformfs import UnsupportedFilesystemError, platform_fs
 
 
 log = logging.getLogger("pasteberth.config")
@@ -762,10 +762,11 @@ def resolve_config_path(explicit: str | None = None) -> Path:
 
 def prepare_directories(cfg: Config) -> None:
     """Crée/vérifie les répertoires des zones au démarrage (échec rapide)."""
+    fs = platform_fs()
     seen: dict[tuple[int, int], str] = {}
     for zone in cfg.zones.values():
         try:
-            symlink = first_symlink_component(zone.directory)
+            symlink = fs.first_symlink_component(zone.directory)
         except (OSError, ValueError) as exc:
             raise ConfigError(
                 f"zone '{zone.id}': impossible d'inspecter {zone.directory} ({exc})"
@@ -775,7 +776,7 @@ def prepare_directories(cfg: Config) -> None:
                 f"zone '{zone.id}': le chemin contient un lien symbolique : {symlink}"
             )
         try:
-            directory_fd = open_directory(
+            directory = fs.open_directory(
                 zone.directory,
                 create=zone.create_directory,
                 mode=0o700,
@@ -793,18 +794,19 @@ def prepare_directories(cfg: Config) -> None:
             raise ConfigError(
                 f"zone '{zone.id}': '{zone.directory}' existe mais n'est pas un répertoire"
             ) from exc
-        except (OSError, ValueError) as exc:
+        except (OSError, ValueError, UnsupportedFilesystemError) as exc:
             raise ConfigError(
                 f"zone '{zone.id}': impossible d'inspecter {zone.directory} ({exc})"
             ) from exc
         try:
-            info = os.fstat(directory_fd)
-            mode = info.st_mode & 0o777
+            with directory:
+                audit = fs.audit_permissions(zone.directory, directory=True)
+                mode = audit.mode
             # Feature: les répertoires partagés (group/other read ou write) sont
             # acceptés avec un avertissement, pas refusés. Refuser pousserait les
             # opérateurs à contourner la protection (chmod 777, désactivation du
             # service, stockage hors zone). Le 0700 reste recommandé.
-            if mode & 0o077:
+            if mode is not None and mode & 0o077:
                 log.warning(
                     "zone '%s': permissions non privées sur %s (%s) ; "
                     "0700 est recommandé",
@@ -812,14 +814,12 @@ def prepare_directories(cfg: Config) -> None:
                     zone.directory,
                     oct(mode),
                 )
-            identity = (info.st_dev, info.st_ino)
-        except OSError as exc:
+            identity = directory.identity
+        except (OSError, UnsupportedFilesystemError) as exc:
             raise ConfigError(
                 f"zone '{zone.id}': impossible d'inspecter {zone.directory} ({exc})"
             ) from exc
-        finally:
-            os.close(directory_fd)
-        if not os.access(zone.directory, os.W_OK | os.X_OK):
+        if not fs.check_access(zone.directory, write=True, execute=True):
             raise ConfigError(
                 f"zone '{zone.id}': répertoire non accessible en écriture : {zone.directory}"
             )
@@ -834,6 +834,7 @@ def prepare_directories(cfg: Config) -> None:
 
 def validate_directory_identities(cfg: Config) -> None:
     """Vérifie les collisions de répertoires sans créer les destinations."""
+    fs = platform_fs()
     seen: dict[tuple[int, int], str] = {}
     configured: dict[Path, str] = {}
     for zone in cfg.zones.values():
@@ -845,11 +846,12 @@ def validate_directory_identities(cfg: Config) -> None:
                 f"({zone.directory})"
             )
         configured[normalized] = zone.id
-        if not zone.directory.exists() or not zone.directory.is_dir():
-            continue
         try:
-            identity = (zone.directory.stat().st_dev, zone.directory.stat().st_ino)
-        except OSError as exc:
+            with fs.open_directory(zone.directory) as directory:
+                identity = directory.identity
+        except FileNotFoundError:
+            continue
+        except (NotADirectoryError, OSError, UnsupportedFilesystemError) as exc:
             raise ConfigError(
                 f"zone '{zone.id}': impossible d'inspecter {zone.directory} ({exc})"
             ) from exc

@@ -54,6 +54,9 @@ class EntryInfo:
     is_regular: bool
     is_symlink: bool
     owner: int | str | None = None
+    mode: int | None = None
+    modified_ns: int | None = None
+    changed_ns: int | None = None
 
 
 @dataclass(frozen=True)
@@ -254,6 +257,17 @@ class PlatformFS:
     ) -> bool:
         raise NotImplementedError
 
+    def replace(
+        self,
+        directory: DirectoryHandle,
+        source: str,
+        target: str,
+        *,
+        expected_source: FileIdentity | None = None,
+        expected_target: FileIdentity | None = None,
+    ) -> None:
+        raise NotImplementedError
+
     def acquire_lock(
         self,
         directory: DirectoryHandle,
@@ -271,6 +285,25 @@ class PlatformFS:
         raise NotImplementedError
 
     def volume_identity(self, directory: DirectoryHandle) -> int:
+        raise NotImplementedError
+
+    def check_access(
+        self,
+        path: Path,
+        *,
+        read: bool = False,
+        write: bool = False,
+        execute: bool = False,
+    ) -> bool:
+        raise NotImplementedError
+
+    def path_version(self, path: Path) -> tuple[int, int, int] | None:
+        raise NotImplementedError
+
+    def owner_token(self) -> str:
+        raise NotImplementedError
+
+    def runtime_directory(self) -> Path:
         raise NotImplementedError
 
     def first_symlink_component(self, path: Path) -> Path | None:
