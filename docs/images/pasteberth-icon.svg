@@ -1,0 +1,37 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="title desc">
+  <title id="title">Pasteberth</title>
+  <desc id="desc">A clipboard containing two zones, with a bridge-like opening and arrow to the right.</desc>
+
+  <g fill="none"
+     stroke="#4da3ff"
+     stroke-width="28"
+     stroke-linecap="round"
+     stroke-linejoin="round">
+
+    <path d="M140 118
+             H112
+             C90 118 76 132 76 154
+             V404
+             C76 426 90 440 112 440
+             H326
+             C348 440 362 426 362 404
+             V350" />
+
+    <path d="M178 118
+             V92
+             C178 62 200 42 230 42
+             H258
+             C288 42 310 62 310 92
+             V118" />
+    <path d="M178 118 H310" />
+
+    <rect x="132" y="190" width="150" height="62" rx="18" />
+    <rect x="132" y="286" width="150" height="62" rx="18" />
+
+    <path d="M282 221 H398" />
+    <path d="M282 317 H398" />
+    <path d="M398 221 V317" />
+    <path d="M398 269 H458" />
+    <path d="M428 239 L458 269 L428 299" />
+  </g>
+</svg>
