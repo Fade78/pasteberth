@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 import argparse
+import errno
 import getpass
 import logging
 import mimetypes
@@ -366,10 +367,11 @@ create_directory = true
 min_free_percent = 2.0
 
 # Optional group views. Omit the whole section to show all zones without tabs.
+# Patterns use Python regular expressions (re.search, case-sensitive).
 # [[groups]]
 # name = "LWP"
 # selection = "pattern"
-# pattern = ["lightwebpres*"]
+# pattern = ["^lightwebpres.*$"]
 # layout = "tab"
 #
 # [[groups]]
@@ -480,9 +482,9 @@ def _audit_zone(cfg, zone) -> tuple[list[str], list[str]]:
     return errors, warnings
 
 
-def _audit_listener(cfg) -> str | None:
+def _audit_listener(cfg) -> tuple[str | None, str | None]:
     if cfg.port < 1024 and getattr(os, "geteuid", lambda: 1)() != 0:
-        return f"port privilégié inaccessible sans root : {cfg.port}"
+        return f"port privilégié inaccessible sans root : {cfg.port}", None
     try:
         addresses = socket.getaddrinfo(
             cfg.listen_address,
@@ -490,9 +492,9 @@ def _audit_listener(cfg) -> str | None:
             type=socket.SOCK_STREAM,
         )
     except OSError as exc:
-        return f"adresse d'écoute invalide : {exc}"
+        return f"adresse d'écoute invalide : {exc}", None
     if not addresses:
-        return f"adresse d'écoute introuvable : {cfg.listen_address}"
+        return f"adresse d'écoute introuvable : {cfg.listen_address}", None
 
     family, socktype, protocol, _, sockaddr = addresses[0]
     try:
@@ -500,8 +502,14 @@ def _audit_listener(cfg) -> str | None:
             sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
             sock.bind(sockaddr)
     except OSError as exc:
-        return f"bind impossible sur {cfg.listen_address}:{cfg.port} ({exc})"
-    return None
+        message = f"bind impossible sur {cfg.listen_address}:{cfg.port} ({exc})"
+        if exc.errno == errno.EADDRINUSE:
+            return None, (
+                f"port déjà utilisé sur {cfg.listen_address}:{cfg.port} : "
+                "une instance est peut-être déjà lancée"
+            )
+        return message, None
+    return None, None
 
 
 def _audit_tls(cfg) -> str | None:
@@ -645,9 +653,11 @@ def _cmd_audit(args: argparse.Namespace) -> int:
     network_warning = _network_warning(cfg)
     if network_warning:
         warnings.append(network_warning)
-    listener_error = _audit_listener(cfg)
+    listener_error, listener_warning = _audit_listener(cfg)
     if listener_error:
         errors.append(listener_error)
+    if listener_warning:
+        warnings.append(listener_warning)
     tls_error = _audit_tls(cfg)
     if tls_error:
         errors.append(tls_error)

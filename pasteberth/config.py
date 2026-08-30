@@ -7,7 +7,6 @@ XDG reste accepté en dernier recours.
 """
 from __future__ import annotations
 
-import fnmatch
 import ipaddress
 import logging
 import math
@@ -387,6 +386,15 @@ def _parse_groups(raw: object, warnings: list[str]) -> tuple[GroupConfig, ...]:
         pattern = tuple(raw_pattern or ())
         if selection == "pattern" and not pattern:
             raise ConfigError(f"{where}: 'pattern' ne peut pas être vide")
+        if selection == "pattern":
+            for expression in pattern:
+                try:
+                    re.compile(expression)
+                except re.error as exc:
+                    raise ConfigError(
+                        f"{where}: expression régulière invalide dans 'pattern' "
+                        f"{expression!r} ({exc})"
+                    ) from exc
         layout = _get_str(item, "layout", where, default="area").lower()
         if layout not in _GROUP_LAYOUTS:
             raise ConfigError(
@@ -417,10 +425,11 @@ def resolve_group_zone_ids(
         if group.selection == "all":
             resolved[group.name] = ordered_zone_ids
         elif group.selection == "pattern":
+            expressions = tuple(re.compile(pattern) for pattern in group.pattern)
             matching = tuple(
                 zid
                 for zid in ordered_zone_ids
-                if any(fnmatch.fnmatch(zid, pattern) for pattern in group.pattern)
+                if any(expression.search(zid) for expression in expressions)
             )
             resolved[group.name] = matching
             pattern_zone_ids.update(matching)

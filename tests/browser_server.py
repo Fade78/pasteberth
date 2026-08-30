@@ -56,19 +56,19 @@ show_count = true
 
 [[groups]]
 name = "Secondary"
-pattern = ["secondary"]
+pattern = ["^secondary$"]
 layout = "area"
 show_count = true
 
 [[groups]]
 name = "Tabbed"
-pattern = ["*"]
+pattern = [".*"]
 layout = "tab"
 show_count = true
 
 [[groups]]
 name = "Empty"
-pattern = ["missing-*"]
+pattern = ["^missing-.*$"]
 show_count = true
 '''
     path = root / "config.toml"

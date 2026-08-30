@@ -180,13 +180,13 @@ class TestParsing(unittest.TestCase):
         cfg = make_cfg(
             self.tmp,
             groups=[
-                {"name": "All", "pattern": ["*"]},
-                {"name": "Ops", "pattern": ["default", "api-*"]},
+                {"name": "All", "pattern": [".*"]},
+                {"name": "Ops", "pattern": ["^default$", "^api-.*"]},
             ],
         )
         self.assertEqual([group.name for group in cfg.groups], ["All", "Ops"])
         self.assertEqual(cfg.groups[0].selection, "pattern")
-        self.assertEqual(cfg.groups[1].pattern, ("default", "api-*"))
+        self.assertEqual(cfg.groups[1].pattern, ("^default$", "^api-.*"))
         self.assertEqual(cfg.groups[1].layout, "area")
         self.assertFalse(cfg.groups[0].hide_empty)
         self.assertTrue(cfg.groups[0].show_count)
@@ -201,8 +201,8 @@ class TestParsing(unittest.TestCase):
             self.tmp,
             zones=zones,
             groups=[
-                {"name": "All", "selection": "all", "pattern": ["ignored-*"], "layout": "tab"},
-                {"name": "LWP", "selection": "pattern", "pattern": ["lightwebpres*"]},
+                {"name": "All", "selection": "all", "pattern": ["^ignored-.*$"], "layout": "tab"},
+                {"name": "LWP", "selection": "pattern", "pattern": ["^lightwebpres.*$"]},
                 {"name": "Other", "selection": "other"},
             ],
         )
@@ -217,9 +217,11 @@ class TestParsing(unittest.TestCase):
         with self.assertRaisesRegex(ConfigError, "selection"):
             make_cfg(self.tmp, groups=[{"name": "Bad", "selection": "never"}])
         with self.assertRaisesRegex(ConfigError, "layout"):
-            make_cfg(self.tmp, groups=[{"name": "Bad", "pattern": ["*"], "layout": "stack"}])
+            make_cfg(self.tmp, groups=[{"name": "Bad", "pattern": [".*"], "layout": "stack"}])
         with self.assertRaisesRegex(ConfigError, "pattern"):
             make_cfg(self.tmp, groups=[{"name": "Bad", "selection": "pattern"}])
+        with self.assertRaisesRegex(ConfigError, "expression régulière"):
+            make_cfg(self.tmp, groups=[{"name": "Bad", "pattern": ["["]}])
 
     def test_groupes_refusent_les_noms_dupliques_et_patterns_vides(self):
         with self.assertRaisesRegex(ConfigError, "dupliqué"):

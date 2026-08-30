@@ -277,10 +277,10 @@ class TestConfigurationDepot(unittest.TestCase):
             self.tmp,
             port=port,
             groups=[
-                {"name": "All", "selection": "all", "pattern": ["ignored-*"]},
+                {"name": "All", "selection": "all", "pattern": ["^ignored-.*$"]},
                 {"name": "AllAgain", "selection": "all"},
-                {"name": "AllPattern", "pattern": ["*"]},
-                {"name": "Other", "selection": "other", "pattern": ["ignored-*"]},
+                {"name": "AllPattern", "pattern": [".*"]},
+                {"name": "Other", "selection": "other", "pattern": ["^ignored-.*$"]},
                 {"name": "OtherAgain", "selection": "other"},
             ],
         )
@@ -356,8 +356,9 @@ class TestConfigurationDepot(unittest.TestCase):
             port = occupied.getsockname()[1]
             cfg = write_config(self.tmp, port=port)
             proc = run_cli(["audit", "--config", str(cfg)])
-        self.assertEqual(proc.returncode, 2)
-        self.assertIn("bind impossible", proc.stdout)
+        self.assertEqual(proc.returncode, 1)
+        self.assertIn("port déjà utilisé", proc.stdout)
+        self.assertIn("AVERTISSEMENT", proc.stdout)
 
     def test_audit_verifie_le_certificat_tls(self):
         cfg = write_config(

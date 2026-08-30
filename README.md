@@ -37,7 +37,7 @@ agent/script ── filesystem-drop ─────▶ captures/<zone>/ ──�
 The browser **never** needs to access the returned path. This is the path seen
 by the harness, on the machine where Pasteberth runs.
 
-The current version is `1.4.0`.
+The current version is `1.4.1`.
 
 ---
 
@@ -216,6 +216,9 @@ Before the first start, check the environment:
 
 An audit that reports only warnings returns `1`; configuration errors return
 `2`.
+It is safe to run while an instance is already listening: an occupied configured
+port is reported as a warning, while other bind failures remain configuration
+errors.
 
 To use the command from any directory, add `bin/` to the `PATH` or use
 `./bin/pasteberth` directly.
@@ -318,8 +321,10 @@ stored contents are valuable. An external path can be specified manually in
 
 Groups are loaded when the service starts. A group can use one of three
 selection modes: `all` contains every zone; `pattern` contains every zone whose
-ID matches at least one glob in `pattern`; `other` contains zones not selected
-by any `pattern` group. `all` groups are deliberately ignored when calculating
+ID matches at least one Python regular expression in `pattern`; `other` contains
+zones not selected by any `pattern` group. Expressions use Python `re.search`
+semantics and are case-sensitive; use `^` and `$` when anchoring is needed. `all`
+groups are deliberately ignored when calculating
 `other`, so explicit `All` and `Other` groups can overlap; `pasteberth audit`
 warns about that configuration. A zone can belong to several groups. When
 groups are configured, the interface displays only the zones in the selected
@@ -563,7 +568,7 @@ blindly retrying.
 - Passwords: salted scrypt (N=16384), constant-time comparison, `passwd` file
   0600 next to the configuration and ignored by Git; delay + progressive
   per-IP lockout (honoring XFF only through a trusted proxy).
-- Login requests are limited to 16 KiB, scrypt checks are globally bounded, and
+- Login requests are limited to 4 KiB, scrypt checks are globally bounded, and
   uploads share a 128 MiB memory budget; uploads remain limited to 20 MiB by
   default and 50 MiB maximum.
 - Server-side, revocable sessions (logout takes effect), 256-bit token,

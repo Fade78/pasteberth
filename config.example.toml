@@ -75,7 +75,8 @@ min_free_percent = 2.0
 #
 # name        : display name in the UI
 # selection   : all, pattern, or other (default: pattern)
-# pattern     : glob patterns for selection = "pattern" (fnmatch syntax)
+# pattern     : Python regular expressions for selection = "pattern"
+#               (re.search semantics, case-sensitive; use ^ and $ to anchor)
 # layout      : area or tab (default: area)
 # hide_empty  : hide the group tab when no zones match (default: false)
 # show_count  : show zone count as "(N)" in the group tab (default: true)
@@ -90,7 +91,7 @@ show_count = true
 # [[groups]]
 # name = "LWP"
 # selection = "pattern"
-# pattern = ["lightwebpres*"]
+# pattern = ["^lightwebpres.*$"]
 # layout = "tab"
 #
 # [[groups]]

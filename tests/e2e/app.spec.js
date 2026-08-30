@@ -349,7 +349,7 @@ test("ne réaffiche pas les zones quand tous les groupes sont masqués", async (
     const overview = await response.json();
     overview.groups = [{
       name: "Empty",
-      pattern: ["missing-*"],
+      pattern: ["^missing-.*$"],
       zone_ids: [],
       zone_count: 0,
       hide_empty: false,

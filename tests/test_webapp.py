@@ -970,8 +970,8 @@ class TestRetentionAPI(Base):
 class TestGroupsAPI(Base):
     config_kwargs = {
         "groups": [
-            {"name": "All", "selection": "all", "pattern": ["*"], "show_count": True},
-            {"name": "Operational", "selection": "pattern", "pattern": ["default", "missing-*"], "show_count": False, "layout": "tab"},
+            {"name": "All", "selection": "all", "pattern": ["^ignored-.*$"], "show_count": True},
+            {"name": "Operational", "selection": "pattern", "pattern": ["^default$", "^missing-.*$"], "show_count": False, "layout": "tab"},
             {"name": "Other", "selection": "other"},
         ]
     }
