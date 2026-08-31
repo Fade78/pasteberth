@@ -32,7 +32,12 @@ from pathlib import Path
 from pasteberth import __version__
 from pasteberth.auth import LoginRateLimiter, SessionStore, load_password_hash, verify_password
 from pasteberth.config import Config, public_path
-from pasteberth.multipart import MultipartError, extract_boundary, parse_multipart
+from pasteberth.multipart import (
+    MAX_MULTIPART_OVERHEAD,
+    MultipartError,
+    extract_boundary,
+    parse_multipart,
+)
 from pasteberth.service import PasteService, ServiceError
 
 log = logging.getLogger("pasteberth.http")
@@ -1001,9 +1006,17 @@ def make_handler(cfg: Config, service: PasteService, sessions: SessionStore,
         def _h_zone_upload(self, zid: str) -> None:
             if not self._require_auth_api():
                 return
+            ctype_raw = self.headers.get("Content-Type") or ""
+            ctype = ctype_raw.split(";")[0].strip().lower()
+            body_limit = cfg.max_upload_bytes
+            if ctype == "multipart/form-data":
+                body_limit += MAX_MULTIPART_OVERHEAD
             reservation = 0
             try:
-                body, reservation = self._read_body(memory_budget=upload_memory)
+                body, reservation = self._read_body(
+                    max_bytes=body_limit,
+                    memory_budget=upload_memory,
+                )
             except BodyTooLarge:
                 self.close_connection = True
                 self._error(413, "too_large", "corps trop grand")
@@ -1020,8 +1033,6 @@ def make_handler(cfg: Config, service: PasteService, sessions: SessionStore,
             except ClientAbort:
                 raise
             try:
-                ctype_raw = self.headers.get("Content-Type") or ""
-                ctype = ctype_raw.split(";")[0].strip().lower()
                 if ctype == "multipart/form-data":
                     boundary = extract_boundary(ctype_raw)
                     if not boundary:

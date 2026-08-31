@@ -2,6 +2,16 @@
 
 This file records user-visible changes to Pasteberth.
 
+## [1.6.3] - 2026-09-01
+
+### Bug Fixes and Reliability
+
+- allow bounded multipart framing and auxiliary fields around an upload while
+  continuing to enforce `max_upload_size` on the extracted content;
+- report an occupied listen port as a clean startup error instead of masking
+  `EADDRINUSE` with an initialization `AttributeError`;
+- add regression coverage for exact-limit uploads and occupied-port startup.
+
 ## [1.6.2] - 2026-09-01
 
 ### Documentation and CLI

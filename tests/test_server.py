@@ -1,4 +1,5 @@
 """Contrats de cycle de vie du serveur HTTP."""
+import errno
 import socket
 from http.server import BaseHTTPRequestHandler
 import tempfile
@@ -125,6 +126,24 @@ class _NoActiveServer(PasteberthServer):
 
 
 class TestCycleDeVieServeur(unittest.TestCase):
+    def test_bind_sur_port_occupe_ne_masque_pas_erreur(self):
+        blocker = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        blocker.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        blocker.bind(("127.0.0.1", 0))
+        blocker.listen(1)
+        port = blocker.getsockname()[1]
+        try:
+            with self.assertRaises(OSError) as context:
+                PasteberthServer(("127.0.0.1", port), _IdleHandler)
+            error = context.exception
+            self.assertTrue(
+                error.errno == errno.EADDRINUSE
+                or getattr(error, "winerror", None) == 10048,
+                repr(error),
+            )
+        finally:
+            blocker.close()
+
     def test_connexions_sans_headers_sont_bornees_par_le_pool_pending(self):
         server = _PendingLimitedServer(("127.0.0.1", 0), _IdleHandler)
         thread = threading.Thread(target=server.serve_forever, daemon=True)

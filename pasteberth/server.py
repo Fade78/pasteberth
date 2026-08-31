@@ -60,12 +60,13 @@ class PasteberthServer(ThreadingHTTPServer):
         )
         self.tls_context = tls_context
         self.active_timeout = getattr(handler_class, "timeout", 60)
-        super().__init__(resolved_address, handler_class, bind_and_activate)
+        # TCPServer may call the overridden server_close() when bind fails.
         self._active_slots = threading.BoundedSemaphore(self.max_active_requests)
         self._pending_slots = threading.BoundedSemaphore(self.max_pending_requests)
         self._active_sockets: set[socket.socket] = set()
         self._pending_sockets: set[socket.socket] = set()
         self._sockets_lock = threading.Lock()
+        super().__init__(resolved_address, handler_class, bind_and_activate)
 
     def get_request(self):
         request, client_address = super().get_request()

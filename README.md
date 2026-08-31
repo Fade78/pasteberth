@@ -37,7 +37,7 @@ service between independent servers.
 
 ## Quick Start
 
-The current public release is `1.6.2`. The documented v1.6.2 server runs on
+The current public release is `1.6.3`. The documented v1.6.3 server runs on
 Linux, requires Python 3.11 or newer, and has no third-party
 Python runtime dependency. A native Windows backend is included but has only
 been validated under Wine; macOS and native Windows remain outside the official
@@ -147,7 +147,7 @@ configuration template. The optional Linux user-service template is
 
 ## Support Status
 
-| Area | v1.6.2 status |
+| Area | v1.6.3 status |
 |---|---|
 | Python | 3.11 or newer |
 | Server | Linux, officially tested |

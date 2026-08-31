@@ -180,6 +180,20 @@ class TestErreursDemarrage(unittest.TestCase):
                 self.assertEqual(proc.returncode, 2)
                 self.assertNotIn("Traceback", proc.stderr + proc.stdout)
 
+    def test_port_occupe_retourne_une_erreur_propre(self):
+        blocker = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        blocker.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        blocker.bind(("127.0.0.1", 0))
+        blocker.listen(1)
+        try:
+            cfg = write_config(self.tmp, port=blocker.getsockname()[1])
+            proc = run_cli(["--config", str(cfg)])
+            self.assertEqual(proc.returncode, 1)
+            self.assertIn("impossible d'écouter", proc.stderr)
+            self.assertNotIn("Traceback", proc.stderr + proc.stdout)
+        finally:
+            blocker.close()
+
 
 @unittest.skipIf(
     platform_fs().backend_name == "windows",

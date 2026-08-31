@@ -114,6 +114,45 @@ class TestBudgetMemoire(unittest.TestCase):
         self.assertIsNotNone(budget.reserve(60_000))
 
 
+class TestLimiteUpload(Base):
+    config_kwargs = {"max_upload_size": "1KiB"}
+
+    def test_multipart_accepte_un_fichier_exactement_a_la_limite(self):
+        data = b"x" * 1024
+        body, content_type = build_multipart(
+            filename="exact.txt",
+            data=data,
+            content_type="text/plain",
+            extra_fields={"preserve_name": "1"},
+        )
+        status, _, response = self.req(
+            "POST",
+            "/api/zones/default/images",
+            body=body,
+            headers={"Content-Type": content_type},
+        )
+        self.assertEqual(status, 201, response)
+        item = json_of(response)
+        self.assertEqual(item["filename"], "exact.txt")
+        self.assertEqual(item["size"], len(data))
+
+    def test_multipart_contenu_au_dela_de_la_limite_reste_refuse(self):
+        body, content_type = build_multipart(
+            filename="too-large.txt",
+            data=b"x" * 1025,
+            content_type="text/plain",
+            extra_fields={"preserve_name": "1"},
+        )
+        status, _, response = self.req(
+            "POST",
+            "/api/zones/default/images",
+            body=body,
+            headers={"Content-Type": content_type},
+        )
+        self.assertEqual(status, 413)
+        self.assertEqual(json_of(response)["error"]["code"], "too_large")
+
+
 class TestPublic(Base):
     def test_health_sans_auth(self):
         status, _, body = self.req("GET", "/api/health")

@@ -1,8 +1,9 @@
 """Parser ``multipart/form-data`` minimal et borné (bibliothèque standard).
 
-Le corps est déjà plafonné en amont (max_upload_bytes) ; ce parser borne
-en plus le nombre de parties et la taille des en-têtes. Le nom de fichier est
-retourné comme indication ; la couche stockage le valide avant tout usage.
+Le corps est déjà plafonné en amont (taille de contenu plus enveloppe multipart
+bornée) ; ce parser borne en plus le nombre de parties et la taille des
+en-têtes. Le nom de fichier est retourné comme indication ; la couche stockage
+le valide avant tout usage.
 """
 from __future__ import annotations
 
@@ -10,6 +11,9 @@ import re
 
 MAX_PARTS = 32
 MAX_HEADER_BLOCK = 8 * 1024
+# Allow normal multipart framing and auxiliary fields without enlarging the
+# configured per-file upload limit without bound.
+MAX_MULTIPART_OVERHEAD = 1 * 1024 * 1024
 _MAX_TOKEN = 256
 
 _PARAM_RE = {
