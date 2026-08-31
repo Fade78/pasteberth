@@ -24,6 +24,8 @@ SCRYPT_P = 1
 _DKLEN = 32
 _MAXMEM = 64 * 1024 * 1024
 _MAX_PASSWORD_FILE_BYTES = 16 * 1024
+DEFAULT_MAX_SESSIONS = 4096
+MAX_SESSIONS = 1_000_000
 
 
 # ---------------------------------------------------------------- passwords
@@ -177,9 +179,20 @@ def save_password_hash(path: Path, password_hash: str) -> None:
 class SessionStore:
     """Sessions en mémoire : token -> expiration (monotonic)."""
 
-    def __init__(self, ttl_seconds: int, password_file: Path | None = None):
+    def __init__(
+        self,
+        ttl_seconds: int,
+        password_file: Path | None = None,
+        *,
+        max_sessions: int = DEFAULT_MAX_SESSIONS,
+    ):
+        if isinstance(max_sessions, bool) or not isinstance(max_sessions, int):
+            raise ValueError("max_sessions doit être un entier positif")
+        if not (1 <= max_sessions <= MAX_SESSIONS):
+            raise ValueError(f"max_sessions doit être entre 1 et {MAX_SESSIONS}")
         self.ttl = ttl_seconds
         self._password_file = password_file
+        self.max_sessions = max_sessions
         self._sessions: dict[str, tuple[float, tuple[int, int, int] | None]] = {}
         self._lock = threading.Lock()
 
@@ -192,6 +205,9 @@ class SessionStore:
         token = secrets.token_urlsafe(32)
         with self._lock:
             self._purge_locked()
+            while len(self._sessions) >= self.max_sessions:
+                oldest = next(iter(self._sessions))
+                del self._sessions[oldest]
             self._sessions[token] = (time.monotonic() + self.ttl, self._password_epoch())
         return token
 
@@ -259,13 +275,13 @@ class LoginRateLimiter:
             raise ValueError("max_concurrent_checks doit être positif")
         self._expensive_slots = threading.BoundedSemaphore(checks)
 
-    def _make_room_locked(self, ip: str) -> bool:
+    def _make_room_locked(self, ip: str, now: float) -> bool:
         if ip in self._state or len(self._state) < self.MAX_TRACKED_IPS:
             return True
         idle = [
             (entry[2], candidate)
             for candidate, entry in self._state.items()
-            if entry[3] == 0
+            if entry[3] == 0 and entry[1] <= now
         ]
         if not idle:
             return False
@@ -296,7 +312,7 @@ class LoginRateLimiter:
                     return 1.0
             if not self._expensive_slots.acquire(blocking=False):
                 return 1.0
-            if not self._make_room_locked(ip):
+            if not self._make_room_locked(ip, now):
                 self._expensive_slots.release()
                 return 1.0
             if entry is None:
@@ -362,7 +378,7 @@ class LoginRateLimiter:
             now = time.monotonic()
             self._prune_locked(now)
             entry = self._state.get(ip)
-            if entry is None and not self._make_room_locked(ip):
+            if entry is None and not self._make_room_locked(ip, now):
                 return
             fails = int(entry[0]) + 1 if entry else 1
             delay = 0.0

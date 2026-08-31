@@ -8,10 +8,11 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from pasteberth import __version__
 from pasteberth.auth import load_password_hash, verify_password
-from pasteberth.cli import _network_warning, _read_drop_source
+from pasteberth.cli import _audit_tls, _network_warning, _read_drop_source
 from pasteberth.config import load_config
 from pasteberth.platformfs import platform_fs
 
@@ -48,6 +49,47 @@ class TestVersion(unittest.TestCase):
         proc = run_cli(["--help"])
         self.assertEqual(proc.returncode, 0)
         self.assertIn("--config", proc.stdout)
+
+
+class TestWrappers(unittest.TestCase):
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.tmp = Path(self._tmp.name)
+        self.addCleanup(self._tmp.cleanup)
+
+    def _fake_package(self):
+        package = self.tmp / "shadow" / "pasteberth"
+        package.mkdir(parents=True)
+        (package / "__init__.py").write_text(
+            "raise RuntimeError('WRAPPER_SHADOW_MARKER')\n",
+            encoding="utf-8",
+        )
+        return package.parent
+
+    def _run_wrapper(self, wrapper, *, cwd, pythonpath):
+        env = dict(os.environ)
+        env["PYTHONPATH"] = str(pythonpath)
+        return subprocess.run(
+            [str(REPO_ROOT / wrapper), "--version"],
+            capture_output=True,
+            text=True,
+            env=env,
+            cwd=str(cwd),
+            timeout=30,
+        )
+
+    def test_wrappers_resistent_au_cwd_et_au_pythonpath(self):
+        fake_root = self._fake_package()
+        for wrapper in ("bin/pasteberth", "run.sh"):
+            with self.subTest(wrapper=wrapper):
+                proc = self._run_wrapper(
+                    wrapper,
+                    cwd=fake_root,
+                    pythonpath=fake_root,
+                )
+                self.assertEqual(proc.returncode, 0, proc.stderr)
+                self.assertIn(f"pasteberth {__version__}", proc.stdout)
+                self.assertNotIn("WRAPPER_SHADOW_MARKER", proc.stdout + proc.stderr)
 
 
 class TestErreursDemarrage(unittest.TestCase):
@@ -246,6 +288,7 @@ class TestConfigurationDepot(unittest.TestCase):
             self.assertEqual(stat.S_IMODE(target.stat().st_mode), 0o600)
         content = target.read_text(encoding="utf-8")
         self.assertIn('id = "default"', content)
+        self.assertIn('url_prefix = ""', content)
         self.assertIn("allowed_hosts = []", content)
         self.assertIn("storage/default", content)
         self.assertIn("structural pixel budget", content)
@@ -404,6 +447,155 @@ class TestConfigurationDepot(unittest.TestCase):
         self.assertEqual(proc.returncode, 2)
         self.assertIn("configuration TLS invalide", proc.stdout)
 
+    def test_audit_refuse_configuration_inscriptible(self):
+        if platform_fs().backend_name == "windows":
+            self.skipTest("chmod POSIX non représentatif des ACL Windows")
+        cfg = write_config(self.tmp)
+        cfg.chmod(0o666)
+
+        proc = run_cli(["audit", "--config", str(cfg)])
+
+        self.assertEqual(proc.returncode, 2)
+        self.assertIn("configuration : permissions inscriptibles", proc.stdout)
+
+    def test_audit_refuse_proxy_global(self):
+        cfg = write_config(self.tmp, trusted_proxies='["0.0.0.0/0", "::/0"]')
+
+        proc = run_cli(["audit", "--config", str(cfg)])
+
+        self.assertEqual(proc.returncode, 2)
+        self.assertIn("proxy global non autorisé", proc.stdout)
+
+    def _tls_config_with_files(self, *, certificate_name="cert.pem"):
+        certificate = self.tmp / certificate_name
+        private_key = self.tmp / "key.pem"
+        certificate.write_text("certificate", encoding="ascii")
+        private_key.write_text("private key", encoding="ascii")
+        if platform_fs().backend_name != "windows":
+            certificate.chmod(0o644)
+            private_key.chmod(0o600)
+        cfg = load_config(
+            write_config(
+                self.tmp,
+                tls_enabled=True,
+                tls_certificate=str(certificate),
+                tls_private_key=str(private_key),
+            )
+        )
+        return cfg, certificate, private_key
+
+    def test_audit_accepte_certificat_public_et_verifie_dates(self):
+        if platform_fs().backend_name == "windows":
+            self.skipTest("ACL Windows native non couverte par ce test POSIX")
+        cfg, _, _ = self._tls_config_with_files()
+        decoded = {
+            "notBefore": "Jan  1 00:00:00 2020 GMT",
+            "notAfter": "Jan  1 00:00:00 2099 GMT",
+        }
+        with mock.patch("pasteberth.cli.ssl._ssl._test_decode_cert", return_value=decoded):
+            with mock.patch("pasteberth.server.create_tls_context"):
+                self.assertEqual(_audit_tls(cfg), [])
+
+    def test_audit_refuse_certificat_expire(self):
+        if platform_fs().backend_name == "windows":
+            self.skipTest("ACL Windows native non couverte par ce test POSIX")
+        cfg, _, _ = self._tls_config_with_files()
+        decoded = {
+            "notBefore": "Jan  1 00:00:00 2020 GMT",
+            "notAfter": "Jan  1 00:00:00 2021 GMT",
+        }
+        with mock.patch("pasteberth.cli.ssl._ssl._test_decode_cert", return_value=decoded):
+            with mock.patch("pasteberth.server.create_tls_context"):
+                errors = _audit_tls(cfg)
+        self.assertIn("certificat TLS : certificat expiré", errors)
+
+    def test_audit_refuse_certificat_pas_encore_valide(self):
+        if platform_fs().backend_name == "windows":
+            self.skipTest("ACL Windows native non couverte par ce test POSIX")
+        cfg, _, _ = self._tls_config_with_files()
+        decoded = {
+            "notBefore": "Jan  1 00:00:00 2099 GMT",
+            "notAfter": "Jan  1 00:00:00 2100 GMT",
+        }
+        with mock.patch("pasteberth.cli.ssl._ssl._test_decode_cert", return_value=decoded):
+            with mock.patch("pasteberth.server.create_tls_context"):
+                errors = _audit_tls(cfg)
+        self.assertIn("certificat TLS : certificat pas encore valide", errors)
+
+    def test_audit_refuse_correspondance_cle_certificat(self):
+        if platform_fs().backend_name == "windows":
+            self.skipTest("ACL Windows native non couverte par ce test POSIX")
+        cfg, _, _ = self._tls_config_with_files()
+        decoded = {
+            "notBefore": "Jan  1 00:00:00 2020 GMT",
+            "notAfter": "Jan  1 00:00:00 2099 GMT",
+        }
+        with mock.patch("pasteberth.cli.ssl._ssl._test_decode_cert", return_value=decoded):
+            with mock.patch(
+                "pasteberth.server.create_tls_context",
+                side_effect=ValueError("clé et certificat différents"),
+            ):
+                errors = _audit_tls(cfg)
+        self.assertTrue(any("configuration TLS invalide" in error for error in errors))
+
+    def test_audit_accepte_rotation_certificat_par_symlink_controle(self):
+        if platform_fs().backend_name == "windows":
+            self.skipTest("symlink et ACL Windows native non couverts ici")
+        cfg, certificate, _ = self._tls_config_with_files(certificate_name="cert-real.pem")
+        link = self.tmp / "cert-current.pem"
+        link.symlink_to(certificate)
+        cfg = load_config(
+            write_config(
+                self.tmp,
+                tls_enabled=True,
+                tls_certificate=str(link),
+                tls_private_key=str(self.tmp / "key.pem"),
+            )
+        )
+        decoded = {
+            "notBefore": "Jan  1 00:00:00 2020 GMT",
+            "notAfter": "Jan  1 00:00:00 2099 GMT",
+        }
+        with mock.patch("pasteberth.cli.ssl._ssl._test_decode_cert", return_value=decoded):
+            with mock.patch("pasteberth.server.create_tls_context"):
+                self.assertEqual(_audit_tls(cfg), [])
+
+    def test_audit_refuse_rotation_certificat_dans_parent_inscriptible(self):
+        if platform_fs().backend_name == "windows":
+            self.skipTest("ACL Windows native non couverte par ce test POSIX")
+        cfg, certificate, _ = self._tls_config_with_files(certificate_name="cert-real.pem")
+        unsafe = self.tmp / "unsafe"
+        unsafe.mkdir()
+        unsafe.chmod(0o777)
+        link = unsafe / "cert-current.pem"
+        link.symlink_to(certificate)
+        cfg = load_config(
+            write_config(
+                self.tmp,
+                tls_enabled=True,
+                tls_certificate=str(link),
+                tls_private_key=str(self.tmp / "key.pem"),
+            )
+        )
+        decoded = {
+            "notBefore": "Jan  1 00:00:00 2020 GMT",
+            "notAfter": "Jan  1 00:00:00 2099 GMT",
+        }
+        with mock.patch("pasteberth.cli.ssl._ssl._test_decode_cert", return_value=decoded):
+            with mock.patch("pasteberth.server.create_tls_context"):
+                errors = _audit_tls(cfg)
+        self.assertTrue(any("parent inscriptible par un tiers" in error for error in errors))
+
+    def test_audit_refuse_cle_privee_trop_lisible(self):
+        if platform_fs().backend_name == "windows":
+            self.skipTest("chmod POSIX non représentatif des ACL Windows")
+        cfg, _, private_key = self._tls_config_with_files()
+        private_key.chmod(0o644)
+
+        errors = _audit_tls(cfg)
+
+        self.assertTrue(any("clé privée TLS : permissions trop ouvertes" in error for error in errors))
+
     def test_audit_tls_ne_demande_pas_de_reverse_proxy(self):
         cfg = load_config(
             write_config(
@@ -465,6 +657,16 @@ class TestFilesystemDrop(unittest.TestCase):
         self.assertEqual(target.read_text(encoding="utf-8"), "version 1\n")
         self.assertTrue((self.zone / (source.name + ".json")).is_file())
         self.assertEqual(source.read_text(encoding="utf-8"), "version 1\n")
+
+    def test_drop_refuse_le_namespace_pbdel(self):
+        source = self.tmp / ".pbdel-0123456789abcdef01234567.json"
+        source.write_text("client data", encoding="utf-8")
+
+        proc = self._run_drop(source)
+
+        self.assertEqual(proc.returncode, 1)
+        self.assertIn("invalide", proc.stderr)
+        self.assertFalse((self.zone / source.name).exists())
 
     def test_remplacement_exige_l_option_expresse(self):
         source = self.tmp / "report.txt"

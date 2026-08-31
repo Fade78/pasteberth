@@ -549,6 +549,21 @@ code, kbd {
   cursor: pointer;
 }
 
+.raw-html-btn {
+  align-self: flex-start;
+  background: rgba(255, 123, 114, 0.16);
+  color: #ffd7d3;
+  border: 1px solid rgba(255, 123, 114, 0.45);
+  border-radius: 8px;
+  padding: 0.38rem 0.9rem;
+  font-size: 0.85rem;
+  font-weight: 650;
+  cursor: pointer;
+}
+
+.raw-html-btn:hover { background: rgba(255, 123, 114, 0.28); }
+.raw-html-btn:active { transform: translateY(1px); }
+
 .copy-btn:hover, .copy-image-btn:hover, .download-btn:hover, .clear-btn:hover, .zoom-btn:hover, .delete-btn:hover {
   background: rgba(127, 127, 127, 0.34);
 }
@@ -590,6 +605,7 @@ code, kbd {
 
 .copy-btn:focus-visible,
 .copy-image-btn:focus-visible,
+.raw-html-btn:focus-visible,
 .download-btn:focus-visible,
 .clear-btn:focus-visible,
 .zoom-btn:focus-visible,
@@ -814,7 +830,7 @@ dialog.dialog-fallback[open] {
 
 .pv-bar .ref { flex: 1; min-width: 200px; }
 .pv-actions { display: flex; flex-wrap: wrap; gap: 8px; }
-.pv-actions .copy-btn, .pv-actions .copy-image-btn, .pv-actions .download-btn, .pv-actions .clear-btn, .pv-actions .delete-btn { margin-top: 0; }
+.pv-actions .copy-btn, .pv-actions .copy-image-btn, .pv-actions .raw-html-btn, .pv-actions .download-btn, .pv-actions .clear-btn, .pv-actions .delete-btn { margin-top: 0; }
 
 /* ---------------------------------------------------------------- footer */
 

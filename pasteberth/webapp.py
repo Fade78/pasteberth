@@ -31,7 +31,7 @@ from pathlib import Path
 
 from pasteberth import __version__
 from pasteberth.auth import LoginRateLimiter, SessionStore, load_password_hash, verify_password
-from pasteberth.config import Config
+from pasteberth.config import Config, public_path
 from pasteberth.multipart import MultipartError, extract_boundary, parse_multipart
 from pasteberth.service import PasteService, ServiceError
 
@@ -219,6 +219,19 @@ _UPLOAD_MEMORY_BUDGET = 128 * 1024 * 1024
 _MAX_HEADER_BYTES = 64 * 1024
 
 
+def _safe_log_text(value: object, *, limit: int | None = None) -> str:
+    """Rend les contrôles HTTP inoffensifs dans les sorties texte des logs."""
+    text = str(value)
+    if limit is not None:
+        text = text[:limit]
+    return "".join(
+        f"\\x{ord(char):02x}"
+        if ord(char) < 0x20 or 0x7F <= ord(char) <= 0x9F
+        else char
+        for char in text
+    )
+
+
 def make_handler(cfg: Config, service: PasteService, sessions: SessionStore,
                  limiter: LoginRateLimiter) -> type[BaseHTTPRequestHandler]:
     """Construit la classe de handler avec les dépendances injectées."""
@@ -279,6 +292,9 @@ def make_handler(cfg: Config, service: PasteService, sessions: SessionStore,
 
         def setup(self) -> None:
             super().setup()
+            # The server admits a connection to a short pending-header pool
+            # before this handler can promote it after parsing the headers.
+            self.connection.settimeout(self.server.header_timeout)
             self.rfile = HeaderBudgetReader(self.rfile, _MAX_HEADER_BYTES)
 
         def parse_request(self) -> bool:
@@ -288,6 +304,16 @@ def make_handler(cfg: Config, service: PasteService, sessions: SessionStore,
                     self.close_connection = True
                     self._route_path = self.path.split("?")[0]
                     self._error(403, "forbidden_host", "hôte non autorisé")
+                    return False
+                if parsed and not self.server.promote_request(self.connection):
+                    self.close_connection = True
+                    self._route_path = self.path.split("?")[0]
+                    self._error(
+                        503,
+                        "server_busy",
+                        "capacité de requêtes temporairement épuisée",
+                        extra_headers=[("Retry-After", "1")],
+                    )
                     return False
                 return parsed
             except HeaderTooLarge:
@@ -378,6 +404,9 @@ def make_handler(cfg: Config, service: PasteService, sessions: SessionStore,
             if not cfg.allowed_hosts:
                 return True
             return host_name in cfg.allowed_hosts
+
+        def _public_path(self, path: str) -> str:
+            return public_path(cfg.url_prefix, path)
 
         def _expected_origin(self) -> str:
             scheme = self._scheme()
@@ -475,7 +504,7 @@ def make_handler(cfg: Config, service: PasteService, sessions: SessionStore,
         def _session_cookie(self, token: str) -> str:
             attrs = [
                 f"{COOKIE_NAME}={token}",
-                "Path=/",
+                f"Path={cfg.url_prefix or '/'}",
                 f"Max-Age={cfg.auth.session_ttl_hours * 3600}",
                 "HttpOnly",
                 "SameSite=Lax",
@@ -485,7 +514,13 @@ def make_handler(cfg: Config, service: PasteService, sessions: SessionStore,
             return "; ".join(attrs)
 
         def _clear_cookie(self) -> str:
-            attrs = [f"{COOKIE_NAME}=", "Path=/", "Max-Age=0", "HttpOnly", "SameSite=Lax"]
+            attrs = [
+                f"{COOKIE_NAME}=",
+                f"Path={cfg.url_prefix or '/'}",
+                "Max-Age=0",
+                "HttpOnly",
+                "SameSite=Lax",
+            ]
             if self._scheme() == "https":
                 attrs.append("Secure")
             return "; ".join(attrs)
@@ -516,11 +551,11 @@ def make_handler(cfg: Config, service: PasteService, sessions: SessionStore,
                 self.wfile.write(body)
             log.info(
                 "%s %s -> %d (%.1f ms) client=%s",
-                self.command,
-                self.path.split("?")[0][:200],
+                _safe_log_text(self.command),
+                _safe_log_text(self.path.split("?")[0], limit=200),
                 status,
                 (time.monotonic() - getattr(self, "_t_start", time.monotonic())) * 1000,
-                self._client_ip(),
+                _safe_log_text(self._client_ip()),
             )
 
         def _security_headers(self) -> tuple[tuple[str, str], ...]:
@@ -644,6 +679,23 @@ def make_handler(cfg: Config, service: PasteService, sessions: SessionStore,
                 self.close_connection = True
                 self._error(400, "invalid_request", "requête invalide")
                 return
+            if cfg.url_prefix:
+                if path == cfg.url_prefix:
+                    if self.command == "GET":
+                        query = self.path.split("?", 1)[1] if "?" in self.path else ""
+                        location = self._public_path("/")
+                        if "?" in self.path:
+                            location += "?" + query
+                        self._redirect(location)
+                    else:
+                        self._error(404, "not_found", "ressource introuvable")
+                    return
+                prefix = cfg.url_prefix + "/"
+                if not path.startswith(prefix):
+                    self._error(404, "not_found", "ressource introuvable")
+                    return
+                path = path[len(cfg.url_prefix):]
+                self._route_path = path
             if not self._host_allowed():
                 self._error(403, "forbidden_host", "hôte non autorisé")
                 return
@@ -655,8 +707,10 @@ def make_handler(cfg: Config, service: PasteService, sessions: SessionStore,
                     if method in ("POST", "DELETE") and not self._origin_allowed():
                         log.warning(
                             "origine refusée %s depuis %s",
-                            self.headers.get("Origin") or self.headers.get("Referer"),
-                            self._client_ip(),
+                            _safe_log_text(
+                                self.headers.get("Origin") or self.headers.get("Referer")
+                            ),
+                            _safe_log_text(self._client_ip()),
                         )
                         self._error(403, "forbidden_origin", "origine non autorisée")
                         return
@@ -675,11 +729,17 @@ def make_handler(cfg: Config, service: PasteService, sessions: SessionStore,
                 self._dispatch()
             except ClientAbort:
                 self.close_connection = True
-                log.info("client déconnecté pendant la requête (%s)", self.path[:100])
+                log.info(
+                    "client déconnecté pendant la requête (%s)",
+                    _safe_log_text(self.path, limit=100),
+                )
             except BrokenPipeError:
                 self.close_connection = True
             except Exception:
-                log.exception("erreur interne sur %s", self.path[:200])
+                log.exception(
+                    "erreur interne sur %s",
+                    _safe_log_text(self.path, limit=200),
+                )
                 if getattr(self, "_response_started", False):
                     self.close_connection = True
                     return
@@ -695,7 +755,15 @@ def make_handler(cfg: Config, service: PasteService, sessions: SessionStore,
         do_OPTIONS = do_GET
 
         def log_message(self, fmt: str, *args) -> None:  # neutralise le logger par défaut
-            log.debug("peer %s " + fmt, self.address_string(), *args)
+            try:
+                rendered = fmt % args
+            except (TypeError, ValueError):
+                rendered = f"{fmt} {args!r}"
+            log.debug(
+                "peer %s %s",
+                _safe_log_text(self.address_string()),
+                _safe_log_text(rendered),
+            )
 
         # ------------------------------------------------------ pages statiques
 
@@ -737,7 +805,7 @@ def make_handler(cfg: Config, service: PasteService, sessions: SessionStore,
 
         def _h_index(self) -> None:
             if not self._is_authenticated():
-                self._redirect("/login")
+                self._redirect(self._public_path("/login"))
                 return
             try:
                 data = (_TEMPLATES_DIR / "index.html").read_bytes()
@@ -745,6 +813,10 @@ def make_handler(cfg: Config, service: PasteService, sessions: SessionStore,
                 self._error(500, "internal", "interface indisponible")
                 return
             data = data.replace(b"__PASTEBERTH_VERSION__", __version__.encode("ascii"))
+            data = data.replace(
+                b"__PASTEBERTH_URL_PREFIX__",
+                cfg.url_prefix.encode("ascii"),
+            )
             self._finish(200, "text/html; charset=utf-8", data)
 
         def _redirect(self, location: str, status: int = 303) -> None:
@@ -758,7 +830,13 @@ def make_handler(cfg: Config, service: PasteService, sessions: SessionStore,
             for key, value in self._security_headers():
                 self.send_header(key, value)
             self.end_headers()
-            log.info("%s %s -> %d redirect %s", self.command, self.path, status, location)
+            log.info(
+                "%s %s -> %d redirect %s",
+                _safe_log_text(self.command),
+                _safe_log_text(self.path, limit=200),
+                status,
+                _safe_log_text(location, limit=200),
+            )
 
         # -------------------------------------------------------------- login
 
@@ -773,21 +851,24 @@ def make_handler(cfg: Config, service: PasteService, sessions: SessionStore,
                 if message
                 else ""
             )
-            page = template.replace("__ERROR_BLOCK__", block)
+            page = template.replace("__ERROR_BLOCK__", block).replace(
+                "__PASTEBERTH_URL_PREFIX__",
+                html.escape(cfg.url_prefix, quote=True),
+            )
             self._finish(status, "text/html; charset=utf-8", page.encode("utf-8"))
 
         def _h_login_page(self) -> None:
             if not cfg.auth.enabled:
-                self._redirect("/")
+                self._redirect(self._public_path("/"))
                 return
             if self._is_authenticated():
-                self._redirect("/")
+                self._redirect(self._public_path("/"))
                 return
             self._render_login(200)
 
         def _h_login_post(self) -> None:
             if not cfg.auth.enabled:
-                self._redirect("/")
+                self._redirect(self._public_path("/"))
                 return
             ip = self._client_ip()
             acquired = False
@@ -842,13 +923,13 @@ def make_handler(cfg: Config, service: PasteService, sessions: SessionStore,
                 if password and verify_password(password, stored_hash):
                     limiter.complete(ip, success=True)
                     released = True
-                    log.info("connexion réussie (%s)", ip)
+                    log.info("connexion réussie (%s)", _safe_log_text(ip))
                     self._do_login_success()
                 else:
                     time.sleep(0.5)
                     limiter.complete(ip, success=False)
                     released = True
-                    log.warning("échec de connexion (%s)", ip)
+                    log.warning("échec de connexion (%s)", _safe_log_text(ip))
                     self._render_login(401, "Incorrect password.")
             finally:
                 if acquired and not released:
@@ -858,7 +939,7 @@ def make_handler(cfg: Config, service: PasteService, sessions: SessionStore,
         def _do_login_success(self) -> None:
             token = sessions.create()
             self.send_response(303)
-            self.send_header("Location", "/")
+            self.send_header("Location", self._public_path("/"))
             self.send_header("Set-Cookie", self._session_cookie(token))
             self.send_header("Content-Length", "0")
             self.send_header("Cache-Control", "no-store")
@@ -871,7 +952,7 @@ def make_handler(cfg: Config, service: PasteService, sessions: SessionStore,
         def _h_logout(self) -> None:
             sessions.revoke(self._session_token())
             self.send_response(303)
-            self.send_header("Location", "/login")
+            self.send_header("Location", self._public_path("/login"))
             self.send_header("Set-Cookie", self._clear_cookie())
             self.send_header("Content-Length", "0")
             self.send_header("Cache-Control", "no-store")

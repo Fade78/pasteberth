@@ -26,7 +26,7 @@ from tests.helpers import (
     write_config,
     LiveServer,
 )
-from pasteberth.webapp import BodyMemoryBudget
+from pasteberth.webapp import BodyMemoryBudget, _safe_log_text
 
 PASSWORD = "mot-de-passe-de-test-123"
 FILENAME_RE = re.compile(r"^\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}_[0-9a-f]{6}\.(png|jpg|webp)$")
@@ -64,6 +64,7 @@ class Base(unittest.TestCase):
             auth_enabled=self.auth,
             password=self.password,
             max_upload_size=self.config_kwargs.get("max_upload_size", "20MB"),
+            url_prefix=self.config_kwargs.get("url_prefix"),
             trusted_proxies=self.config_kwargs.get("trusted_proxies", '["127.0.0.1", "::1"]'),
             allowed_hosts=self.config_kwargs.get("allowed_hosts"),
             accept_bin=self.config_kwargs.get("accept_bin"),
@@ -72,19 +73,24 @@ class Base(unittest.TestCase):
             groups=self.config_kwargs.get("groups"),
         )
         self.tmp = tmp
+        self.url_prefix = self.config_kwargs.get("url_prefix") or ""
         self.server = LiveServer(cfg_path)
         self.addCleanup(self.server.stop)
         self.addCleanup(self._tmp.cleanup)
         if self.auth:
             # login avec le mot de passe défini par la classe de test
             status, headers, _ = request(
-                self.server.port, "POST", "/login",
+                self.server.port,
+                "POST",
+                f"{self.url_prefix}/login" if self.url_prefix else "/login",
                 body=f"password={self.password}".encode(),
                 headers={"Content-Type": "application/x-www-form-urlencoded"},
             )
             assert status == 303, f"login échoué : {status}"
-            self.cookie = headers["set-cookie"].split(";", 1)[0]
+            self.set_cookie_header = headers["set-cookie"]
+            self.cookie = self.set_cookie_header.split(";", 1)[0]
         else:
+            self.set_cookie_header = None
             self.cookie = None
 
     def req(self, method, path, body=None, headers=None, cookie="default"):
@@ -138,6 +144,8 @@ class TestPublic(Base):
 
 
 class TestConfigurationProxyParDefaut(Base):
+    auth = True
+    password = PASSWORD
     config_kwargs = {"trusted_proxies": None}
 
     def test_health_avec_proxy_par_defaut(self):
@@ -146,13 +154,15 @@ class TestConfigurationProxyParDefaut(Base):
         self.assertEqual(json_of(body), {"ok": True})
 
     def test_host_distant_accepte_sans_allowlist_configuree(self):
-        status, _, body = self.req(
-            "GET",
-            "/api/health",
-            headers={"Host": "remote-station.example"},
-        )
-        self.assertEqual(status, 200)
-        self.assertEqual(json_of(body), {"ok": True})
+        for host in ("remote-station.example", "second-station.example"):
+            with self.subTest(host=host):
+                status, _, body = self.req(
+                    "GET",
+                    "/api/health",
+                    headers={"Host": host},
+                )
+                self.assertEqual(status, 200)
+                self.assertEqual(json_of(body), {"ok": True})
 
 
 class TestProxySpoofingParDefaut(Base):
@@ -189,6 +199,15 @@ class TestModeAnonymeLoopback(Base):
         self.assertNotIn(b"__PASTEBERTH_VERSION__", body)
         self.assertEqual(headers["cache-control"], "no-store")
 
+    def test_hote_non_loopback_refuse(self):
+        status, _, body = self.req(
+            "GET",
+            "/api/health",
+            headers={"Host": "attacker.example"},
+        )
+        self.assertEqual(status, 403)
+        self.assertEqual(json_of(body)["error"]["code"], "forbidden_host")
+
     def test_flux_complet_anonyme(self):
         png = make_png(10, 5)
         body, ctype = build_multipart(data=png)
@@ -205,6 +224,98 @@ class TestModeAnonymeLoopback(Base):
         self.assertEqual(data, png)
         self.assertEqual(headers["content-type"], "image/png")
         self.assertEqual(headers["cache-control"], "no-store")
+
+
+class TestUrlPrefix(Base):
+    config_kwargs = {"url_prefix": "/paste"}
+
+    def test_route_et_assets_sous_prefixe(self):
+        status, headers, body = self.req("GET", "/paste?next=%2Fapi%2Fhealth")
+        self.assertEqual(status, 303)
+        self.assertEqual(headers["location"], "/paste/?next=%2Fapi%2Fhealth")
+
+        status, _, body = self.req("GET", "/paste/")
+        self.assertEqual(status, 200)
+        self.assertIn(b'/paste/static/app.js', body)
+        self.assertNotIn(b'href="/static/style.css"', body)
+
+        status, _, body = self.req("GET", "/paste/api/health")
+        self.assertEqual(status, 200)
+        self.assertEqual(json_of(body), {"ok": True})
+
+        status, _, body = self.req("GET", "/api/health")
+        self.assertEqual(status, 404)
+        self.assertNotIn(b'"ok"', body)
+
+        status, _, _ = self.req("GET", "/")
+        self.assertEqual(status, 404)
+
+        status, _, _ = self.req("GET", "/paste/static/app.js")
+        self.assertEqual(status, 200)
+
+    def test_upload_et_preview_url_sont_sous_prefixe(self):
+        body, ctype = build_multipart(data=make_png(10, 5))
+        status, _, response = self.req(
+            "POST",
+            "/paste/api/zones/default/images",
+            body=body,
+            headers={"Content-Type": ctype},
+        )
+        self.assertEqual(status, 201)
+        item = json_of(response)
+        self.assertTrue(item["preview_url"].startswith("/paste/previews/"))
+
+        status, _, preview = self.req("GET", item["preview_url"])
+        self.assertEqual(status, 200)
+        self.assertEqual(preview, make_png(10, 5))
+
+
+class TestUrlPrefixAuth(Base):
+    auth = True
+    password = PASSWORD
+    config_kwargs = {"url_prefix": "/paste"}
+
+    def test_cookie_et_redirections_sont_scopes(self):
+        self.assertIn("Path=/paste", self.set_cookie_header)
+        status, _, body = self.req("GET", "/paste/login", cookie=None)
+        self.assertEqual(status, 200)
+        self.assertIn(b'action="/paste/login"', body)
+        self.assertIn(b'/paste/static/favicon.svg', body)
+
+        status, headers, _ = self.req("GET", "/paste/login")
+        self.assertEqual(status, 303)
+        self.assertEqual(headers["location"], "/paste/")
+
+        status, headers, _ = self.req("POST", "/paste/logout")
+        self.assertEqual(status, 303)
+        self.assertEqual(headers["location"], "/paste/login")
+        self.assertIn("Path=/paste", headers["set-cookie"])
+
+    def test_origin_ne_contient_pas_le_prefixe(self):
+        body, ctype = build_multipart(data=make_png())
+        status, _, _ = self.req(
+            "POST",
+            "/paste/api/zones/default/images",
+            body=body,
+            headers={
+                "Content-Type": ctype,
+                "Origin": f"http://127.0.0.1:{self.server.port}",
+            },
+        )
+        self.assertEqual(status, 201)
+
+        body, ctype = build_multipart(data=make_png())
+        status, _, response = self.req(
+            "POST",
+            "/paste/api/zones/default/images",
+            body=body,
+            headers={
+                "Content-Type": ctype,
+                "Origin": f"http://127.0.0.1:{self.server.port}/paste",
+            },
+        )
+        self.assertEqual(status, 403)
+        self.assertEqual(json_of(response)["error"]["code"], "forbidden_origin")
 
 class TestAuthentification(Base):
     auth = True
@@ -507,6 +618,25 @@ class TestUploadsFormats(Base):
                                    headers={"Content-Type": ctype})
         self.assertEqual(status, 201)
         self.assertRegex(json_of(resp)["filename"], FILENAME_RE)
+
+    def test_nom_pbdel_reserve_refuse_sans_ecriture(self):
+        filename = ".pbdel-0123456789abcdef01234567.json"
+        body, ctype = build_multipart(
+            filename=filename,
+            data=b"transaction-looking client data",
+            content_type="application/json",
+            extra_fields={"preserve_name": "1"},
+        )
+        status, _, response = self.req(
+            "POST",
+            "/api/zones/default/images",
+            body=body,
+            headers={"Content-Type": ctype},
+        )
+        self.assertEqual(status, 400)
+        self.assertEqual(json_of(response)["error"]["code"], "invalid_filename")
+        self.assertFalse((self.zones_dirs["default"] / filename).exists())
+        self.assertFalse((self.zones_dirs["default"] / f"{filename}.json").exists())
 
     def test_html_texte_brut_accepte(self):
         status, item = self._upload_raw("default", b"<p>hello</p>", "text/html")
@@ -1663,6 +1793,34 @@ class TestEnTetesSecurite(Base):
             self.assertEqual(headers["x-content-type-options"], "nosniff")
             self.assertEqual(headers["x-frame-options"], "DENY")
             self.assertEqual(headers["referrer-policy"], "no-referrer")
+
+
+class TestLogsHttp(Base):
+    def test_controles_http_echappes_dans_les_logs(self):
+        self.assertEqual(
+            _safe_log_text("ok\x00\r\n\x1b[2J\x7f\x80"),
+            "ok\\x00\\x0d\\x0a\\x1b[2J\\x7f\\x80",
+        )
+        captured = []
+        handler = logging.Handler()
+        handler.emit = lambda record: captured.append(record.getMessage())
+        logger = logging.getLogger("pasteberth.http")
+        previous_level = logger.level
+        logger.setLevel(logging.DEBUG)
+        logger.addHandler(handler)
+        try:
+            status, _, _ = self.req(
+                "POST",
+                "/api/zones/default/images",
+                headers={"Origin": "http://attacker.example/\x1b[2J"},
+            )
+        finally:
+            logger.removeHandler(handler)
+            logger.setLevel(previous_level)
+        self.assertEqual(status, 403)
+        joined = "\n".join(captured)
+        self.assertNotIn("\x1b", joined)
+        self.assertIn("\\x1b[2J", joined)
 
 
 class TestFuiteSecret(Base):

@@ -2,6 +2,26 @@
 
 This file records user-visible changes to Pasteberth.
 
+## [1.6.1] - 2026-09-01
+
+### Security and reliability
+
+- bounded live authenticated sessions to 4096 by default, with configurable
+  FIFO eviction;
+- separated pending HTTP connections from active requests and hardened request
+  timeout, logging, TLS configuration, and reverse-proxy path handling;
+- bound storage operations to stable directory identities and reserved internal
+  filename namespaces during recovery;
+- sanitized HTML clipboard copies by default while retaining an explicit raw
+  HTML action and preserving the stored source unchanged.
+
+### Compatibility
+
+- repository wrappers now use Python safe-path mode and do not inherit an
+  ambient `PYTHONPATH`;
+- mounted deployments can use a configured `url_prefix` without changing the
+  browser's Origin semantics.
+
 ## [1.6.0] - 2026-08-31
 
 ### Added

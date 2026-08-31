@@ -17,6 +17,7 @@ from collections.abc import Iterable
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from pasteberth.auth import DEFAULT_MAX_SESSIONS, MAX_SESSIONS
 from pasteberth.images import HARD_MAX_PIXELS, MAX_PIXELS
 from pasteberth.platformfs import UnsupportedFilesystemError, platform_fs
 
@@ -38,6 +39,7 @@ _COLOR_RE = re.compile(r"^#[0-9a-fA-F]{6}$")
 _LOG_LEVELS = {"DEBUG", "INFO", "WARNING", "ERROR"}
 _GROUP_SELECTIONS = {"all", "pattern", "other"}
 _GROUP_LAYOUTS = {"area", "tab"}
+_URL_PREFIX_RE = re.compile(r"/(?:[A-Za-z0-9._~-]+)(?:/[A-Za-z0-9._~-]+)*")
 
 DEFAULT_MAX_UPLOAD_BYTES = 20 * 1024**2
 MAX_UPLOAD_BYTES = 50 * 1024**2
@@ -99,6 +101,7 @@ def is_loopback_address(address: str) -> bool:
 class AuthConfig:
     enabled: bool = True
     session_ttl_hours: int = 72
+    max_sessions: int = DEFAULT_MAX_SESSIONS
     password_file: Path | None = None
 
 
@@ -145,6 +148,7 @@ class Config:
     max_image_pixels: int
     trusted_proxies: tuple[ipaddress.IPv4Network | ipaddress.IPv6Network, ...]
     allowed_hosts: tuple[str, ...]
+    url_prefix: str
     allow_unauthenticated_local: bool
     allow_unauthenticated_remote: bool
     allow_insecure_http_remote: bool
@@ -236,7 +240,7 @@ def _parse_auth(raw: object, warnings: list[str]) -> AuthConfig:
     table = _expect_table(raw, "[auth]")
     _warn_unknown(
         table,
-        {"enabled", "session_ttl_hours", "password_file"},
+        {"enabled", "session_ttl_hours", "max_sessions", "password_file"},
         "[auth]",
         warnings,
     )
@@ -244,6 +248,15 @@ def _parse_auth(raw: object, warnings: list[str]) -> AuthConfig:
     ttl = table.get("session_ttl_hours", 72)
     if isinstance(ttl, bool) or not isinstance(ttl, int) or not (1 <= ttl <= 24 * 365):
         raise ConfigError("[auth]: 'session_ttl_hours' doit être un entier entre 1 et 8760")
+    max_sessions = table.get("max_sessions", DEFAULT_MAX_SESSIONS)
+    if (
+        isinstance(max_sessions, bool)
+        or not isinstance(max_sessions, int)
+        or not (1 <= max_sessions <= MAX_SESSIONS)
+    ):
+        raise ConfigError(
+            f"[auth]: 'max_sessions' doit être un entier entre 1 et {MAX_SESSIONS}"
+        )
     password_file_raw = table.get("password_file")
     password_file = None
     if password_file_raw is not None:
@@ -262,6 +275,7 @@ def _parse_auth(raw: object, warnings: list[str]) -> AuthConfig:
     return AuthConfig(
         enabled=enabled,
         session_ttl_hours=ttl,
+        max_sessions=max_sessions,
         password_file=password_file,
     )
 
@@ -514,6 +528,31 @@ def _parse_allowed_hosts(raw: object) -> tuple[str, ...]:
     return tuple(hosts)
 
 
+def _parse_url_prefix(raw: object) -> str:
+    """Valide un préfixe de publication sans ambiguïté de chemin."""
+    if raw is None or raw == "":
+        return ""
+    if not isinstance(raw, str) or not _URL_PREFIX_RE.fullmatch(raw):
+        raise ConfigError(
+            "'url_prefix' doit être vide ou un chemin comme '/paste' "
+            "sans slash final, query ou fragment"
+        )
+    if any(segment in {".", ".."} for segment in raw.split("/")[1:]):
+        raise ConfigError("'url_prefix' ne peut pas contenir de segment '.' ou '..'")
+    return raw
+
+
+def public_path(prefix: str, path: str) -> str:
+    """Construit un chemin public à partir d'un chemin applicatif absolu."""
+    if not path.startswith("/"):
+        raise ValueError("un chemin public doit commencer par '/'")
+    if not prefix:
+        return path
+    if path == prefix or path.startswith(prefix + "/"):
+        return path
+    return prefix + ("/" if path == "/" else path)
+
+
 def load_config(path: Path) -> Config:
     """Charge, valide et retourne la configuration."""
     path = Path(path)
@@ -534,8 +573,8 @@ def load_config(path: Path) -> Config:
     _warn_unknown(
         data,
         {"listen_address", "port", "max_upload_size", "trusted_proxies",
-         "max_image_pixels",
-         "allowed_hosts",
+          "max_image_pixels",
+          "allowed_hosts", "url_prefix",
          "allow_unauthenticated_local", "allow_unauthenticated_remote",
          "allow_insecure_http_remote", "accept_bin", "accept_img", "accept_doc",
          "auth", "tls",
@@ -571,6 +610,7 @@ def load_config(path: Path) -> Config:
     # The public hostname is deployment-specific; an absent key preserves the
     # multi-station wildcard compatibility, while a non-empty list is strict.
     allowed_hosts = _parse_allowed_hosts(data.get("allowed_hosts"))
+    url_prefix = _parse_url_prefix(data.get("url_prefix"))
     allow_unauth_local = _get_bool(
         data, "allow_unauthenticated_local", "config", default=False
     )
@@ -609,6 +649,7 @@ def load_config(path: Path) -> Config:
         max_image_pixels=max_image_pixels,
         trusted_proxies=trusted_proxies,
         allowed_hosts=allowed_hosts,
+        url_prefix=url_prefix,
         allow_unauthenticated_local=allow_unauth_local,
         allow_unauthenticated_remote=allow_unauth_remote,
         allow_insecure_http_remote=allow_insecure_http_remote,
@@ -640,6 +681,11 @@ def check_startup_policy(cfg: Config) -> bool:
         )
     if cfg.auth.enabled:
         return loopback_only
+    if not cfg.allowed_hosts:
+        raise ConfigError(
+            "refus de démarrer : authentification désactivée avec 'allowed_hosts' vide. "
+            "Renseignez les hosts autorisés ou activez [auth]."
+        )
     if loopback_only and cfg.allow_unauthenticated_local:
         return loopback_only
     if not loopback_only and cfg.allow_unauthenticated_remote:
@@ -694,7 +740,8 @@ def build_default_config() -> Config:
         max_upload_bytes=DEFAULT_MAX_UPLOAD_BYTES,
         max_image_pixels=MAX_PIXELS,
         trusted_proxies=(),
-        allowed_hosts=(),
+        allowed_hosts=("localhost", "127.0.0.1", "::1"),
+        url_prefix="",
         allow_unauthenticated_local=True,
         allow_unauthenticated_remote=False,
         allow_insecure_http_remote=False,

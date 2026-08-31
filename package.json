@@ -3,7 +3,9 @@
   "private": true,
   "scripts": {
     "test:all": "python3 tests/run_all.py",
-    "test:e2e": "playwright test"
+    "test:e2e": "playwright test tests/e2e/app.spec.js",
+    "test:e2e:mounted": "PASTEBERTH_E2E_PREFIX=/paste playwright test tests/e2e/mounted.spec.js",
+    "test:e2e:all": "npm run test:e2e && npm run test:e2e:mounted"
   },
   "devDependencies": {
     "@playwright/test": "1.58.0"

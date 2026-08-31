@@ -38,6 +38,17 @@ async function dispatchTextPaste(page, text, type = "text/plain") {
   }, { text, type });
 }
 
+async function readClipboardHtml(page) {
+  return page.evaluate(async () => {
+    for (const item of await navigator.clipboard.read({ unsanitized: ["text/html"] })) {
+      if (item.types.includes("text/html")) {
+        return (await item.getType("text/html")).text();
+      }
+    }
+    return null;
+  });
+}
+
 async function dispatchTextPasteFlavors(page, flavors) {
   await page.evaluate((flavors) => {
     const dataTransfer = new DataTransfer();
@@ -900,6 +911,61 @@ test("colle du texte et l'affiche", async ({ page }) => {
   await expect(page.locator("#pv-copy-image")).toHaveText("Copy Text");
   await expect(page.locator("#pv-download")).toHaveText("Download MD");
   await page.getByRole("button", { name: "Close" }).click();
+});
+
+test("assainit la copie HTML et réserve la copie brute à l'action explicite", async ({ page, browserName }) => {
+  test.skip(browserName !== "chromium", "ClipboardItem HTML support is validated in Chromium");
+  await openApp(page);
+  const defaultZone = page.locator('[data-zone="default"]');
+  await defaultZone.getByRole("button", { name: "Select zone Default" }).click();
+
+  const source = [
+    "<!doctype html><html><head><style>p { color: red }</style></head><body>",
+    '<p onclick="alert(1)">safe <a href="javascript:alert(1)">link</a></p>',
+    '<img alt="remote" src="https://remote.invalid/image.png">',
+    `<img alt="embedded" src="data:image/png;base64,${ONE_PIXEL_PNG}">`,
+    "<script>alert(1)</script><custom-wrapper><script>nested(1)</script></custom-wrapper></body></html>",
+  ].join("");
+  await dispatchTextPaste(page, source, "text/html");
+
+  await expect(defaultZone.locator(".fname")).toHaveText(/\.html$/);
+  const filename = await defaultZone.locator(".fname").textContent();
+  await defaultZone.locator(".file-box").click();
+  await expect(page.locator("#pv")).toBeVisible();
+  await expect(page.locator("#pv-text")).toHaveText("safe link");
+  await expect(page.locator("#pv-copy-raw")).toBeVisible();
+
+  await page.locator("#pv-copy-image").click();
+  await expect(page.locator("#pv-toast")).toContainText("Text copied");
+  const sanitized = await readClipboardHtml(page);
+  expect(sanitized).toContain("safe link");
+  expect(sanitized).toContain(`data:image/png;base64,${ONE_PIXEL_PNG}`);
+  expect(sanitized).not.toContain("<script");
+  expect(sanitized).not.toContain("onclick");
+  expect(sanitized).not.toContain("javascript:");
+  expect(sanitized).not.toContain("remote.invalid");
+
+  await page.locator("#pv-copy-raw").click();
+  await expect(page.locator("#pv-toast")).toContainText("Raw HTML copied");
+  const raw = await readClipboardHtml(page);
+  expect(raw).toContain("<script>alert(1)</script>");
+  expect(raw).toContain("onclick=\"alert(1)\"");
+  expect(raw).toContain("remote.invalid");
+
+  const stored = await page.request.get(`/previews/default/${encodeURIComponent(filename)}`);
+  expect(await stored.text()).toBe(source);
+});
+
+test("n'affiche pas de copie brute pour un HTML déjà sûr", async ({ page }) => {
+  await openApp(page);
+  const defaultZone = page.locator('[data-zone="default"]');
+  await defaultZone.getByRole("button", { name: "Select zone Default" }).click();
+  await dispatchTextPaste(page, "<p>safe <strong>html</strong></p>", "text/html");
+
+  await expect(defaultZone.locator(".fname")).toHaveText(/\.html$/);
+  await defaultZone.locator(".file-box").click();
+  await expect(page.locator("#pv")).toBeVisible();
+  await expect(page.locator("#pv-copy-raw")).toHaveCount(0);
 });
 
 test("les previews restent utilisables sur un écran étroit", async ({ page }) => {

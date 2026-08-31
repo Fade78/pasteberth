@@ -19,7 +19,9 @@ import mimetypes
 import os
 import secrets
 import ssl
+import stat
 import sys
+import time
 from pathlib import Path
 import socket
 
@@ -129,6 +131,7 @@ def _cmd_serve(args: argparse.Namespace) -> int:
     sessions = SessionStore(
         cfg.auth.session_ttl_hours * 3600,
         password_file=cfg.password_file() if cfg.auth.enabled else None,
+        max_sessions=cfg.auth.max_sessions,
     )
     limiter = LoginRateLimiter()
     handler = _build_handler(cfg, service, sessions, limiter)
@@ -319,9 +322,12 @@ listen_address = "127.0.0.1"
 port = 8765
 max_upload_size = "20MiB"
 max_image_pixels = 25000000        # structural pixel budget; maximum 50 MP
+# Public path prefix: empty for root, or e.g. "/paste" behind a reverse proxy.
+url_prefix = ""
 # Trust no forwarded headers by default; list only the actual reverse proxy IP.
 trusted_proxies = []
-# Empty list = wildcard (Host check disabled); prefer listing every public hostname.
+# With authentication enabled, an empty list accepts any public hostname.
+# Anonymous configurations must list their controlled hostnames explicitly.
 allowed_hosts = []
 allow_unauthenticated_local = false
 allow_unauthenticated_remote = false
@@ -343,6 +349,7 @@ enabled = false
 [auth]
 enabled = true
 session_ttl_hours = 72
+max_sessions = 4096
 # password_file = "/absolute/path/to/passwd"
 
 [[zones]]
@@ -510,6 +517,90 @@ def _audit_zone(cfg, zone) -> tuple[list[str], list[str]]:
     return errors, warnings
 
 
+def _audit_controlled_parents(fs, path: Path) -> str | None:
+    """Refuse les parents qui permettent à un tiers de remplacer une cible."""
+    current = path
+    while True:
+        try:
+            audit = fs.audit_permissions(current, directory=True)
+        except (OSError, UnsupportedFilesystemError) as exc:
+            return f"parent inaccessible ({current}: {exc})"
+        mode = audit.mode
+        if mode is not None:
+            world_writable_sticky = bool(mode & stat.S_IWOTH and mode & stat.S_ISVTX)
+            group_writable_sticky = bool(mode & stat.S_IWGRP and mode & stat.S_ISVTX)
+            if (mode & stat.S_IWGRP and not group_writable_sticky) or (
+                mode & stat.S_IWOTH and not world_writable_sticky
+            ):
+                return f"parent inscriptible par un tiers : {current}"
+        elif not audit.private:
+            return f"ACL non privée sur le parent : {current}"
+        if current == Path(current.anchor):
+            return None
+        current = current.parent
+
+
+def _audit_regular_file(
+    path: Path,
+    label: str,
+    *,
+    require_owner: bool = False,
+    require_private: bool = False,
+    allow_symlink: bool = False,
+) -> tuple[list[str], Path | None]:
+    """Audite un fichier et retourne la cible résolue utilisable par OpenSSL."""
+    fs = platform_fs()
+    path = Path(path).expanduser()
+    if not path.is_absolute():
+        path = Path.cwd() / path
+    errors: list[str] = []
+    try:
+        symlink = fs.first_symlink_component(path)
+    except (OSError, ValueError, UnsupportedFilesystemError) as exc:
+        return [f"{label} : inspection impossible ({exc})"], None
+    target = path
+    if symlink is not None:
+        if not allow_symlink:
+            return [f"{label} : lien symbolique refusé : {symlink}"], None
+        try:
+            target = path.resolve(strict=True)
+        except (OSError, RuntimeError) as exc:
+            return [f"{label} : cible du lien illisible ({exc})"], None
+
+    for parent in dict.fromkeys((path.parent, target.parent)):
+        parent_error = _audit_controlled_parents(fs, parent)
+        if parent_error:
+            errors.append(f"{label} : {parent_error}")
+    try:
+        with fs.open_directory(target.parent) as parent:
+            info = fs.entry_info(parent, target.name)
+    except FileNotFoundError:
+        return errors + [f"{label} absent : {path}"], None
+    except (OSError, ValueError, UnsupportedFilesystemError) as exc:
+        return errors + [f"{label} : inspection impossible ({exc})"], None
+    if info is None:
+        return errors + [f"{label} absent : {path}"], None
+    if info.is_symlink or not info.is_regular:
+        return errors + [f"{label} : fichier régulier requis : {path}"], None
+    mode = info.mode
+    if mode is not None and mode & (stat.S_IWGRP | stat.S_IWOTH):
+        errors.append(f"{label} : permissions inscriptibles par un tiers : {path}")
+    if require_owner and not fs.is_owned(info):
+        errors.append(f"{label} : fichier non détenu par le processus : {path}")
+    if require_private:
+        try:
+            audit = fs.audit_permissions(target, directory=False)
+        except (OSError, UnsupportedFilesystemError) as exc:
+            errors.append(f"{label} : permissions illisibles ({exc})")
+        else:
+            if not audit.private:
+                detail = oct(audit.mode) if audit.mode is not None else (audit.detail or "ACL")
+                errors.append(f"{label} : permissions trop ouvertes ({detail}) : {path}")
+    if not fs.check_access(target, read=True):
+        errors.append(f"{label} : fichier non lisible : {path}")
+    return errors, target
+
+
 def _audit_listener(cfg) -> tuple[str | None, str | None]:
     if cfg.port < 1024 and getattr(os, "geteuid", lambda: 1)() != 0:
         return f"port privilégié inaccessible sans root : {cfg.port}", None
@@ -540,16 +631,46 @@ def _audit_listener(cfg) -> tuple[str | None, str | None]:
     return None, None
 
 
-def _audit_tls(cfg) -> str | None:
+def _audit_tls(cfg) -> list[str]:
     if not cfg.tls.enabled:
-        return None
+        return []
     from pasteberth.server import create_tls_context
 
-    try:
-        create_tls_context(cfg.tls.certificate, cfg.tls.private_key)
-    except (OSError, ssl.SSLError, ValueError) as exc:
-        return f"configuration TLS invalide : {exc}"
-    return None
+    errors: list[str] = []
+    certificate_errors, certificate = _audit_regular_file(
+        cfg.tls.certificate,
+        "certificat TLS",
+        allow_symlink=True,
+    )
+    key_errors, private_key = _audit_regular_file(
+        cfg.tls.private_key,
+        "clé privée TLS",
+        require_owner=True,
+        require_private=True,
+    )
+    errors.extend(certificate_errors)
+    errors.extend(key_errors)
+    if certificate is not None:
+        try:
+            decoded = ssl._ssl._test_decode_cert(str(certificate))
+            not_before = ssl.cert_time_to_seconds(decoded["notBefore"])
+            not_after = ssl.cert_time_to_seconds(decoded["notAfter"])
+        except (KeyError, OSError, ssl.SSLError, ValueError) as exc:
+            errors.append(f"certificat TLS : dates illisibles ({exc})")
+        else:
+            now = time.time()
+            if now < not_before:
+                errors.append("certificat TLS : certificat pas encore valide")
+            if now >= not_after:
+                errors.append("certificat TLS : certificat expiré")
+    if certificate is not None and private_key is not None:
+        try:
+            create_tls_context(certificate, private_key)
+        except (OSError, ssl.SSLError, ValueError) as exc:
+            errors.append(f"configuration TLS invalide : {exc}")
+    elif not any(error.startswith("configuration TLS invalide") for error in errors):
+        errors.append("configuration TLS invalide : certificat ou clé indisponible")
+    return errors
 
 
 def _network_warning(cfg) -> str | None:
@@ -636,6 +757,14 @@ def _cmd_audit(args: argparse.Namespace) -> int:
             return 2
     warnings.extend(cfg.warnings)
 
+    if config_path is not None:
+        config_errors, _ = _audit_regular_file(
+            cfg.config_path,
+            "configuration",
+            require_owner=True,
+        )
+        errors.extend(config_errors)
+
     if sys.version_info < (3, 11):
         errors.append("Python 3.11 ou plus récent est requis")
     uses_default_storage = any(
@@ -662,6 +791,13 @@ def _cmd_audit(args: argparse.Namespace) -> int:
             "allowed_hosts vide : contrôle de Host désactivé (wildcard) ; "
             "listez vos noms d'hôte exposés pour le réactiver"
         )
+    broad_proxies = [str(network) for network in cfg.trusted_proxies if network.prefixlen == 0]
+    if broad_proxies:
+        errors.append(
+            "trusted_proxies trop large(s) : "
+            + ", ".join(broad_proxies)
+            + " (proxy global non autorisé par l'audit)"
+        )
     if not (cfg.accept_bin or cfg.accept_img or cfg.accept_doc):
         warnings.append(
             "accept_bin, accept_img et accept_doc sont tous à false : "
@@ -686,9 +822,7 @@ def _cmd_audit(args: argparse.Namespace) -> int:
         errors.append(listener_error)
     if listener_warning:
         warnings.append(listener_warning)
-    tls_error = _audit_tls(cfg)
-    if tls_error:
-        errors.append(tls_error)
+    errors.extend(_audit_tls(cfg))
 
     for message in warnings:
         print(f"AVERTISSEMENT : {message}")

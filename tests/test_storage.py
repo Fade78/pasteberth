@@ -1,5 +1,6 @@
 """Tests du stockage : noms uniques, sidecars, rétention, ownership."""
 import json
+import multiprocessing
 import os
 import stat
 import tempfile
@@ -11,6 +12,7 @@ from unittest import mock
 import pasteberth.storage as storage_module
 from pasteberth.images import ImageInfo
 from pasteberth.storage import (
+    DestinationBusyError,
     DestinationError,
     LocalDestination,
     ReplacementRequiredError,
@@ -23,6 +25,21 @@ from pasteberth.platformfs import VolumeSpace, platform_fs
 from tests.helpers import make_png, running_under_wine
 
 INFO = lambda w=4, h=3: ImageInfo(fmt="png", width=w, height=h)
+
+
+def _try_stable_zone_lock(lock_root: str, lock_name: str, result) -> None:
+    try:
+        fs = platform_fs()
+        with fs.open_directory(Path(lock_root)) as root:
+            with fs.acquire_lock(
+                root,
+                name=lock_name,
+                exclusive=True,
+                blocking=False,
+            ):
+                result.put(True)
+    except BaseException:
+        result.put(False)
 
 
 class Base(unittest.TestCase):
@@ -2228,6 +2245,120 @@ class TestOwnership(Base):
             self.dest.read(stored.filename)
 
 
+class TestDirectoryHandleBinding(Base):
+    def _replace_zone(self):
+        original = self.dir.parent / "images-original"
+        self.dir.rename(original)
+        self.dir.mkdir(mode=0o700)
+        return original
+
+    def test_operation_verrouillee_reste_sur_le_repertoire_initial(self):
+        with self.dest.operation_lock(exclusive=True):
+            original = self._replace_zone()
+            stored = self.dest.save(make_png(), INFO(), filename="rebound.png")
+
+            self.assertTrue((original / stored.filename).is_file())
+            self.assertFalse((self.dir / stored.filename).exists())
+
+        with self.assertRaisesRegex(DestinationError, "remplac"):
+            self.dest.list()
+
+    def test_repertoire_remplace_hors_operation_n_est_pas_recree(self):
+        original = self.dir.parent / "images-original"
+        self.dir.rename(original)
+
+        with self.assertRaisesRegex(DestinationError, "remplac"):
+            self.dest.list()
+
+        self.assertFalse(self.dir.exists())
+        self.assertTrue(original.is_dir())
+
+    def test_directory_fd_imbrique_reutilise_le_handle_exterieur(self):
+        opened = []
+        real_open = self.dest._fs.open_directory
+
+        def capture(path, *args, **kwargs):
+            handle = real_open(path, *args, **kwargs)
+            if Path(path) == self.dir:
+                opened.append(handle)
+            return handle
+
+        with mock.patch.object(self.dest._fs, "open_directory", side_effect=capture):
+            with self.dest.operation_lock(exclusive=True):
+                opened_for_operation = len(opened)
+                self.assertGreaterEqual(opened_for_operation, 1)
+                outer = opened[-1]
+                with self.dest._directory_fd() as nested:
+                    self.assertIs(nested, outer)
+                self.assertEqual(len(opened), opened_for_operation)
+                self.assertFalse(outer.closed)
+
+        self.assertTrue(outer.closed)
+
+    def test_directory_handle_est_ferme_apres_exception(self):
+        opened = []
+        real_open = self.dest._fs.open_directory
+
+        def capture(path, *args, **kwargs):
+            handle = real_open(path, *args, **kwargs)
+            if Path(path) == self.dir:
+                opened.append(handle)
+            return handle
+
+        with mock.patch.object(self.dest._fs, "open_directory", side_effect=capture):
+            with self.assertRaisesRegex(RuntimeError, "arrêt"):
+                with self.dest.operation_lock(exclusive=True):
+                    raise RuntimeError("arrêt")
+
+        self.assertTrue(opened[0].closed)
+
+    def test_lock_stable_empeche_un_second_lock_sur_b(self):
+        other = LocalDestination(self.dir)
+
+        with self.dest.operation_lock(exclusive=True):
+            self._replace_zone()
+            with self.assertRaises(DestinationBusyError):
+                with other.operation_lock(exclusive=True, blocking=False):
+                    pass
+
+    def test_un_second_processus_ne_verrouille_pas_b_pendant_le_verrou_de_a(self):
+        context = multiprocessing.get_context("spawn")
+        result = context.Queue()
+
+        with self.dest.operation_lock(exclusive=True):
+            self._replace_zone()
+            child = context.Process(
+                target=_try_stable_zone_lock,
+                args=(
+                    str(self.dest._fs.runtime_directory() / "pasteberth" / "zones"),
+                    self.dest._stable_lock_name,
+                    result,
+                ),
+            )
+            child.start()
+            self.assertFalse(result.get(timeout=10))
+            child.join(timeout=10)
+            self.assertEqual(child.exitcode, 0)
+
+    def test_lecture_suppression_renommage_retention_et_archive_restent_sur_a(self):
+        source = self.dest.save(make_png(), INFO(), filename="source.png")
+        victim = self.dest.save(make_png(), INFO(), filename="victim.png")
+
+        with self.dest.operation_lock(exclusive=True):
+            original = self._replace_zone()
+            self.assertEqual(self.dest.read(source.filename), make_png())
+            with self.dest.open_read(source.filename) as stream:
+                self.assertEqual(stream.read(), make_png())
+            renamed = self.dest.rename(source.filename, "renamed.png")
+            self.dest.delete(victim.filename)
+            self.dest.apply_retention(0)
+
+            self.assertEqual(renamed.filename, "renamed.png")
+            self.assertEqual(self.dest.list(), [])
+            self.assertFalse((original / "renamed.png").exists())
+            self.assertFalse((self.dir / "renamed.png").exists())
+
+
 class TestRepertoires(unittest.TestCase):
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
@@ -2295,11 +2426,13 @@ class TestRepertoires(unittest.TestCase):
         self.assertTrue(valid_filename("random.png"))
         self.assertTrue(valid_filename("2026-08-25_01-22-31_a81c42.exe.bat"))
         self.assertFalse(valid_filename(".pasteberth.lock"))
+        self.assertFalse(valid_filename(".pbdel-"))
+        self.assertFalse(valid_filename(".pbdel-anything"))
+        self.assertFalse(valid_filename(".pbdel-0123456789abcdef01234567.json"))
         self.assertFalse(valid_filename("bad\nname.txt"))
         self.assertFalse(valid_filename("report\u202e gnp.exe"))
         self.assertFalse(valid_filename("zero\u200bwidth.txt"))
         self.assertFalse(valid_filename("escape\x1b.txt"))
-
     def test_espace_libre_sous_seuil(self):
         dest = LocalDestination(self.tmp / "space")
         with mock.patch.object(
@@ -2425,6 +2558,121 @@ class TestRepertoires(unittest.TestCase):
         with mock.patch.object(dest, "delete", side_effect=DestinationError("no")):
             with self.assertRaises(RetentionError):
                 dest.apply_retention(0)
+
+
+class TestPbdelNamespace(unittest.TestCase):
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.zone = Path(self._tmp.name) / "images"
+        self.destination = LocalDestination(self.zone)
+        self.addCleanup(self._tmp.cleanup)
+
+    def test_ancienne_paire_client_pbdel_est_conservee_sans_recuperation(self):
+        victim = self.destination.save(
+            b"victim",
+            ImageInfo(
+                fmt=None,
+                width=None,
+                height=None,
+                kind="binary",
+                mime="application/octet-stream",
+                ext=".bin",
+            ),
+            filename="victim.bin",
+        )
+        token = "c" * 24
+        client_name = f".pbdel-{token}.json"
+        with self.destination._directory_fd() as directory_fd:
+            target_identity = self.destination._entry_identity(directory_fd, victim.filename)
+            meta_identity = self.destination._entry_identity(
+                directory_fd, victim.filename + ".json"
+            )
+        client_data = json.dumps(
+            {
+                "version": 1,
+                "target": victim.filename,
+                "data_trash": f".pbtrash-{token}.data",
+                "meta_trash": f".pbtrash-{token}.json",
+                "target_identity": list(target_identity),
+                "meta_identity": list(meta_identity),
+            },
+            separators=(",", ":"),
+        ).encode()
+        # Build the old upload pair directly: new clients can no longer create
+        # this reserved name, but old zones must remain non-destructive.
+        (self.zone / client_name).write_bytes(client_data)
+        (self.zone / f"{client_name}.json").write_text(
+            json.dumps(
+                {
+                    "filename": client_name,
+                    "created_at": "2026-08-31T00:00:00+00:00",
+                    "width": None,
+                    "height": None,
+                    "size": len(client_data),
+                    "format": None,
+                    "kind": "binary",
+                    "mime": "application/octet-stream",
+                }
+            )
+        )
+
+        restarted = LocalDestination(self.zone)
+
+        self.assertTrue((self.zone / victim.filename).exists())
+        self.assertTrue((self.zone / f"{victim.filename}.json").exists())
+        self.assertTrue((self.zone / client_name).exists())
+        self.assertTrue((self.zone / f"{client_name}.json").exists())
+        self.assertEqual([item.filename for item in restarted.list()], [victim.filename])
+
+    def test_marqueur_pbdel_invalide_reste_inspectable(self):
+        marker = self.zone / (".pbdel-" + "d" * 24 + ".json")
+        marker.write_text("not a transaction", encoding="utf-8")
+
+        LocalDestination(self.zone)
+
+        self.assertTrue(marker.exists())
+
+    def test_vrai_marqueur_v1_avec_cible_pbdel_reste_recuperable(self):
+        target = ".pbdel-legacy-client.json"
+        data = b"legacy data"
+        (self.zone / target).write_bytes(data)
+        (self.zone / f"{target}.json").write_text(
+            json.dumps(
+                {
+                    "filename": target,
+                    "created_at": "2026-08-31T00:00:00+00:00",
+                    "width": None,
+                    "height": None,
+                    "size": len(data),
+                    "format": None,
+                    "kind": "binary",
+                    "mime": "application/octet-stream",
+                }
+            )
+        )
+        with self.destination._directory_fd() as directory_fd:
+            target_identity = self.destination._entry_identity(directory_fd, target)
+            meta_identity = self.destination._entry_identity(directory_fd, f"{target}.json")
+        token = "e" * 24
+        marker = self.zone / f".pbdel-{token}.json"
+        marker.write_text(
+            json.dumps(
+                {
+                    "version": 1,
+                    "target": target,
+                    "data_trash": f".pbtrash-{token}.data",
+                    "meta_trash": f".pbtrash-{token}.json",
+                    "target_identity": list(target_identity),
+                    "meta_identity": list(meta_identity),
+                }
+            )
+        )
+
+        LocalDestination(self.zone)
+
+        self.assertFalse((self.zone / target).exists())
+        self.assertFalse((self.zone / f"{target}.json").exists())
+        self.assertFalse(marker.exists())
 
 
 if __name__ == "__main__":

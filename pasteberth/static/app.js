@@ -10,6 +10,12 @@
  * - the displayed/copied link is EXACTLY the one returned by the server.
  */
 (() => {
+  const URL_PREFIX = document.body.dataset.urlPrefix || "";
+
+  function appPath(path) {
+    return `${URL_PREFIX}${path}`;
+  }
+
   const state = {
     zones: [],            // [{id,label,color,retain,count,images:[...]}]
     activeId: null,
@@ -65,6 +71,7 @@
   const replacementQueue = [];
   const dialogInvokers = new WeakMap();
   let activeReplacementPrompt = null;
+  let pvCopyRawHtml = null;
 
   // ------------------------------------------------------------- utilities
 
@@ -144,13 +151,13 @@
     try {
       const requestOptions = Object.assign({}, options || {});
       requestOptions.headers = Object.assign({ Accept: "application/json" }, requestOptions.headers || {});
-      res = await fetch(path, requestOptions);
+      res = await fetch(appPath(path), requestOptions);
     } catch (err) {
       if (err && err.name === "AbortError") throw err;
       throw new Error("network unreachable");
     }
     if (res.status === 401 && state.authEnabled) {
-      window.location.href = "/login";
+      window.location.href = appPath("/login");
       throw new Error("session expired");
     }
     let payload = null;
@@ -382,7 +389,91 @@
     upload(zoneId, new Blob([html], { type: "text/html" }));
   }
 
-  async function copyHtmlContent(previewUrl) {
+  const HTML_ALLOWED_ELEMENTS = new Set([
+    "html", "head", "body", "title",
+    "p", "div", "span", "br", "hr",
+    "strong", "b", "em", "i", "u", "s", "del", "ins", "mark", "small", "sub", "sup",
+    "h1", "h2", "h3", "h4", "h5", "h6",
+    "ul", "ol", "li", "blockquote", "pre", "code",
+    "table", "caption", "thead", "tbody", "tfoot", "tr", "th", "td", "img",
+  ]);
+  const HTML_REMOVE_CONTENT_ELEMENTS = new Set([
+    "base", "embed", "iframe", "link", "meta", "object", "script", "style",
+    "svg", "math", "canvas", "video", "audio", "source", "track", "template",
+  ]);
+  const HTML_SAFE_ATTRIBUTES = new Set([
+    "alt", "colspan", "dir", "height", "lang", "rowspan", "start", "title", "width",
+  ]);
+  const HTML_URL_ATTRIBUTES = new Set([
+    "action", "background", "formaction", "href", "poster", "src", "srcset", "xlink:href",
+  ]);
+  const HTML_SAFE_RASTER_DATA_URL = /^data:image\/(?:gif|jpe?g|png|webp);base64,[a-z0-9+/]+={0,2}$/i;
+
+  function safeHtmlAttribute(tag, name, value) {
+    if (name === "src") {
+      return tag === "img" && HTML_SAFE_RASTER_DATA_URL.test(value.trim());
+    }
+    if (HTML_URL_ATTRIBUTES.has(name)) return false;
+    if (!HTML_SAFE_ATTRIBUTES.has(name)) return false;
+    if (name === "alt" || name === "height" || name === "width") return tag === "img";
+    if (name === "colspan" || name === "rowspan") return tag === "th" || tag === "td";
+    if (name === "start") return tag === "ol";
+    return true;
+  }
+
+  function sanitizeHtml(source) {
+    const doc = new DOMParser().parseFromString(source, "text/html");
+    let changed = false;
+
+    const clean = (parent) => {
+      for (const child of [...parent.childNodes]) {
+        if (child.nodeType === Node.COMMENT_NODE) {
+          child.remove();
+          changed = true;
+          continue;
+        }
+        if (child.nodeType !== Node.ELEMENT_NODE) continue;
+        const tag = child.tagName.toLowerCase();
+        if (HTML_REMOVE_CONTENT_ELEMENTS.has(tag)) {
+          child.remove();
+          changed = true;
+          continue;
+        }
+        if (!HTML_ALLOWED_ELEMENTS.has(tag)) {
+          clean(child);
+          while (child.firstChild) parent.insertBefore(child.firstChild, child);
+          child.remove();
+          changed = true;
+          continue;
+        }
+        for (const attribute of [...child.attributes]) {
+          if (!safeHtmlAttribute(tag, attribute.name.toLowerCase(), attribute.value)) {
+            child.removeAttribute(attribute.name);
+            changed = true;
+          }
+        }
+        clean(child);
+      }
+    };
+
+    clean(doc);
+    return {
+      html: doc.body ? doc.body.innerHTML : "",
+      plain: ((doc.body && doc.body.textContent) || "").trim(),
+      changed,
+    };
+  }
+
+  function canWriteRichClipboard() {
+    return Boolean(
+      navigator.clipboard
+      && typeof navigator.clipboard.write === "function"
+      && typeof ClipboardItem !== "undefined"
+      && window.isSecureContext !== false
+    );
+  }
+
+  async function copyHtmlContent(previewUrl, { raw = false } = {}) {
     const loadHtml = async () => {
       const response = await fetchPreview(previewUrl, {
         credentials: "same-origin",
@@ -392,41 +483,34 @@
       return response.text();
     };
     try {
-      const html = await loadHtml();
-      const doc = new DOMParser().parseFromString(html, "text/html");
-      const plain = ((doc.body && doc.body.textContent) || "").trim();
-      const flavors = { "text/html": new Blob([html], { type: "text/html" }) };
-      if (plain) flavors["text/plain"] = new Blob([plain], { type: "text/plain" });
-      await navigator.clipboard.write([new ClipboardItem(flavors)]);
-      toast("Text copied");
-      return true;
-    } catch (_) {
-      // Repli : texte seul (navigateurs sans ClipboardItem multi-flavors).
-      try {
-        const html = await loadHtml();
-        const doc = new DOMParser().parseFromString(html, "text/html");
-        const plain = ((doc.body && doc.body.textContent) || "").trim();
-        const ok = await writeClipboard(plain);
-        if (ok) toast("Text copied");
-        else toast("Could not copy the text to the clipboard", "error");
-        return ok;
-      } catch (_2) {
-        toast("Could not copy the text to the clipboard", "error");
-        return false;
+      const source = await loadHtml();
+      const sanitized = sanitizeHtml(source);
+      const html = raw ? source : (sanitized.changed ? sanitized.html : source);
+      const plain = sanitized.plain;
+      if (canWriteRichClipboard()) {
+        const flavors = { "text/html": new Blob([html], { type: "text/html" }) };
+        if (plain) flavors["text/plain"] = new Blob([plain], { type: "text/plain" });
+        try {
+          await navigator.clipboard.write([new ClipboardItem(flavors)]);
+          toast(raw ? "Raw HTML copied" : "Text copied");
+          return true;
+        } catch (_) { /* try the text fallback */ }
       }
+      const fallbackText = raw ? source : plain;
+      const ok = await writeClipboard(fallbackText);
+      if (ok) toast(raw ? "Raw HTML copied" : "Text copied");
+      else toast("Could not copy the text to the clipboard", "error");
+      return ok;
+    } catch (_) {
+      toast("Could not copy the text to the clipboard", "error");
+      return false;
     }
   }
 
   async function copyContent(kind, previewUrl, mime) {
     if (kind === "image") return copyImage(previewUrl);
     if (kind === "text") {
-      if (
-        mime === "text/html"
-        && navigator.clipboard
-        && typeof navigator.clipboard.write === "function"
-        && typeof ClipboardItem !== "undefined"
-        && window.isSecureContext !== false
-      ) {
+      if (mime === "text/html") {
         return copyHtmlContent(previewUrl);
       }
       try {
@@ -608,7 +692,7 @@
     frame.hidden = true;
     const form = document.createElement("form");
     form.method = "post";
-    form.action = `/api/zones/${encodeURIComponent(zone.id)}/images/archive`;
+    form.action = appPath(`/api/zones/${encodeURIComponent(zone.id)}/images/archive`);
     form.target = target;
     form.hidden = true;
     for (const item of items) {
@@ -2079,6 +2163,27 @@
     pvCopyImage.setAttribute("aria-label", `${label} to the clipboard`);
   }
 
+  function setRawHtmlButton(visible, previewUrl = "") {
+    if (visible && !pvCopyRawHtml) {
+      pvCopyRawHtml = document.createElement("button");
+      pvCopyRawHtml.type = "button";
+      pvCopyRawHtml.id = "pv-copy-raw";
+      pvCopyRawHtml.className = "raw-html-btn";
+      pvCopyRawHtml.textContent = "Copy raw HTML";
+      pvCopyRawHtml.setAttribute("aria-label", "Copy raw HTML to the clipboard");
+      pvCopyRawHtml.addEventListener("click", () => {
+        if (pvCopyRawHtml.dataset.preview) {
+          copyHtmlContent(pvCopyRawHtml.dataset.preview, { raw: true });
+        }
+      });
+      pvCopyImage.parentElement.insertBefore(pvCopyRawHtml, pvDownload);
+    }
+    if (!pvCopyRawHtml) return;
+    pvCopyRawHtml.hidden = !visible;
+    if (visible) pvCopyRawHtml.dataset.preview = previewUrl;
+    else delete pvCopyRawHtml.dataset.preview;
+  }
+
   function invalidatePreviewLoad() {
     previewGeneration += 1;
     if (activePreviewController) {
@@ -2090,6 +2195,7 @@
 
   function openPreview(url, reference, filename, zoneId) {
     invalidatePreviewLoad();
+    setRawHtmlButton(false);
     const storedFilename = filename || decodeURIComponent(url.split("/").pop());
     setPreviewSource(pvImg, url);
     pvImg.hidden = false;
@@ -2128,6 +2234,7 @@
   async function openContentPreview(item, zoneId) {
     const invoker = document.activeElement;
     const generation = invalidatePreviewLoad();
+    setRawHtmlButton(false);
     setPreviewSource(pvImg, "");
     setPreviewCopyLabel(item.kind);
     pvRef.textContent = item.reference;
@@ -2152,12 +2259,14 @@
         });
         if (!response.ok) throw new Error("preview unavailable");
         let text = await response.text();
+        let htmlInspection = null;
         if (item.mime === "text/html") {
-          // Document hybride : afficher le texte extrait, jamais le HTML rendu.
-          const doc = new DOMParser().parseFromString(text, "text/html");
-          text = ((doc.body && doc.body.textContent) || "").trim();
+          // Document hybride : afficher le texte assaini, jamais le HTML rendu.
+          htmlInspection = sanitizeHtml(text);
+          text = htmlInspection.plain;
         }
         if (generation !== previewGeneration) return;
+        setRawHtmlButton(Boolean(htmlInspection && htmlInspection.changed), item.preview_url);
         openTextPreview(text, item.filename, invoker);
       } catch (err) {
         if (err && err.name === "AbortError") return;
@@ -2173,6 +2282,7 @@
   }
   function closePreview() {
     invalidatePreviewLoad();
+    setRawHtmlButton(false);
     if (!closeDialog(pv)) {
       setPreviewSource(pvImg, "");
       pvText.hidden = true;
@@ -2199,6 +2309,7 @@
   document.getElementById("pv-close").addEventListener("click", closePreview);
   pv.addEventListener("click", (event) => { if (event.target === pv) closePreview(); });
   pv.addEventListener("close", () => {
+    setRawHtmlButton(false);
     setPreviewSource(pvImg, "");
     pvText.hidden = true;
     pvImg.hidden = false;

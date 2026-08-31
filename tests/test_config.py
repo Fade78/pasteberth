@@ -17,6 +17,7 @@ from pasteberth.config import (
     load_config,
     prepare_directories,
     parse_size,
+    public_path,
     resolve_config_path,
     resolve_group_zone_ids,
 )
@@ -80,7 +81,9 @@ class TestParsing(unittest.TestCase):
         self.assertEqual(cfg.port, 8765)
         self.assertEqual(cfg.max_upload_bytes, 20 * 1024 * 1024)
         self.assertFalse(cfg.auth.enabled)
-        self.assertEqual(cfg.allowed_hosts, ())
+        self.assertEqual(cfg.auth.max_sessions, 4096)
+        self.assertEqual(cfg.allowed_hosts, ("localhost", "127.0.0.1", "::1"))
+        self.assertEqual(cfg.url_prefix, "")
         self.assertEqual(set(cfg.zones), {"default", "secondary"})
         self.assertEqual(cfg.groups, ())
         self.assertEqual(cfg.zones["default"].reference_prefix, "@")
@@ -152,8 +155,36 @@ class TestParsing(unittest.TestCase):
             make_cfg(self.tmp, allowed_hosts='["https://pasteberth.example"]')
 
     def test_allowed_hosts_vide_active_le_wildcard(self):
-        cfg = make_cfg(self.tmp, allowed_hosts="[]")
+        cfg = make_cfg(self.tmp, auth_enabled=True, allowed_hosts="[]")
         self.assertEqual(cfg.allowed_hosts, ())
+
+    def test_allowed_hosts_vide_refuse_sans_auth(self):
+        with self.assertRaisesRegex(ConfigError, "allowed_hosts"):
+            make_cfg(
+                self.tmp,
+                auth_enabled=False,
+                allowed_hosts="[]",
+                allow_unauthenticated_local=True,
+            )
+
+    def test_url_prefix_valide_et_invalide(self):
+        for value in ("/paste", "/tools/paste"):
+            with self.subTest(value=value):
+                cfg = make_cfg(self.tmp, url_prefix=value)
+                self.assertEqual(cfg.url_prefix, value)
+        for value in ("/", "/paste/", "paste", "/paste//x", "/paste/../x",
+                      "/paste?x=1", "/paste#fragment", "/paste%2Fx"):
+            with self.subTest(value=value):
+                with self.assertRaises(ConfigError):
+                    make_cfg(self.tmp, url_prefix=value)
+
+    def test_public_path_ne_double_pas_le_prefixe(self):
+        self.assertEqual(public_path("", "/api/health"), "/api/health")
+        self.assertEqual(public_path("/paste", "/"), "/paste/")
+        self.assertEqual(public_path("/paste", "/api/health"), "/paste/api/health")
+        self.assertEqual(public_path("/paste", "/paste/api/health"), "/paste/api/health")
+        with self.assertRaises(ValueError):
+            public_path("/paste", "api/health")
 
     def test_defauts_reels_auth_et_proxy(self):
         path = self.tmp / "minimal.toml"
@@ -177,6 +208,14 @@ class TestParsing(unittest.TestCase):
         )
         self.assertEqual(cfg.auth.password_file, password_file)
         self.assertEqual(cfg.password_file(), password_file)
+
+    def test_max_sessions_configurable_et_borne(self):
+        cfg = make_cfg(self.tmp, max_sessions=12)
+        self.assertEqual(cfg.auth.max_sessions, 12)
+        for value in (0, -1, 1_000_001, True):
+            with self.subTest(value=value):
+                with self.assertRaises(ConfigError):
+                    make_cfg(self.tmp, max_sessions=value)
 
     def test_fichier_passwd_doit_etre_absolu(self):
         with self.assertRaisesRegex(ConfigError, "password_file"):
@@ -422,7 +461,8 @@ class TestChemins(unittest.TestCase):
         self.assertTrue(cfg.using_default_config)
         self.assertFalse(cfg.auth.enabled)
         self.assertTrue(cfg.allow_unauthenticated_local)
-        self.assertEqual(cfg.allowed_hosts, ())
+        self.assertEqual(cfg.allowed_hosts, ("localhost", "127.0.0.1", "::1"))
+        self.assertEqual(cfg.url_prefix, "")
         self.assertEqual(set(cfg.zones), {"default"})
         self.assertEqual(cfg.zones["default"].directory, default_storage_path())
 

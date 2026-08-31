@@ -1,6 +1,9 @@
 const { defineConfig, devices } = require("@playwright/test");
 
 const browserName = process.env.E2E_BROWSER || "chromium";
+const urlPrefix = process.env.PASTEBERTH_E2E_PREFIX || "";
+const baseURL = `http://127.0.0.1:8876${urlPrefix}/`;
+const healthPath = `${urlPrefix}/api/health`;
 const device = browserName === "firefox"
   ? devices["Desktop Firefox"]
   : devices["Desktop Chrome"];
@@ -23,7 +26,7 @@ module.exports = defineConfig({
   use: {
     ...device,
     browserName,
-    baseURL: "http://127.0.0.1:8876",
+    baseURL,
     headless: true,
     permissions,
     screenshot: "only-on-failure",
@@ -32,7 +35,7 @@ module.exports = defineConfig({
   },
   webServer: {
     command: "python3 -m tests.browser_server",
-    url: "http://127.0.0.1:8876/api/health",
+    url: `http://127.0.0.1:8876${healthPath}`,
     timeout: 120_000,
     reuseExistingServer: false,
   },

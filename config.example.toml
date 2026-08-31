@@ -10,14 +10,16 @@ listen_address = "127.0.0.1"      # keep loopback when TLS terminates in a proxy
 port = 8765
 max_upload_size = "20MiB"         # 20 MiB per upload; absolute maximum 50 MiB
 max_image_pixels = 25000000        # structural pixel budget; default 25 MP, max 50 MP
+# Empty for a root deployment, or e.g. "/paste" when mounted below a proxy path.
+url_prefix = ""
 
 # Proxies allowed to set X-Forwarded-* (IP or CIDR).
 # Never include addresses reachable from the Internet.
 # Trust no forwarded headers by default; list only the actual reverse proxy IP.
 # 127.0.0.1 trusts every local process that can connect to this listener.
 trusted_proxies = []
-# Empty list = wildcard (Host check disabled); prefer listing every public hostname.
-# Use [] only when an upstream proxy independently enforces canonical hostnames.
+# With authentication enabled, [] permits a hostname chosen by the deployment.
+# Anonymous configurations must list controlled hostnames explicitly.
 allowed_hosts = []
 
 # Authentication and network safety are separate policies:
@@ -46,6 +48,7 @@ enabled = false
 [auth]
 enabled = true                    # false only with the explicit opt-in above
 session_ttl_hours = 72            # server-side session lifetime
+max_sessions = 4096               # maximum number of live server-side sessions
 # password_file = "/absolute/path/to/passwd"  # regular 0600 file
 
 # --------------------------------------------------------------- default zone

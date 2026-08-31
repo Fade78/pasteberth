@@ -37,7 +37,7 @@ service between independent servers.
 
 ## Quick Start
 
-The current public release is `1.6.0`. The documented v1.6 server runs on
+The current public release is `1.6.1`. The documented v1.6 server runs on
 Linux/POSIX systems, requires Python 3.11 or newer, and has no third-party
 Python runtime dependency. A native Windows backend is included but has only
 been validated under Wine; macOS and native Windows remain outside the official
@@ -59,6 +59,28 @@ Open `http://127.0.0.1:8765/` and sign in with the password created by
 For a first local trial, running without a configuration uses a loopback-only
 minimal zone at `<repository>/storage/default`. It has no authentication and
 must not be exposed through a proxy or a non-loopback listener.
+
+### Reverse Proxy And Mounted Paths
+
+The generated configuration enables authentication and uses `allowed_hosts = []`
+for a deployment-chosen public hostname. This wildcard is safe only with
+authentication enabled; anonymous configurations must list their controlled
+hosts explicitly.
+
+To publish the service below `/paste`, keep the public path unchanged when
+proxying to Pasteberth:
+
+```toml
+url_prefix = "/paste"
+listen_address = "127.0.0.1"
+trusted_proxies = ["127.0.0.1"]
+allowed_hosts = []
+```
+
+The proxy must preserve `Host[:port]`, overwrite incoming `X-Forwarded-*`
+headers, and be the only address listed in `trusted_proxies`. Do not strip
+`/paste` before forwarding. The browser `Origin` remains the scheme and host
+only, without `/paste`.
 
 ## What It Does
 
@@ -125,7 +147,7 @@ configuration template. The optional Linux user-service template is
 
 ## Support Status
 
-| Area | v1.6.0 status |
+| Area | v1.6.1 status |
 |---|---|
 | Python | 3.11 or newer |
 | Server | Linux/POSIX, officially tested on Linux |

@@ -161,12 +161,26 @@ class TestContratsFrontend(unittest.TestCase):
         self.assertIn("KIND_LABEL", self.app_js)
         self.assertIn("Copy ${kindLabel(item.kind)}", self.app_js)
         self.assertIn("function copyContent", self.app_js)
+        self.assertIn("function sanitizeHtml", self.app_js)
+        self.assertIn("HTML_REMOVE_CONTENT_ELEMENTS", self.app_js)
+        self.assertIn("HTML_SAFE_RASTER_DATA_URL", self.app_js)
+        self.assertIn("function setRawHtmlButton", self.app_js)
+        self.assertIn('id = "pv-copy-raw"', self.app_js)
+        self.assertIn("{ raw: true }", self.app_js)
         self.assertIn("Text copied", self.app_js)
+        self.assertIn("Raw HTML copied", self.app_js)
         self.assertIn("Bin copied", self.app_js)
         self.assertIn("function downloadLabel", self.app_js)
         self.assertIn("function downloadContent", self.app_js)
         self.assertIn('className = "download-btn"', self.app_js)
         self.assertIn('id="pv-download"', self.index_html)
+
+    def test_clipboard_html_conserve_le_stockage_et_assainit_la_copie(self):
+        self.assertIn("const source = await loadHtml()", self.app_js)
+        self.assertIn("const html = raw ? source", self.app_js)
+        self.assertIn(r"data:image\/", self.app_js)
+        self.assertIn("raw ? source : plain", self.app_js)
+        self.assertIn(".raw-html-btn", self.style_css)
 
     def test_preview_texte_et_binaire(self):
         self.assertIn("function openTextPreview", self.app_js)

@@ -5,17 +5,17 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="color-scheme" content="dark">
 <title>Pasteberth — login</title>
-<link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
-<link rel="stylesheet" href="/static/style.css">
+<link rel="icon" href="__PASTEBERTH_URL_PREFIX__/static/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="__PASTEBERTH_URL_PREFIX__/static/style.css">
 </head>
-<body class="login-body">
+<body class="login-body" data-url-prefix="__PASTEBERTH_URL_PREFIX__">
 <main class="login-card">
   <h1 class="brand">
-    <img class="brand-icon" src="/static/favicon.svg" alt="" aria-hidden="true">
+    <img class="brand-icon" src="__PASTEBERTH_URL_PREFIX__/static/favicon.svg" alt="" aria-hidden="true">
     Pasteberth
   </h1>
   __ERROR_BLOCK__
-  <form action="/login" method="post">
+  <form action="__PASTEBERTH_URL_PREFIX__/login" method="post">
     <label for="password">Password</label>
     <input id="password" name="password" type="password"
            autocomplete="current-password" autofocus required>

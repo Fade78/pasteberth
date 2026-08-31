@@ -11,7 +11,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 SUITES = (
     ("python", [sys.executable, "-m", "unittest", "discover", "-s", "tests"]),
-    ("browser", ["npm", "run", "test:e2e"]),
+    ("browser", ["npm", "run", "test:e2e:all"]),
 )
 
 

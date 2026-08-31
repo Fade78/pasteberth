@@ -51,15 +51,20 @@ class PasteberthServer(ThreadingHTTPServer):
     allow_reuse_address = True
     request_queue_size = 32
     max_active_requests = 64
+    max_pending_requests = 8
+    header_timeout = 5.0
 
     def __init__(self, server_address, handler_class, bind_and_activate=True, tls_context=None):
         self.address_family, resolved_address = _resolve_bind_address(
             server_address[0], server_address[1]
         )
         self.tls_context = tls_context
+        self.active_timeout = getattr(handler_class, "timeout", 60)
         super().__init__(resolved_address, handler_class, bind_and_activate)
-        self._request_slots = threading.BoundedSemaphore(self.max_active_requests)
+        self._active_slots = threading.BoundedSemaphore(self.max_active_requests)
+        self._pending_slots = threading.BoundedSemaphore(self.max_pending_requests)
         self._active_sockets: set[socket.socket] = set()
+        self._pending_sockets: set[socket.socket] = set()
         self._sockets_lock = threading.Lock()
 
     def get_request(self):
@@ -78,26 +83,63 @@ class PasteberthServer(ThreadingHTTPServer):
         return request, client_address
 
     def process_request(self, request, client_address):
-        if not self._request_slots.acquire(blocking=False):
+        if not self._pending_slots.acquire(blocking=False):
+            request.close()
+            return
+        try:
+            request.settimeout(self.header_timeout)
+        except OSError:
+            self._pending_slots.release()
             request.close()
             return
         with self._sockets_lock:
             self._active_sockets.add(request)
+            self._pending_sockets.add(request)
         try:
             super().process_request(request, client_address)
         except BaseException:
-            with self._sockets_lock:
-                self._active_sockets.discard(request)
-            self._request_slots.release()
+            self._release_request(request)
             raise
 
     def process_request_thread(self, request, client_address):
         try:
             super().process_request_thread(request, client_address)
         finally:
-            with self._sockets_lock:
-                self._active_sockets.discard(request)
-            self._request_slots.release()
+            self._release_request(request)
+
+    def promote_request(self, request) -> bool:
+        """Move a parsed request from the short-lived pending pool to active."""
+        with self._sockets_lock:
+            if request not in self._active_sockets:
+                return False
+            if request not in self._pending_sockets:
+                return True
+        if not self._active_slots.acquire(blocking=False):
+            return False
+        try:
+            request.settimeout(self.active_timeout)
+        except OSError:
+            self._active_slots.release()
+            return False
+        with self._sockets_lock:
+            if request not in self._pending_sockets:
+                self._active_slots.release()
+                return request in self._active_sockets
+            self._pending_sockets.remove(request)
+        self._pending_slots.release()
+        return True
+
+    def _release_request(self, request) -> None:
+        with self._sockets_lock:
+            if request not in self._active_sockets:
+                return
+            pending = request in self._pending_sockets
+            self._active_sockets.discard(request)
+            self._pending_sockets.discard(request)
+        if pending:
+            self._pending_slots.release()
+        else:
+            self._active_slots.release()
 
     def close_active_connections(self) -> None:
         """Ferme les connexions en attente pour débloquer l'arrêt gracieux.

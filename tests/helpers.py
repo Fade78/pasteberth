@@ -143,10 +143,12 @@ def write_config(
     groups: list[dict] | None = None,
     *,
     auth_enabled: bool = False,
+    max_sessions: int | None = None,
     listen_address: str = "127.0.0.1",
     port: int | None = None,
     max_upload_size: str = "20MiB",
     max_image_pixels: int | None = None,
+    url_prefix: str | None = None,
     trusted_proxies: str | None = '["127.0.0.1", "::1"]',
     allowed_hosts: str | None = None,
     allow_unauthenticated_local: bool | None = True,
@@ -177,8 +179,12 @@ def write_config(
     lines.append(f"max_upload_size = {json.dumps(max_upload_size)}")
     if max_image_pixels is not None:
         lines.append(f"max_image_pixels = {max_image_pixels}")
+    if url_prefix is not None:
+        lines.append(f"url_prefix = {json.dumps(url_prefix)}")
     if trusted_proxies is not None:
         lines.append(f"trusted_proxies = {trusted_proxies}")
+    if allowed_hosts is None and not auth_enabled:
+        allowed_hosts = '["localhost", "127.0.0.1", "::1"]'
     if allowed_hosts is not None:
         lines.append(f"allowed_hosts = {allowed_hosts}")
     if allow_unauthenticated_local is not None:
@@ -213,6 +219,8 @@ def write_config(
     lines.append("")
     lines.append("[auth]")
     lines.append(f"enabled = {str(auth_enabled).lower()}")
+    if max_sessions is not None:
+        lines.append(f"max_sessions = {max_sessions}")
     if password_file is not None:
         lines.append(f"password_file = {json.dumps(password_file)}")
     lines.append("")
@@ -280,6 +288,7 @@ class LiveServer:
         self.sessions = SessionStore(
             self.cfg.auth.session_ttl_hours * 3600,
             password_file=self.cfg.password_file() if self.cfg.auth.enabled else None,
+            max_sessions=self.cfg.auth.max_sessions,
         )
         self.limiter = LoginRateLimiter()
         handler = make_handler(self.cfg, self.service, self.sessions, self.limiter)
@@ -306,6 +315,7 @@ class LiveServer:
         fresh.sessions = _SS(
             fresh.cfg.auth.session_ttl_hours * 3600,
             password_file=fresh.cfg.password_file() if fresh.cfg.auth.enabled else None,
+            max_sessions=fresh.cfg.auth.max_sessions,
         )
         fresh.limiter = _LR()
         handler = make_handler(fresh.cfg, fresh.service, fresh.sessions, fresh.limiter)

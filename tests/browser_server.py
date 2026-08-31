@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+import json
 import signal
 import tempfile
 import threading
@@ -15,6 +16,7 @@ from pasteberth.webapp import make_handler
 
 
 PORT = int(os.environ.get("PASTEBERTH_E2E_PORT", "8876"))
+URL_PREFIX = os.environ.get("PASTEBERTH_E2E_PREFIX", "")
 
 
 def _write_config(root: Path) -> Path:
@@ -22,6 +24,8 @@ def _write_config(root: Path) -> Path:
 port = {PORT}
 max_upload_size = "20MiB"
 max_image_pixels = 25000000
+url_prefix = {json.dumps(URL_PREFIX)}
+allowed_hosts = ["localhost", "127.0.0.1", "::1"]
 trusted_proxies = ["127.0.0.1", "::1"]
 allow_unauthenticated_local = true
 log_level = "WARNING"
@@ -76,12 +80,15 @@ show_count = true
     return path
 
 
-def _test_handler(base_handler, service):
+def _test_handler(base_handler, service, prefix):
     class BrowserHandler(base_handler):
         """Ajoute uniquement la remise à zéro locale entre scénarios."""
 
         def do_POST(self) -> None:
-            if self.path != "/__e2e/reset":
+            reset_paths = {"/__e2e/reset"}
+            if prefix:
+                reset_paths.add(prefix + "/__e2e/reset")
+            if self.path.split("?", 1)[0] not in reset_paths:
                 super().do_POST()
                 return
             try:
@@ -108,10 +115,14 @@ def main() -> None:
         sessions = SessionStore(
             cfg.auth.session_ttl_hours * 3600,
             password_file=cfg.password_file() if cfg.auth.enabled else None,
+            max_sessions=cfg.auth.max_sessions,
         )
         limiter = LoginRateLimiter()
         base_handler = make_handler(cfg, service, sessions, limiter)
-        server = PasteberthServer((cfg.listen_address, cfg.port), _test_handler(base_handler, service))
+        server = PasteberthServer(
+            (cfg.listen_address, cfg.port),
+            _test_handler(base_handler, service, URL_PREFIX),
+        )
 
         def stop(_signum, _frame) -> None:
             threading.Thread(target=server.shutdown, daemon=True).start()

@@ -1,7 +1,7 @@
 # Pasteberth Operator Guide
 
 This guide is the detailed reference for installing, configuring, operating,
-and integrating Pasteberth 1.6.0. The short project overview is in
+and integrating Pasteberth 1.6.1. The short project overview is in
 [`README.md`](README.md); user-visible release history is in
 [`CHANGELOG.md`](CHANGELOG.md).
 
@@ -74,14 +74,14 @@ contexts:
 
 ## 2. Requirements and Support
 
-The 1.6.0 implementation requires:
+The 1.6.1 implementation requires:
 
 - Python 3.11 or newer;
 - a local filesystem with the POSIX primitives used by the storage engine;
 - a modern browser for the Web UI;
 - no third-party Python runtime dependency.
 
-Linux is the current official and tested server platform for v1.6.0. The
+Linux is the current official and tested server platform for v1.6.1. The
 Windows backend has broad Wine coverage, but native Windows/NTFS validation is
 still outstanding and macOS support is not implemented. Do not infer support
 for every network or exotic filesystem from the operating system name.
@@ -107,13 +107,18 @@ The repository wrapper is the Unix convenience entry point:
 ./bin/pasteberth --help
 ```
 
-It invokes `python3 -m pasteberth` from the checkout. To use the command from
+It invokes `python3 -P -m pasteberth` from the checkout. To use the command from
 any directory:
 
 ```sh
 export PATH="$PWD/bin:$PATH"
 pasteberth --version
 ```
+
+The repository wrappers resolve the checkout before launching Python, replace
+the inherited `PYTHONPATH`, and use Python's `-P` safe-path mode. They therefore
+do not provide a plugin mechanism through the current directory or
+`PYTHONPATH`.
 
 The Python project also declares the `pasteberth` console entry point in
 `pyproject.toml`. The repository wrapper remains the documented v1.5 operator
@@ -177,6 +182,7 @@ attempt, so changing it does not require a restart.
 | `port` | `8765` | TCP listening port. |
 | `max_upload_size` | `20MiB` | Maximum size of one upload; the hard maximum is `50MiB`. |
 | `max_image_pixels` | `25000000` | Structural image pixel budget; hard maximum is 50 MP. |
+| `url_prefix` | `""` | Public path prefix such as `/paste`; the proxy must preserve it. |
 | `trusted_proxies` | `[]` | Peer IPs allowed to provide `X-Forwarded-*`. |
 | `allowed_hosts` | `[]` | Hostnames accepted by Host and Origin checks; empty means wildcard and triggers an audit warning. |
 | `allow_unauthenticated_local` | `false` | Explicit opt-in for anonymous loopback or proxy mode. |
@@ -211,12 +217,16 @@ explicit private-network HTTP exception is enabled.
 [auth]
 enabled = true
 session_ttl_hours = 72
+max_sessions = 4096
 # password_file = "/absolute/path/to/passwd"
 ```
 
 The password file defaults to `passwd` next to the selected configuration. It
 contains a salted scrypt hash and should be readable only by the service user.
-`pasteberth passwd` creates or replaces it safely.
+`pasteberth passwd` creates or replaces it safely. `max_sessions` bounds live
+authenticated sessions held in memory; when the bound is reached, the oldest
+session is evicted before a new one is created. It does not limit TCP
+connections or pending unauthenticated requests.
 
 ### 4.4 Zones
 
@@ -327,6 +337,12 @@ clipboard. Clipboard permissions are controlled by the browser.
 - Mixed clipboard input containing an image and text is stored as one HTML
   document with embedded images. `Copy Text` restores both HTML and plain-text
   clipboard flavors.
+- When copying stored `text/html`, `Copy Text` removes scripts, event handlers,
+  CSS, forms, remote URLs, and non-raster resources from the HTML clipboard
+  flavor. Embedded raster `data:` images are retained. The preview displays the
+  sanitized text and never renders stored HTML. If sanitization changed the
+  document, it exposes a red `Copy raw HTML` button for an explicit raw copy;
+  storage and downloads always keep the original file unchanged.
 
 Structural image validation checks containers, dimensions, chunk/segment
 structure, and pixel budgets without fully decoding the codec bitstream. A
@@ -542,7 +558,15 @@ service may be operating:
 .pbtxn-*
 .pbtrash-*
 .pbrename-*
+.pbdel-*
 ```
+
+All names beginning with these prefixes are reserved for Pasteberth and are
+rejected by new Web and CLI uploads. Older zones may contain a client file
+named `.pbdel-...` with its matching `.json` sidecar; that ambiguous pair is
+preserved as a foreign artifact during recovery and is never executed as a
+deletion journal. Do not rename, edit, or remove it while investigating an old
+zone.
 
 The storage directory is ignored by Git in the repository checkout. Back it up
 separately if its contents matter. For a clean backup, stop the service first
@@ -562,7 +586,25 @@ pasteberth serve --config /absolute/path/config.toml
 
 Keep the service bound to `127.0.0.1` when a reverse proxy terminates HTTPS.
 For a directly exposed listener, configure TLS and an explicit `allowed_hosts`
-list.
+list. The generated configuration enables authentication; with authentication
+enabled, `allowed_hosts = []` deliberately accepts a hostname chosen by the
+deployment. An anonymous configuration with an empty allowlist is rejected at
+startup.
+
+When the public URL is mounted below a path, configure the same path in
+Pasteberth and forward it unchanged:
+
+```toml
+url_prefix = "/paste"
+listen_address = "127.0.0.1"
+trusted_proxies = ["127.0.0.1"]
+allowed_hosts = []
+```
+
+Pasteberth does not infer this prefix from `Host`, `X-Forwarded-Host`, or any
+other request header. The proxy must preserve `Host[:port]`, overwrite incoming
+`X-Forwarded-*` headers, and be the actual peer listed in `trusted_proxies`.
+The browser `Origin` is still `scheme://Host[:port]`, without `/paste`.
 
 ### 9.2 systemd user service
 
@@ -599,16 +641,25 @@ Keep Pasteberth on loopback and proxy the public HTTPS hostname:
 
 ```caddy
 pasteberth.example.internal {
-    reverse_proxy 127.0.0.1:8765
+    @paste path /paste /paste/*
+    reverse_proxy @paste 127.0.0.1:8765 {
+        # Keep /paste in the upstream request; do not use handle_path here.
+        header_up Host {http.request.hostport}
+        header_up X-Forwarded-Proto {http.request.scheme}
+        header_up X-Forwarded-For {http.request.remote.host}
+        header_up X-Forwarded-Host {http.request.hostport}
+    }
 }
 ```
 
-Use a matching host allowlist:
+Use an authenticated wildcard or a matching explicit host allowlist:
 
 ```toml
 listen_address = "127.0.0.1"
+url_prefix = "/paste"
 trusted_proxies = ["127.0.0.1"]
-allowed_hosts = ["pasteberth.example.internal"]
+allowed_hosts = []                         # auth enabled: dynamic hostname
+# allowed_hosts = ["pasteberth.example.internal"]  # optional strict host policy
 ```
 
 Trusting `127.0.0.1` trusts every local process that can connect to the
@@ -622,11 +673,21 @@ server {
     server_name pasteberth.example.internal;
     # ssl_certificate …; ssl_certificate_key …;
 
-    location / {
+    location = /paste {
         proxy_pass http://127.0.0.1:8765;
-        proxy_set_header Host $host;
+        proxy_set_header Host $http_host;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header X-Forwarded-For $remote_addr;
+        proxy_set_header X-Forwarded-Host $http_host;
+    }
+
+    location /paste/ {
+        # No URI suffix on proxy_pass: preserve /paste/... upstream.
+        proxy_pass http://127.0.0.1:8765;
+        proxy_set_header Host $http_host;
         proxy_set_header X-Forwarded-Proto https;
         proxy_set_header X-Forwarded-For $remote_addr;
+        proxy_set_header X-Forwarded-Host $http_host;
         client_max_body_size 50m;
     }
 }
@@ -644,7 +705,9 @@ uploads.
   filesystem paths transit the application.
 - Keep the backend on loopback behind a reverse proxy whenever possible.
 - Keep authentication enabled and create the password with `pasteberth passwd`.
-- Configure every public hostname in `allowed_hosts` for exposed deployments.
+- With authentication enabled, leave `allowed_hosts` empty for a deployment-chosen
+  hostname or list explicit canonical hostnames to restrict the service.
+- Never leave `allowed_hosts` empty in an anonymous configuration.
 - Configure only actual trusted proxy peers in `trusted_proxies`.
 - Treat shared writable zones as a trust relationship between users who can
   modify the directory.
@@ -673,6 +736,11 @@ The API is same-origin and uses the session cookie. There is no CORS support in
 v1. The supplied Web UI is the reference client.
 
 ### 11.1 Routes
+
+The paths below are shown for a root deployment. When `url_prefix = "/paste"`,
+prepend `/paste` to every route, including `/login`, static assets, API paths,
+and previews. The prefix is a configured public path, not part of the browser
+`Origin` value.
 
 | Method | Path | Authentication | Purpose |
 |---|---|---|---|

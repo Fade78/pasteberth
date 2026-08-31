@@ -140,6 +140,26 @@ class TestSessions(unittest.TestCase):
         store.revoke(t1)
         self.assertTrue(store.validate(t2))
 
+    def test_plafond_evince_la_session_la_plus_ancienne(self):
+        store = SessionStore(ttl_seconds=60, max_sessions=2)
+        first, second = store.create(), store.create()
+        third = store.create()
+
+        self.assertFalse(store.validate(first))
+        self.assertTrue(store.validate(second))
+        self.assertTrue(store.validate(third))
+        self.assertEqual(store.active_count, 2)
+
+    def test_creation_concurrente_respecte_le_plafond(self):
+        from concurrent.futures import ThreadPoolExecutor
+
+        store = SessionStore(ttl_seconds=60, max_sessions=4)
+        with ThreadPoolExecutor(max_workers=8) as pool:
+            tokens = list(pool.map(lambda _: store.create(), range(64)))
+
+        self.assertEqual(store.active_count, 4)
+        self.assertEqual(sum(store.validate(token) for token in tokens), 4)
+
     def test_changement_mot_de_passe_invalide_les_sessions(self):
         with tempfile.TemporaryDirectory() as tmp:
             passwd = Path(tmp) / "passwd"
@@ -215,6 +235,44 @@ class TestRateLimiter(unittest.TestCase):
         for ip in ("10.0.0.1", "10.0.0.2", "10.0.0.3"):
             limiter.register_failure(ip)
         self.assertLessEqual(len(limiter._state), 2)
+
+    def test_lockout_actif_ne_peut_pas_etre_evince_par_du_churn(self):
+        limiter = LoginRateLimiter()
+        limiter.MAX_TRACKED_IPS = 1
+        locked = "10.0.0.10"
+        for _ in range(LoginRateLimiter.THRESHOLD):
+            limiter.register_failure(locked)
+
+        limiter.register_failure("10.0.0.11")
+
+        self.assertIn(locked, limiter._state)
+        self.assertNotIn("10.0.0.11", limiter._state)
+        self.assertGreater(limiter.retry_after(locked), 0.0)
+
+    def test_table_pleine_de_lockouts_ne_perd_pas_de_slot(self):
+        limiter = LoginRateLimiter(max_concurrent_checks=1)
+        limiter.MAX_TRACKED_IPS = 1
+        locked = "10.0.0.12"
+        for _ in range(LoginRateLimiter.THRESHOLD):
+            limiter.register_failure(locked)
+
+        self.assertGreater(limiter.acquire("10.0.0.13"), 0.0)
+        limiter.register_success(locked)
+        self.assertEqual(limiter.acquire("10.0.0.13"), 0.0)
+        limiter.complete("10.0.0.13", success=True)
+
+    def test_lockout_expire_reste_evinçable(self):
+        limiter = LoginRateLimiter()
+        limiter.MAX_TRACKED_IPS = 1
+        expired = "10.0.0.14"
+        for _ in range(LoginRateLimiter.THRESHOLD):
+            limiter.register_failure(expired)
+        limiter._state[expired][1] = 0.0
+
+        limiter.register_failure("10.0.0.15")
+
+        self.assertNotIn(expired, limiter._state)
+        self.assertIn("10.0.0.15", limiter._state)
 
 
 if __name__ == "__main__":

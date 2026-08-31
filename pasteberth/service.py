@@ -12,7 +12,7 @@ import threading
 from contextlib import contextmanager
 from urllib.parse import quote
 
-from pasteberth.config import Config, ZoneConfig, resolve_group_zone_ids
+from pasteberth.config import Config, ZoneConfig, public_path, resolve_group_zone_ids
 from pasteberth.content import classify
 from pasteberth.images import (
     InvalidImageError,
@@ -567,8 +567,9 @@ class PasteService:
             "format": item.fmt,
             "kind": item.kind,
             "mime": item.mime,
-            "preview_url": (
-                f"/previews/{quote(zid, safe='')}/{quote(item.filename, safe='')}"
+            "preview_url": public_path(
+                self.cfg.url_prefix,
+                f"/previews/{quote(zid, safe='')}/{quote(item.filename, safe='')}",
             ),
             "reference": f"{zone.reference_prefix}{reference_path}{zone.reference_suffix}",
         }

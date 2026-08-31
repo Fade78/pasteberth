@@ -8,6 +8,7 @@ pas une primitive de lecture ou de suppression arbitraire.
 from __future__ import annotations
 
 import json
+import hashlib
 import logging
 import os  # Compatibility seam for tests that patch the process-wide os module.
 import re
@@ -76,6 +77,15 @@ _RENAME_META_BACKUP_GUARD_RE = re.compile(
 )
 _RENAME_META_GUARD_RE = re.compile(r"^\.pbrename-guard-[0-9a-f]{24}\.json$")
 _TRASH_RE = re.compile(r"^\.pbtrash-[0-9a-f]{24}\.(?:data|json)$")
+_INTERNAL_RESERVED_PREFIXES = (
+    ".pbmeta-",
+    ".pbdata-",
+    ".pbbackup-",
+    ".pbtxn-",
+    ".pbtrash-",
+    ".pbrename-",
+    ".pbdel-",
+)
 _TXN_KEYS = {
     "version",
     "state",
@@ -166,14 +176,10 @@ def _internal_marker_name(name: object) -> bool:
     )
 
 
-def valid_filename(name: object) -> bool:
+def _filename_shape_ok(name: object) -> bool:
     if not isinstance(name, str) or not name.strip():
         return False
     if name in {".", "..", ".pasteberth.lock"}:
-        return False
-    if name.startswith(
-        (".pbmeta-", ".pbdata-", ".pbbackup-", ".pbtxn-", ".pbtrash-", ".pbrename-")
-    ):
         return False
     try:
         if len(name.encode("utf-8")) > 240:
@@ -183,6 +189,22 @@ def valid_filename(name: object) -> bool:
     if any(unicodedata.category(char).startswith("C") for char in name):
         return False
     return bool(_CLIENT_FILENAME_RE.fullmatch(name))
+
+
+def _legacy_pbdel_filename(name: object) -> bool:
+    """Recognize names that older clients could already have stored."""
+    return _filename_shape_ok(name) and name.startswith(".pbdel-")
+
+
+def _persisted_filename(name: object) -> bool:
+    """Accept current names and legacy .pbdel names in V1 journals."""
+    return valid_filename(name) or _legacy_pbdel_filename(name)
+
+
+def valid_filename(name: object) -> bool:
+    if not _filename_shape_ok(name):
+        return False
+    return not name.startswith(_INTERNAL_RESERVED_PREFIXES)
 
 
 def generated_filename(name: object) -> bool:
@@ -312,6 +334,17 @@ class LocalDestination(Destination):
         self.directory = Path(directory)
         self.create_directory = create_directory
         self._fs = platform_fs()
+        lock_key = os.path.normcase(os.path.abspath(os.fspath(self.directory)))
+        self._stable_lock_name = (
+            ".pasteberth-zone-"
+            + hashlib.sha256(lock_key.encode("utf-8")).hexdigest()
+            + ".lock"
+        )
+        self._directory_identity = None
+        self._operation_directory = ContextVar(
+            "pasteberth_operation_directory",
+            default=None,
+        )
         self._cleanup_pair_check = ContextVar(
             "pasteberth_cleanup_pair_check",
             default=None,
@@ -330,6 +363,11 @@ class LocalDestination(Destination):
             self.reconcile()
 
     def _ensure_dir(self) -> None:
+        bound = self._operation_directory.get()
+        if bound is not None:
+            if bound.closed:
+                raise DestinationError("handle de répertoire lié déjà fermé")
+            return
         # Feature: on n'inspecte plus les permissions ici — les répertoires
         # partagés sont acceptés (avertissement au démarrage via config.py).
         # Refuser au runtime casserait les zones partagées légitimes et
@@ -342,14 +380,19 @@ class LocalDestination(Destination):
             ) from exc
         if symlink is not None:
             raise DestinationError(f"chemin zone symbolique refusé : {symlink}")
+        directory = None
         try:
-            with self._fs.open_directory(
+            directory = self._fs.open_directory(
                 self.directory,
-                create=self.create_directory,
+                create=self.create_directory and self._directory_identity is None,
                 mode=0o700,
-            ):
-                pass
+            )
+            self._check_directory_identity(directory)
         except FileNotFoundError as exc:
+            if self._directory_identity is not None:
+                raise DestinationError(
+                    f"répertoire de zone remplacé : {self.directory}"
+                ) from exc
             if not self.create_directory:
                 raise DestinationError(f"répertoire inexistant : {self.directory}") from exc
             raise DestinationError(
@@ -359,46 +402,103 @@ class LocalDestination(Destination):
             raise DestinationError(
                 f"impossible d'ouvrir {self.directory} : {exc}"
             ) from exc
-
-    @contextmanager
-    def _directory_fd(self):
-        self._ensure_dir()
-        try:
-            directory = self._fs.open_directory(self.directory)
-        except OSError as exc:
-            raise DestinationError(f"ouverture impossible de {self.directory} : {exc}") from exc
-        try:
-            yield directory
         finally:
-            directory.close()
+            if directory is not None:
+                directory.close()
+
+    def _check_directory_identity(self, directory: DirectoryHandle) -> None:
+        expected = self._directory_identity
+        if expected is None:
+            self._directory_identity = directory.identity
+            return
+        if directory.identity != expected:
+            raise DestinationError(
+                f"répertoire de zone remplacé : {self.directory}"
+            )
 
     @contextmanager
-    def operation_lock(self, *, exclusive: bool, blocking: bool = True):
-        """Verrouille les opérations même entre processus du même utilisateur."""
-        with self._directory_fd() as directory_fd:
-            try:
+    def _stable_operation_lock(self, *, exclusive: bool, blocking: bool):
+        lock_root = self._fs.runtime_directory() / "pasteberth" / "zones"
+        try:
+            with self._fs.open_directory(lock_root, create=True, mode=0o700) as root:
                 with self._fs.acquire_lock(
-                    directory_fd,
+                    root,
+                    name=self._stable_lock_name,
                     exclusive=exclusive,
                     blocking=blocking,
                 ):
                     yield
-            except BusyError as exc:
-                raise DestinationBusyError(
-                    f"destination occupée : {self.directory}"
-                ) from exc
-            except DestinationError:
-                raise
-            except (OSError, UnsupportedFilesystemError) as exc:
-                raise DestinationError(
-                    f"verrouillage impossible de {self.directory} : {exc}"
-                ) from exc
+        except BusyError:
+            raise
+        except DestinationError:
+            raise
+        except (OSError, UnsupportedFilesystemError) as exc:
+            raise DestinationError(
+                f"verrouillage stable impossible de {self.directory} : {exc}"
+            ) from exc
+
+    @contextmanager
+    def _directory_fd(self):
+        bound = self._operation_directory.get()
+        if bound is not None:
+            if bound.closed:
+                raise DestinationError("handle de répertoire lié déjà fermé")
+            yield bound
+            return
+        self._ensure_dir()
+        directory = None
+        try:
+            directory = self._fs.open_directory(self.directory)
+            self._check_directory_identity(directory)
+        except OSError as exc:
+            if directory is not None:
+                directory.close()
+            raise DestinationError(f"ouverture impossible de {self.directory} : {exc}") from exc
+        except BaseException:
+            if directory is not None:
+                directory.close()
+            raise
+        try:
+            yield directory
+        finally:
+            if directory is not None:
+                directory.close()
+
+    @contextmanager
+    def operation_lock(self, *, exclusive: bool, blocking: bool = True):
+        """Verrouille les opérations même entre processus du même utilisateur."""
+        try:
+            with self._stable_operation_lock(
+                exclusive=exclusive,
+                blocking=blocking,
+            ):
+                with self._directory_fd() as directory_fd:
+                    with self._fs.acquire_lock(
+                        directory_fd,
+                        exclusive=exclusive,
+                        blocking=blocking,
+                    ):
+                        token = self._operation_directory.set(directory_fd)
+                        try:
+                            yield
+                        finally:
+                            self._operation_directory.reset(token)
+        except BusyError as exc:
+            raise DestinationBusyError(
+                f"destination occupée : {self.directory}"
+            ) from exc
+        except DestinationError:
+            raise
+        except (OSError, UnsupportedFilesystemError) as exc:
+            raise DestinationError(
+                f"verrouillage impossible de {self.directory} : {exc}"
+            ) from exc
 
     def _open_file(self, directory: DirectoryHandle, name: str, mode: str = "rb") -> FileHandle:
         is_sidecar_name = (
             isinstance(name, str)
             and name.endswith(".json")
-            and valid_filename(name[:-5])
+            and _persisted_filename(name[:-5])
         )
         if not valid_filename(name) and not is_sidecar_name and not _internal_marker_name(name):
             raise DestinationError(f"nom de fichier invalide : {name!r}")
@@ -483,7 +583,7 @@ class LocalDestination(Destination):
         ):
             raise ValueError("état de transaction incohérent")
         target = raw["target"]
-        if not valid_filename(target):
+        if not _persisted_filename(target):
             raise ValueError("cible de transaction invalide")
         expected_names = {
             "data_backup": f".pbbackup-{token}.data",
@@ -518,7 +618,7 @@ class LocalDestination(Destination):
         if token is None or raw["version"] != 1:
             raise ValueError("marqueur de suppression invalide")
         target = raw["target"]
-        if not valid_filename(target):
+        if not _persisted_filename(target):
             raise ValueError("cible de suppression invalide")
         if (
             raw["data_trash"] != f".pbtrash-{token}.data"
@@ -553,7 +653,11 @@ class LocalDestination(Destination):
             raise ValueError("état de renommage incohérent")
         source = raw["source"]
         target = raw["target"]
-        if not valid_filename(source) or not valid_filename(target) or source == target:
+        if (
+            not _persisted_filename(source)
+            or not _persisted_filename(target)
+            or source == target
+        ):
             raise ValueError("noms de renommage invalides")
         if raw["meta_backup"] != f".pbrename-backup-{token}.json":
             raise ValueError("sauvegarde de renommage incohérente")
@@ -593,6 +697,8 @@ class LocalDestination(Destination):
             ) from exc
         for entry in entries:
             try:
+                if self._historical_pbdel_pair(directory_fd, entry.name):
+                    continue
                 if _txn_token(entry.name) is not None:
                     transaction = self._parse_transaction(
                         entry.name,
@@ -614,6 +720,22 @@ class LocalDestination(Destination):
             except (DestinationError, ValueError, TypeError, KeyError):
                 continue
         return names
+
+    def _historical_pbdel_pair(
+        self,
+        directory_fd: DirectoryHandle,
+        name: str,
+    ) -> bool:
+        """Do not execute an old client upload as a deletion marker."""
+        if not _legacy_pbdel_filename(name):
+            return False
+        sidecar_name = name + ".json"
+        try:
+            sidecar = self._fs.entry_info(directory_fd, sidecar_name)
+        except (OSError, UnsupportedFilesystemError):
+            # Ambiguous recovery must be non-destructive.
+            return True
+        return sidecar is not None and sidecar.is_regular and not sidecar.is_symlink
 
     def _remember_journal_entry(self, directory_fd: DirectoryHandle, entry) -> None:
         try:
@@ -1392,6 +1514,8 @@ class LocalDestination(Destination):
         protected: set[str] = set()
         for entry in entries:
             if _delete_token(entry.name) is None:
+                continue
+            if self._historical_pbdel_pair(directory_fd, entry.name):
                 continue
             protected.add(entry.name)
             self._remember_journal_entry(directory_fd, entry)
@@ -3046,6 +3170,8 @@ class LocalDestination(Destination):
             committed_targets: set[str] = set()
             for entry in entries:
                 if _delete_token(entry.name) is not None:
+                    if self._historical_pbdel_pair(directory_fd, entry.name):
+                        continue
                     try:
                         transaction = self._parse_delete_transaction(
                             entry.name,
@@ -3107,15 +3233,8 @@ class LocalDestination(Destination):
                 if (
                     not entry.name.endswith(".json")
                     or entry.name == ".pasteberth.lock"
-                    or entry.name.startswith(
-                        (
-                            ".pbmeta-",
-                            ".pbdata-",
-                            ".pbbackup-",
-                            ".pbtxn-",
-                            ".pbtrash-",
-                            ".pbrename-",
-                        )
+                        or entry.name.startswith(
+                        _INTERNAL_RESERVED_PREFIXES
                     )
                     or _internal_marker_name(entry.name)
                 ):
