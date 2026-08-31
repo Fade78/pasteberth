@@ -50,6 +50,12 @@ class TestVersion(unittest.TestCase):
         self.assertEqual(proc.returncode, 0)
         self.assertIn("--config", proc.stdout)
 
+    def test_aide_serveur_expose_le_niveau_de_log(self):
+        proc = run_cli(["serve", "--help"])
+        self.assertEqual(proc.returncode, 0)
+        self.assertIn("--log-level", proc.stdout)
+        self.assertIn("DEBUG", proc.stdout)
+
 
 class TestWrappers(unittest.TestCase):
     def setUp(self):

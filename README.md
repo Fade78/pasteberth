@@ -37,8 +37,8 @@ service between independent servers.
 
 ## Quick Start
 
-The current public release is `1.6.1`. The documented v1.6 server runs on
-Linux/POSIX systems, requires Python 3.11 or newer, and has no third-party
+The current public release is `1.6.2`. The documented v1.6.2 server runs on
+Linux, requires Python 3.11 or newer, and has no third-party
 Python runtime dependency. A native Windows backend is included but has only
 been validated under Wine; macOS and native Windows remain outside the official
 support matrix until real-OS validation is available.
@@ -132,7 +132,7 @@ covers:
 
 - installation, configuration, and the configuration discovery order;
 - Web UI behavior, selection, clipboard handling, and content types;
-- every CLI command and its exit codes;
+- every CLI command, its syntax, and its exit codes;
 - Bash completion in [`contrib/completions/pasteberth.bash`](contrib/completions/pasteberth.bash);
 - filesystem layout, sidecars, retention, backup, and recovery;
 - systemd, Caddy, nginx, TLS, authentication, and security boundaries;
@@ -147,10 +147,10 @@ configuration template. The optional Linux user-service template is
 
 ## Support Status
 
-| Area | v1.6.1 status |
+| Area | v1.6.2 status |
 |---|---|
 | Python | 3.11 or newer |
-| Server | Linux/POSIX, officially tested on Linux |
+| Server | Linux, officially tested |
 | Destination | Local filesystem only |
 | Browser | Chromium-tested; Firefox suite available |
 | Windows/macOS server | Windows backend covered by Wine tests; native Windows/macOS not officially validated |

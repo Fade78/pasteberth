@@ -1,7 +1,7 @@
 # Pasteberth Operator Guide
 
 This guide is the detailed reference for installing, configuring, operating,
-and integrating Pasteberth 1.6.1. The short project overview is in
+and integrating Pasteberth 1.6.2. The short project overview is in
 [`README.md`](README.md); user-visible release history is in
 [`CHANGELOG.md`](CHANGELOG.md).
 
@@ -74,14 +74,14 @@ contexts:
 
 ## 2. Requirements and Support
 
-The 1.6.1 implementation requires:
+The 1.6.2 implementation requires:
 
 - Python 3.11 or newer;
-- a local filesystem with the POSIX primitives used by the storage engine;
+- a local filesystem supported by the active platform backend;
 - a modern browser for the Web UI;
 - no third-party Python runtime dependency.
 
-Linux is the current official and tested server platform for v1.6.1. The
+Linux is the current official and tested server platform for v1.6.2. The
 Windows backend has broad Wine coverage, but native Windows/NTFS validation is
 still outstanding and macOS support is not implemented. Do not infer support
 for every network or exotic filesystem from the operating system name.
@@ -93,7 +93,7 @@ Firefox when the corresponding Playwright browser is installed.
 
 ### 3.1 Source checkout
 
-The supported v1.5 installation is a source checkout. It needs no root access
+The supported v1.6.2 installation is a source checkout. It needs no root access
 and no installation script:
 
 ```sh
@@ -121,7 +121,7 @@ do not provide a plugin mechanism through the current directory or
 `PYTHONPATH`.
 
 The Python project also declares the `pasteberth` console entry point in
-`pyproject.toml`. The repository wrapper remains the documented v1.5 operator
+`pyproject.toml`. The repository wrapper remains the documented v1.6.2 operator
 path because default storage and generated configuration are deliberately
 repository-oriented.
 
@@ -183,8 +183,8 @@ attempt, so changing it does not require a restart.
 | `max_upload_size` | `20MiB` | Maximum size of one upload; the hard maximum is `50MiB`. |
 | `max_image_pixels` | `25000000` | Structural image pixel budget; hard maximum is 50 MP. |
 | `url_prefix` | `""` | Public path prefix such as `/paste`; the proxy must preserve it. |
-| `trusted_proxies` | `[]` | Peer IPs allowed to provide `X-Forwarded-*`. |
-| `allowed_hosts` | `[]` | Hostnames accepted by Host and Origin checks; empty means wildcard and triggers an audit warning. |
+| `trusted_proxies` | `[]` | IP addresses or CIDR networks allowed to provide `X-Forwarded-*`. |
+| `allowed_hosts` | `[]` | Hostnames or IP addresses accepted by Host and Origin checks; empty means wildcard and triggers an audit warning. |
 | `allow_unauthenticated_local` | `false` | Explicit opt-in for anonymous loopback or proxy mode. |
 | `allow_unauthenticated_remote` | `false` | Explicit opt-in for anonymous non-loopback mode; discouraged. |
 | `allow_insecure_http_remote` | `false` | Explicit opt-in for non-loopback HTTP on a controlled private network. |
@@ -236,7 +236,7 @@ Each `[[zones]]` table defines one independent project area:
 |---|---:|---|
 | `id` | required | Lowercase API/UI identifier, up to 64 characters. |
 | `label` | `id` | Human-readable UI label. |
-| `type` | `local` | Only `local` is implemented in v1.5. |
+| `type` | `local` | Only `local` is implemented in v1.6.2. |
 | `directory` | required | Absolute path as seen by the server and the harness. |
 | `retain` | `10` | Number of managed items retained in the zone. |
 | `reference_prefix` | `@` | Text prepended to one returned reference. |
@@ -389,10 +389,11 @@ Use `pasteberth --help` for the parser's short reference and
 The command without a subcommand starts the server:
 
 ```text
-pasteberth [--config PATH] [--log-level LEVEL]
+pasteberth [--config PATH]
 ```
 
-The explicit equivalent is:
+This form uses `log_level` from the selected configuration. To override it for
+one invocation, use the explicit server subcommand:
 
 ```text
 pasteberth serve [--config PATH] [--log-level LEVEL]
@@ -486,6 +487,16 @@ pasteberth filesystem-delete [--config PATH] [--force] \
 Only coherent managed pairs are deleted. `--force` permits deletion when the
 sidecar's recorded size is stale, but it does not make a foreign file or
 malformed sidecar eligible for deletion.
+
+### 6.8 Exit codes
+
+Unless a parser error prevents command dispatch, the CLI uses these codes:
+
+| Code | Meaning |
+|---:|---|
+| `0` | The command completed successfully; a server also returns this after a normal stop. |
+| `1` | An operational error occurred, a filesystem batch was only partly successful, a server could not bind, or `audit` found warnings. |
+| `2` | CLI syntax, configuration, startup policy, or the requested deployment path is invalid or unusable. |
 
 ## 7. Bash Completion
 
@@ -764,7 +775,8 @@ settings, and whether ZIP download is enabled.
 ### 11.2 Upload
 
 The multipart field is `image`. `preserve_name=1` retains a valid dropped
-filename; `replace=1` explicitly authorizes replacing a coherent managed pair.
+filename; `replace=1` together with `preserve_name=1` explicitly authorizes
+replacing a coherent managed pair.
 
 ```sh
 curl -b cookies.txt \
@@ -796,6 +808,7 @@ The main application error codes are:
 | `401` | `unauthorized` | A protected route has no valid session. |
 | `403` | `forbidden_host`, `forbidden_origin`, `zip_disabled` | The host/origin is not allowed or ZIP is disabled for the zone. |
 | `404` | `unknown_zone`, `unknown_image`, `not_found` | The requested resource does not exist. |
+| `405` | `method_not_allowed` | The HTTP method is not supported for the requested resource. |
 | `409` | `storage_conflict` | A foreign file or another storage conflict prevents the operation. |
 | `413` | `too_large` | The request or content exceeds a configured limit. |
 | `415` | `unsupported_media_type`, `unsupported_format` | The declared or detected content type is not supported. |
@@ -803,7 +816,7 @@ The main application error codes are:
 | `428` | `replacement_required` | Explicit replacement was required but not requested. |
 | `429` | `rate_limited` | Login attempts are temporarily throttled. |
 | `500` | `destination_error`, `internal` | The server could not complete a storage or internal operation. |
-| `503` | `retention_error`, `upload_busy` | Retention or shared upload memory is temporarily unavailable. |
+| `503` | `preview_busy`, `retention_error`, `upload_busy` | Preview slots, retention, or shared upload memory are temporarily unavailable. |
 | `507` | `storage_low` | The zone's free-space reserve would be exceeded. |
 
 The response includes fields such as:
@@ -844,7 +857,8 @@ Clients should refresh the zone and retry after the indicated delay.
 
 The login endpoint accepts a `password` field in a normal URL-encoded form,
 multipart form, or JSON object. A successful login returns a session cookie and
-redirects to `/`. Failed attempts are delayed and rate limited. A client should
+redirects to the public root (`/` or the configured `url_prefix`). Failed
+attempts are delayed and rate limited. A client should
 preserve and resend the cookie for protected API calls, and should send the
 same-origin `Origin` or `Referer` on unsafe requests.
 
@@ -965,10 +979,9 @@ restart the service.
 - mixed clipboard HTML may be larger than the original image-only payload;
 - image validation is structural and not a full codec decode.
 
-The next major platform goal is native Linux, macOS, and Windows support with
-the same transaction and security guarantees. That work is intentionally
-separate from the 1.5.0 public documentation and must not be represented as
-already supported.
+The next major platform goal is native Windows and macOS support with the same
+transaction and security guarantees. That work is intentionally separate from
+the v1.6.2 support matrix and must not be represented as already supported.
 
 ## 16. License
 

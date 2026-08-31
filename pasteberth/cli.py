@@ -920,7 +920,11 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_serve = sub.add_parser("serve", help="démarre le serveur")
     p_serve.add_argument("--config", default=argparse.SUPPRESS, help="chemin du config.toml")
-    p_serve.add_argument("--log-level", choices=["DEBUG", "INFO", "WARNING", "ERROR"])
+    p_serve.add_argument(
+        "--log-level",
+        choices=["DEBUG", "INFO", "WARNING", "ERROR"],
+        help="surcharge le niveau log_level pour cette exécution",
+    )
     p_serve.set_defaults(func=_cmd_serve)
 
     p_drop = sub.add_parser(

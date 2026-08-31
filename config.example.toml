@@ -55,7 +55,7 @@ max_sessions = 4096               # maximum number of live server-side sessions
 # id                : logical API/UI identifier (first [a-z0-9], then [a-z0-9_-], max 64)
 # directory         : ABSOLUTE path as seen by the SERVER; used by the harness
 #                      and as the target path for filesystem operations
-# retain            : number of stored contents kept per zone (circular retention)
+# retain            : number of stored contents kept per zone (oldest removed first)
 # reference_prefix  : text prepended to the returned reference (empty allowed)
 # reference_suffix  : text appended to the returned reference (empty by default)
 # reference_list_prefix/suffix : delimit a copied list of references (empty default)

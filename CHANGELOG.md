@@ -2,6 +2,15 @@
 
 This file records user-visible changes to Pasteberth.
 
+## [1.6.2] - 2026-09-01
+
+### Documentation and CLI
+
+- aligned the operator guide, README, configuration example, and Bash
+  completion reference with the current CLI and platform support matrix;
+- clarified the `serve --log-level` help text and documented CLI exit codes;
+- documented the HTTP method and preview-capacity error responses.
+
 ## [1.6.1] - 2026-09-01
 
 ### Security and reliability
