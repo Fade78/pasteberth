@@ -2,6 +2,24 @@
 
 This file records user-visible changes to Pasteberth.
 
+## [1.6.0] - 2026-08-31
+
+### Added
+
+- a semantic `platformfs` boundary with the existing Linux behavior preserved;
+- a native Win32 filesystem backend for safe handles, identities, locking,
+  transactions, recovery, and capability reporting;
+- cross-platform configuration, audit, CLI, storage, and concurrency coverage.
+
+### Security and compatibility
+
+- the v1.5 sidecar and transaction-marker compatibility contract remains in
+  place;
+- foreign files, ownership checks, no-replace operations, and crash recovery
+  remain guarded by platform capabilities;
+- Windows behavior is covered under Wine, but native Windows/NTFS and macOS
+  validation are not complete, so those platforms are not official targets yet.
+
 ## [1.5.0] - 2026-08-30
 
 ### Added

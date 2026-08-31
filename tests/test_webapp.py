@@ -14,6 +14,7 @@ from pathlib import Path
 from unittest import mock
 
 from pasteberth import __version__
+from pasteberth.platformfs import VolumeSpace
 from tests.helpers import (
     build_multipart,
     json_of,
@@ -752,8 +753,12 @@ class TestRejetsUploads(Base):
         self.assertEqual(item["mime"], "application/octet-stream")
 
     def test_espace_disque_insuffisant(self):
-        usage = type("Usage", (), {"f_blocks": 1000, "f_bavail": 1, "f_frsize": 1024})()
-        with mock.patch("pasteberth.storage.os.fstatvfs", return_value=usage):
+        destination = self.server.service._destinations["default"]
+        with mock.patch.object(
+            destination._fs,
+            "volume_space",
+            return_value=VolumeSpace(1000 * 1024, 1 * 1024),
+        ):
             status_code, _, body = self.req(
                 "POST",
                 "/api/zones/default/images",
@@ -780,6 +785,8 @@ class TestRejetsUploads(Base):
     def test_verrou_destination_non_regulier_reste_une_erreur_json(self):
         import os
 
+        if not hasattr(os, "mkfifo"):
+            self.skipTest("FIFO indisponible sous Windows")
         lock = self.zones_dirs["default"] / ".pasteberth.lock"
         lock.unlink()
         os.mkfifo(lock)
@@ -902,7 +909,9 @@ class TestReferenceFormatee(Base):
             headers={"Content-Type": ctype},
         )
         item = json_of(resp)
-        self.assertTrue(item["reference"].startswith("`/"))
+        self.assertTrue(
+            item["reference"].startswith("`" + str(self.zones_dirs["default"]))
+        )
         self.assertTrue(item["reference"].endswith(".png`"))
 
 

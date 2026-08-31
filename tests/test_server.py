@@ -9,7 +9,7 @@ from unittest import mock
 
 from pasteberth.server import PasteberthServer
 
-from tests.helpers import LiveServer, write_config
+from tests.helpers import LiveServer, running_under_wine, write_config
 
 
 class TestCycleDeVieServeur(unittest.TestCase):
@@ -30,6 +30,8 @@ class TestCycleDeVieServeur(unittest.TestCase):
 
     def test_arret_ferme_les_connexions_keepalive(self):
         """Une connexion keep-alive ouverte ne doit pas bloquer l'arrêt."""
+        if running_under_wine():
+            self.skipTest("Wine ne réveille pas de façon fiable un socket Windows fermé à distance")
         with tempfile.TemporaryDirectory() as tmp:
             cfg = write_config(Path(tmp), zones=[{"id": "d", "directory": str(Path(tmp) / "z")}])
             server = LiveServer(cfg)

@@ -3,7 +3,9 @@ client HTTP minimal (bibliothèque standard uniquement)."""
 from __future__ import annotations
 
 import binascii
+import ctypes
 import json
+import platform
 import struct
 import threading
 import zlib
@@ -17,6 +19,16 @@ from pasteberth.service import PasteService
 from pasteberth.webapp import make_handler
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
+
+
+def running_under_wine() -> bool:
+    if platform.system() != "Windows":
+        return False
+    try:
+        ctypes.WinDLL("ntdll").wine_get_version
+    except (AttributeError, OSError):
+        return False
+    return True
 
 
 # ---------------------------------------------------------------- images
@@ -158,11 +170,11 @@ def write_config(
              for zid, retain in (("default", 3), ("secondary", 2))
         ]
     lines = [
-        f'listen_address = "{listen_address}"',
+        f"listen_address = {json.dumps(listen_address)}",
     ]
     if port is not None:
         lines.append(f"port = {port}")
-    lines.append(f'max_upload_size = "{max_upload_size}"')
+    lines.append(f"max_upload_size = {json.dumps(max_upload_size)}")
     if max_image_pixels is not None:
         lines.append(f"max_image_pixels = {max_image_pixels}")
     if trusted_proxies is not None:
@@ -195,35 +207,41 @@ def write_config(
             ]
         )
         if tls_certificate is not None:
-            lines.append(f'certificate = "{tls_certificate}"')
+            lines.append(f"certificate = {json.dumps(tls_certificate)}")
         if tls_private_key is not None:
-            lines.append(f'private_key = "{tls_private_key}"')
+            lines.append(f"private_key = {json.dumps(tls_private_key)}")
     lines.append("")
     lines.append("[auth]")
     lines.append(f"enabled = {str(auth_enabled).lower()}")
     if password_file is not None:
-        lines.append(f'password_file = "{password_file}"')
+        lines.append(f"password_file = {json.dumps(password_file)}")
     lines.append("")
     for zone in zones:
         lines.append("[[zones]]")
-        lines.append(f'id = "{zone["id"]}"')
-        lines.append(f'label = "{zone.get("label", zone["id"])}"')
-        lines.append(f'type = "{zone.get("type", "local")}"')
-        lines.append(f'directory = "{zone["directory"]}"')
+        lines.append(f"id = {json.dumps(zone['id'])}")
+        lines.append(f"label = {json.dumps(zone.get('label', zone['id']))}")
+        lines.append(f"type = {json.dumps(zone.get('type', 'local'))}")
+        lines.append(f"directory = {json.dumps(str(zone['directory']))}")
         lines.append(f'retain = {zone.get("retain", 3)}')
-        lines.append(f'reference_prefix = "{zone.get("reference_prefix", "@")}"')
-        lines.append(f'reference_suffix = "{zone.get("reference_suffix", "")}"')
         lines.append(
-            f'reference_list_prefix = "{zone.get("reference_list_prefix", "")}"'
+            f"reference_prefix = {json.dumps(zone.get('reference_prefix', '@'))}"
         )
         lines.append(
-            f'reference_list_suffix = "{zone.get("reference_list_suffix", "")}"'
+            f"reference_suffix = {json.dumps(zone.get('reference_suffix', ''))}"
         )
-        lines.append(f'reference_separator = "{zone.get("reference_separator", ",")}"')
+        lines.append(
+            f"reference_list_prefix = {json.dumps(zone.get('reference_list_prefix', ''))}"
+        )
+        lines.append(
+            f"reference_list_suffix = {json.dumps(zone.get('reference_list_suffix', ''))}"
+        )
+        lines.append(
+            f"reference_separator = {json.dumps(zone.get('reference_separator', ','))}"
+        )
         lines.append(
             f'allow_zip_download = {str(zone.get("allow_zip_download", True)).lower()}'
         )
-        lines.append(f'color = "{zone.get("color", "#243447")}"')
+        lines.append(f"color = {json.dumps(zone.get('color', '#243447'))}")
         zone_min_free = zone.get("min_free_percent", min_free_percent)
         if zone_min_free is not None:
             lines.append(f"min_free_percent = {zone_min_free}")

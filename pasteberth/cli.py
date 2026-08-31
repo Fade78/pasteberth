@@ -466,9 +466,10 @@ def _audit_zone(cfg, zone) -> tuple[list[str], list[str]]:
         # Feature: avertissement seul, pas d'erreur — les zones partagées sont
         # légitimes (partage contrôlé entre utilisateurs). Refuser pousserait à
         # contourner la protection.
-        if mode is not None and mode & 0o077:
+        if (mode is not None and mode & 0o077) or (mode is None and not audit.private):
+            permission_detail = oct(mode) if mode is not None else (audit.detail or "ACL")
             warnings.append(
-                f"zone {zone.id}: permissions non privées ({oct(mode)}) : {path} "
+                f"zone {zone.id}: permissions non privées ({permission_detail}) : {path} "
                 "(0700 recommandé)"
             )
     except (OSError, UnsupportedFilesystemError) as exc:
@@ -530,7 +531,7 @@ def _audit_listener(cfg) -> tuple[str | None, str | None]:
             sock.bind(sockaddr)
     except OSError as exc:
         message = f"bind impossible sur {cfg.listen_address}:{cfg.port} ({exc})"
-        if exc.errno == errno.EADDRINUSE:
+        if exc.errno in (errno.EADDRINUSE, errno.EACCES) or getattr(exc, "winerror", None) == 10013:
             return None, (
                 f"port déjà utilisé sur {cfg.listen_address}:{cfg.port} : "
                 "une instance est peut-être déjà lancée"

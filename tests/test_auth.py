@@ -14,6 +14,8 @@ from pasteberth.auth import (
     valid_password_hash,
     verify_password,
 )
+from pasteberth.platformfs import platform_fs
+from tests.helpers import running_under_wine
 
 PASSWORD = "correct horse battery staple"
 
@@ -39,8 +41,14 @@ class TestHash(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "passwd"
             save_password_hash(path, hash_password(PASSWORD))
-            mode = oct(path.stat().st_mode & 0o777)
-            self.assertEqual(mode, "0o600")
+            if platform_fs().backend_name == "windows":
+                if running_under_wine():
+                    self.assertTrue(path.is_file())
+                else:
+                    self.assertTrue(platform_fs().audit_permissions(path, directory=False).private)
+            else:
+                mode = oct(path.stat().st_mode & 0o777)
+                self.assertEqual(mode, "0o600")
             loaded = load_password_hash(path)
             self.assertTrue(verify_password(PASSWORD, loaded))
             self.assertIsNone(load_password_hash(Path(tmp) / "absent"))
@@ -79,15 +87,27 @@ class TestHash(unittest.TestCase):
             save_password_hash(path, hash_password(PASSWORD))
             path.chmod(0o644)
             save_password_hash(path, hash_password("nouveau mot de passe long"))
-            self.assertEqual(path.stat().st_mode & 0o777, 0o600)
+            if platform_fs().backend_name == "windows":
+                if not running_under_wine():
+                    self.assertTrue(platform_fs().audit_permissions(path, directory=False).private)
+            else:
+                self.assertEqual(path.stat().st_mode & 0o777, 0o600)
 
     def test_ecriture_ne_chmodde_pas_le_repertoire_parent(self):
         with tempfile.TemporaryDirectory() as tmp:
             parent = Path(tmp) / "repository"
             parent.mkdir(mode=0o755)
             parent.chmod(0o755)
+            before_audit = (
+                platform_fs().audit_permissions(parent, directory=True)
+                if platform_fs().backend_name == "windows"
+                else None
+            )
             save_password_hash(parent / "passwd", hash_password(PASSWORD))
-            self.assertEqual(parent.stat().st_mode & 0o777, 0o755)
+            if platform_fs().backend_name == "windows":
+                self.assertEqual(before_audit, platform_fs().audit_permissions(parent, directory=True))
+            else:
+                self.assertEqual(parent.stat().st_mode & 0o777, 0o755)
 
     def test_validation_structurelle_sans_scrypt(self):
         stored = hash_password(PASSWORD)

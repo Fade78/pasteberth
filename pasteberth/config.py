@@ -806,13 +806,14 @@ def prepare_directories(cfg: Config) -> None:
             # acceptés avec un avertissement, pas refusés. Refuser pousserait les
             # opérateurs à contourner la protection (chmod 777, désactivation du
             # service, stockage hors zone). Le 0700 reste recommandé.
-            if mode is not None and mode & 0o077:
+            if (mode is not None and mode & 0o077) or (mode is None and not audit.private):
+                permission_detail = oct(mode) if mode is not None else (audit.detail or "ACL")
                 log.warning(
                     "zone '%s': permissions non privées sur %s (%s) ; "
                     "0700 est recommandé",
                     zone.id,
                     zone.directory,
-                    oct(mode),
+                    permission_detail,
                 )
             identity = directory.identity
         except (OSError, UnsupportedFilesystemError) as exc:

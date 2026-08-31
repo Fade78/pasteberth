@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from pathlib import Path
 
 from pasteberth.images import (
     FORMATS,
@@ -69,7 +68,14 @@ def safe_extension(name: str | None) -> str | None:
     """Extension d'origine assainie (drop) : [A-Za-z0-9]{1,10}."""
     if not name:
         return None
-    ext = Path(name).suffix.lstrip(".")
+    # Upload names use the same separator-independent syntax on every host.
+    basename = name.replace("\\", "/").rsplit("/", 1)[-1]
+    if basename.startswith(".."):
+        return None
+    dot = basename.rfind(".")
+    if dot <= 0:
+        return None
+    ext = basename[dot + 1:]
     ext = re.sub(r"[^A-Za-z0-9]", "", ext)
     if not _SAFE_EXT_RE.fullmatch(ext):
         return None

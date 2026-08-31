@@ -19,7 +19,8 @@ from pasteberth.storage import (
     StorageLowError,
     valid_filename,
 )
-from tests.helpers import make_png
+from pasteberth.platformfs import VolumeSpace, platform_fs
+from tests.helpers import make_png, running_under_wine
 
 INFO = lambda w=4, h=3: ImageInfo(fmt="png", width=w, height=h)
 
@@ -45,8 +46,24 @@ class TestSauvegarde(Base):
         self.assertEqual(meta["width"], 2)
         self.assertEqual(meta["size"], len(make_png(2, 2)))
         self.assertIn("T", meta["created_at"])
-        self.assertEqual(stat.S_IMODE((self.dir / stored.filename).stat().st_mode), 0o600)
-        self.assertEqual(stat.S_IMODE((self.dir / (stored.filename + ".json")).stat().st_mode), 0o600)
+        if platform_fs().backend_name == "windows":
+            if running_under_wine():
+                self.skipTest("Wine ne persiste pas les ACL NTFS sur ce volume")
+            self.assertTrue(
+                platform_fs().audit_permissions(
+                    self.dir / stored.filename,
+                    directory=False,
+                ).private
+            )
+            self.assertTrue(
+                platform_fs().audit_permissions(
+                    self.dir / (stored.filename + ".json"),
+                    directory=False,
+                ).private
+            )
+        else:
+            self.assertEqual(stat.S_IMODE((self.dir / stored.filename).stat().st_mode), 0o600)
+            self.assertEqual(stat.S_IMODE((self.dir / (stored.filename + ".json")).stat().st_mode), 0o600)
 
     def test_noms_uniques_rapides(self):
         names = {s.filename for s in self.save(20)}
@@ -1813,6 +1830,8 @@ class TestOwnership(Base):
             self.dest.delete(victim.name)
 
     def test_delete_n_efface_pas_une_cible_changee(self):
+        if platform_fs().backend_name == "windows":
+            self.skipTest("Windows ne remplace pas un fichier ouvert par suppression/recréation")
         stored = self.save()[0]
         target = self.dir / stored.filename
         original_identity = LocalDestination._entry_identity
@@ -1838,29 +1857,28 @@ class TestOwnership(Base):
     def test_suppression_interne_ne_detruit_pas_un_fichier_remplace_apres_verification(self):
         stored = self.save()[0]
         target = self.dir / stored.filename
-        directory_fd = os.open(self.dir, os.O_RDONLY)
-        expected = LocalDestination._entry_identity(directory_fd, stored.filename)
+        with self.dest._directory_fd() as directory_fd:
+            expected = LocalDestination._entry_identity(directory_fd, stored.filename)
 
-        original_move = self.dest._move_expected
+            original_move = self.dest._move_expected
 
-        def replace_before_move(fd, source, destination, identity):
-            if source == stored.filename:
-                target.unlink()
-                target.write_bytes(b"foreign")
-            return original_move(fd, source, destination, identity)
+            def replace_before_move(fd, source, destination, identity):
+                if source == stored.filename:
+                    target.unlink()
+                    target.write_bytes(b"foreign")
+                return original_move(fd, source, destination, identity)
 
-        try:
             with mock.patch.object(
                 self.dest,
                 "_move_expected",
                 side_effect=replace_before_move,
             ):
                 self.assertFalse(self.dest._unlink_expected(directory_fd, stored.filename, expected))
-        finally:
-            os.close(directory_fd)
         self.assertEqual(target.read_bytes(), b"foreign")
 
     def test_lecture_conserve_le_descripteur_ouvert_si_la_cible_change(self):
+        if platform_fs().backend_name == "windows":
+            self.skipTest("Windows ne remplace pas un fichier ouvert par suppression/recréation")
         stored = self.save()[0]
         target = self.dir / stored.filename
         original = target.read_bytes()
@@ -2221,7 +2239,12 @@ class TestRepertoires(unittest.TestCase):
         dest = LocalDestination(target, create_directory=True)
         dest.save(make_png(), INFO(1, 1))
         self.assertTrue(target.is_dir())
-        self.assertEqual(stat.S_IMODE(target.stat().st_mode), 0o700)
+        if platform_fs().backend_name == "windows":
+            if running_under_wine():
+                self.skipTest("Wine ne persiste pas les ACL NTFS sur ce volume")
+            self.assertTrue(platform_fs().audit_permissions(target, directory=True).private)
+        else:
+            self.assertEqual(stat.S_IMODE(target.stat().st_mode), 0o700)
 
     def test_repertoire_existant_non_prive_accepte(self):
         target = self.tmp / "open"
@@ -2279,8 +2302,11 @@ class TestRepertoires(unittest.TestCase):
 
     def test_espace_libre_sous_seuil(self):
         dest = LocalDestination(self.tmp / "space")
-        usage = type("Usage", (), {"f_blocks": 1000, "f_bavail": 10, "f_frsize": 1024})()
-        with mock.patch("pasteberth.storage.os.fstatvfs", return_value=usage):
+        with mock.patch.object(
+            dest._fs,
+            "volume_space",
+            return_value=VolumeSpace(1000 * 1024, 10 * 1024),
+        ):
             with self.assertRaises(StorageLowError):
                 dest.ensure_space(1024, 2.0)
 
@@ -2360,6 +2386,8 @@ class TestRepertoires(unittest.TestCase):
         )
 
     def test_fallback_rename_ne_supprime_pas_une_cible_remplacee(self):
+        if platform_fs().backend_name != "linux":
+            self.skipTest("fallback rename spécifique au backend Linux")
         target_dir = self.tmp / "rename-fallback"
         dest = LocalDestination(target_dir)
         source = target_dir / "source.bin"

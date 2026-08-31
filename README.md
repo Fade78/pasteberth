@@ -37,9 +37,11 @@ service between independent servers.
 
 ## Quick Start
 
-The current public release is `1.5.0`. The documented v1.5 server runs on
+The current public release is `1.6.0`. The documented v1.6 server runs on
 Linux/POSIX systems, requires Python 3.11 or newer, and has no third-party
-Python runtime dependency.
+Python runtime dependency. A native Windows backend is included but has only
+been validated under Wine; macOS and native Windows remain outside the official
+support matrix until real-OS validation is available.
 
 ```sh
 git clone https://github.com/Fade78/pasteberth.git
@@ -123,13 +125,13 @@ configuration template. The optional Linux user-service template is
 
 ## Support Status
 
-| Area | v1.5.0 status |
+| Area | v1.6.0 status |
 |---|---|
 | Python | 3.11 or newer |
 | Server | Linux/POSIX, officially tested on Linux |
 | Destination | Local filesystem only |
 | Browser | Chromium-tested; Firefox suite available |
-| Windows/macOS server | Not an official v1.5.0 target; planned for v1.6.0 |
+| Windows/macOS server | Windows backend covered by Wine tests; native Windows/macOS not officially validated |
 | Network/exotic filesystems | Not guaranteed without capability validation |
 
 ## License

@@ -1,7 +1,7 @@
 # Pasteberth Operator Guide
 
 This guide is the detailed reference for installing, configuring, operating,
-and integrating Pasteberth 1.5.0. The short project overview is in
+and integrating Pasteberth 1.6.0. The short project overview is in
 [`README.md`](README.md); user-visible release history is in
 [`CHANGELOG.md`](CHANGELOG.md).
 
@@ -74,18 +74,17 @@ contexts:
 
 ## 2. Requirements and Support
 
-The 1.5.0 implementation requires:
+The 1.6.0 implementation requires:
 
 - Python 3.11 or newer;
 - a local filesystem with the POSIX primitives used by the storage engine;
 - a modern browser for the Web UI;
 - no third-party Python runtime dependency.
 
-Linux is the current official and tested server platform for v1.5.0. The
-codebase contains a deliberate multiplatform roadmap, but Windows and macOS
-are not claimed as official v1.5.0 server targets until their native filesystem
-backends and real-OS test suites are complete. Do not infer support for every
-network or exotic filesystem from the operating system name.
+Linux is the current official and tested server platform for v1.6.0. The
+Windows backend has broad Wine coverage, but native Windows/NTFS validation is
+still outstanding and macOS support is not implemented. Do not infer support
+for every network or exotic filesystem from the operating system name.
 
 The supplied browser suite uses Chromium by default and can also run with
 Firefox when the corresponding Playwright browser is installed.

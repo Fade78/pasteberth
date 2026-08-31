@@ -1,6 +1,7 @@
 """Tests de configuration : parsing, validation, politique de sécurité."""
 import tempfile
 import unittest
+import json
 import os
 import stat
 from dataclasses import replace
@@ -19,6 +20,7 @@ from pasteberth.config import (
     resolve_config_path,
     resolve_group_zone_ids,
 )
+from pasteberth.platformfs import platform_fs
 from pasteberth.server import address_family_for
 from tests.helpers import write_config
 
@@ -159,7 +161,7 @@ class TestParsing(unittest.TestCase):
             f'listen_address = "127.0.0.1"\n'
             f'[[zones]]\n'
             f'id = "one"\n'
-            f'directory = "{self.tmp / "one"}"\n',
+            f'directory = {json.dumps(str(self.tmp / "one"))}\n',
             encoding="utf-8",
         )
         cfg = load_config(path)
@@ -182,7 +184,7 @@ class TestParsing(unittest.TestCase):
 
     def test_fichier_passwd_nul_refuse(self):
         with self.assertRaisesRegex(ConfigError, "NUL"):
-            make_cfg(self.tmp, password_file=str(self.tmp / "passwd\\u0000bad"))
+            make_cfg(self.tmp, password_file=str(self.tmp / "passwd\x00bad"))
 
     def test_chemin_config_nul_retourne_une_erreur(self):
         with self.assertRaises(ConfigError):
@@ -303,7 +305,7 @@ class TestParsing(unittest.TestCase):
                     make_cfg(self.tmp, zones=[zone, self._zones()[0]])
 
     def test_id_duplique(self):
-        z = {"id": "dup", "directory": "/tmp/a"}
+        z = {"id": "dup", "directory": str(self.tmp / "a")}
         with self.assertRaises(ConfigError) as ctx:
             make_cfg(self.tmp, zones=[z, dict(z)])
         self.assertIn("dupliqué", str(ctx.exception))
@@ -373,8 +375,8 @@ class TestPolitiqueSecurite(unittest.TestCase):
             listen_address="0.0.0.0",
             auth_enabled=True,
             tls_enabled=True,
-            tls_certificate="/tmp/pasteberth-cert.pem",
-            tls_private_key="/tmp/pasteberth-key.pem",
+            tls_certificate=str(self.tmp / "pasteberth-cert.pem"),
+            tls_private_key=str(self.tmp / "pasteberth-key.pem"),
         )
         self.assertTrue(cfg.tls.enabled)
         check_startup_policy(cfg)
@@ -404,9 +406,11 @@ class TestChemins(unittest.TestCase):
 
         old = os.environ.get("PASTEBERTH_CONFIG")
         try:
-            os.environ["PASTEBERTH_CONFIG"] = "/tmp/autre.toml"
-            self.assertEqual(str(resolve_config_path()), "/tmp/autre.toml")
-            self.assertEqual(str(resolve_config_path("/tmp/explicit.toml")), "/tmp/explicit.toml")
+            configured = str(Path.cwd() / "autre.toml")
+            explicit = str(Path.cwd() / "explicit.toml")
+            os.environ["PASTEBERTH_CONFIG"] = configured
+            self.assertEqual(str(resolve_config_path()), configured)
+            self.assertEqual(str(resolve_config_path(explicit)), explicit)
         finally:
             if old is None:
                 del os.environ["PASTEBERTH_CONFIG"]
@@ -447,21 +451,37 @@ class TestRepertoires(unittest.TestCase):
         target = self.tmp / "open"
         target.mkdir(mode=0o755)
         os.chmod(target, 0o755)
+        before_audit = (
+            platform_fs().audit_permissions(target, directory=True)
+            if platform_fs().backend_name == "windows"
+            else None
+        )
         cfg = load_config(
             write_config(self.tmp, zones=[{"id": "x", "directory": str(target)}])
         )
         prepare_directories(cfg)
-        self.assertEqual(stat.S_IMODE(target.stat().st_mode), 0o755)
+        if platform_fs().backend_name == "windows":
+            self.assertEqual(before_audit, platform_fs().audit_permissions(target, directory=True))
+        else:
+            self.assertEqual(stat.S_IMODE(target.stat().st_mode), 0o755)
 
     def test_repertoire_permissions_ecriture_non_privees_avertissent(self):
         target = self.tmp / "group-writable"
         target.mkdir(mode=0o775)
         os.chmod(target, 0o775)
+        before_audit = (
+            platform_fs().audit_permissions(target, directory=True)
+            if platform_fs().backend_name == "windows"
+            else None
+        )
         cfg = load_config(
             write_config(self.tmp, zones=[{"id": "x", "directory": str(target)}])
         )
         prepare_directories(cfg)
-        self.assertEqual(stat.S_IMODE(target.stat().st_mode), 0o775)
+        if platform_fs().backend_name == "windows":
+            self.assertEqual(before_audit, platform_fs().audit_permissions(target, directory=True))
+        else:
+            self.assertEqual(stat.S_IMODE(target.stat().st_mode), 0o775)
 
     def test_lien_symbolique_parent_refuse(self):
         target = self.tmp / "outside"

@@ -14,10 +14,12 @@ from tests.helpers import (
     make_png,
     request,
     write_config,
+    running_under_wine,
     LiveServer,
 )
 
 PASSWORD = "concurrence-test-000"
+UPLOAD_TIMEOUT = 60 if running_under_wine() else 15
 
 
 def _upload(port, cookie, zone):
@@ -25,6 +27,7 @@ def _upload(port, cookie, zone):
     status, _, resp = request(
         port, "POST", f"/api/zones/{zone}/images",
         body=body, headers={"Content-Type": ctype}, cookie=cookie,
+        timeout=UPLOAD_TIMEOUT,
     )
     return status, resp
 

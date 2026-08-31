@@ -13,8 +13,9 @@ from pasteberth import __version__
 from pasteberth.auth import load_password_hash, verify_password
 from pasteberth.cli import _network_warning, _read_drop_source
 from pasteberth.config import load_config
+from pasteberth.platformfs import platform_fs
 
-from tests.helpers import REPO_ROOT, write_config
+from tests.helpers import REPO_ROOT, running_under_wine, write_config
 
 ENV = {**os.environ, "PYTHONPATH": str(REPO_ROOT)}
 
@@ -115,6 +116,8 @@ class TestErreursDemarrage(unittest.TestCase):
                 self.assertNotIn("Traceback", proc.stderr + proc.stdout)
 
     def test_parent_destination_inaccessible_retourne_une_erreur_propre(self):
+        if platform_fs().backend_name == "windows":
+            self.skipTest("chmod(0) ne modélise pas une ACL inaccessible sous Windows")
         parent = self.tmp / "private"
         parent.mkdir()
         parent.chmod(0)
@@ -130,6 +133,10 @@ class TestErreursDemarrage(unittest.TestCase):
                 self.assertNotIn("Traceback", proc.stderr + proc.stdout)
 
 
+@unittest.skipIf(
+    platform_fs().backend_name == "windows",
+    "getpass nécessite une console Windows réelle dans ce test subprocess",
+)
 class TestPasswd(unittest.TestCase):
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
@@ -162,8 +169,16 @@ class TestPasswd(unittest.TestCase):
         self.assertEqual(proc.returncode, 0, proc.stderr)
         passwd_file = cfg_path.parent / "passwd"
         self.assertTrue(passwd_file.is_file())
-        mode = stat.S_IMODE(passwd_file.stat().st_mode)
-        self.assertEqual(mode, 0o600)
+        if platform_fs().backend_name == "windows":
+            if running_under_wine():
+                self.assertTrue(passwd_file.is_file())
+            else:
+                self.assertTrue(
+                    platform_fs().audit_permissions(passwd_file, directory=False).private
+                )
+        else:
+            mode = stat.S_IMODE(passwd_file.stat().st_mode)
+            self.assertEqual(mode, 0o600)
         stored = load_password_hash(passwd_file)
         self.assertTrue(verify_password("premier-mot-de-passe", stored))
         self.assertFalse(verify_password("ancien-mot-de-passe", stored))
@@ -222,7 +237,13 @@ class TestConfigurationDepot(unittest.TestCase):
         proc = run_cli(["--generate-config", "--config", str(target)])
         self.assertEqual(proc.returncode, 0, proc.stderr)
         self.assertTrue(target.is_file())
-        self.assertEqual(stat.S_IMODE(target.stat().st_mode), 0o600)
+        if platform_fs().backend_name == "windows":
+            if running_under_wine():
+                self.assertTrue(target.is_file())
+            else:
+                self.assertTrue(platform_fs().audit_permissions(target, directory=False).private)
+        else:
+            self.assertEqual(stat.S_IMODE(target.stat().st_mode), 0o600)
         content = target.read_text(encoding="utf-8")
         self.assertIn('id = "default"', content)
         self.assertIn("allowed_hosts = []", content)
@@ -391,8 +412,8 @@ class TestConfigurationDepot(unittest.TestCase):
                 auth_enabled=True,
                 password="mot-de-passe-test-123",
                 tls_enabled=True,
-                tls_certificate="/tmp/cert.pem",
-                tls_private_key="/tmp/key.pem",
+                tls_certificate=str(self.tmp / "cert.pem"),
+                tls_private_key=str(self.tmp / "key.pem"),
             )
         )
         self.assertIsNone(_network_warning(cfg))
@@ -488,6 +509,8 @@ class TestFilesystemDrop(unittest.TestCase):
         self.assertEqual((self.zone / second.name).read_bytes(), b"\x00\x01")
 
     def test_source_fifo_refusee_sans_bloquer(self):
+        if not hasattr(os, "mkfifo"):
+            self.skipTest("FIFO indisponible sous Windows")
         fifo = self.tmp / "source.fifo"
         os.mkfifo(fifo)
 

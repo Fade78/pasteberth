@@ -14,6 +14,7 @@ from pasteberth.platformfs import (
     InvalidNameError,
     platform_fs,
 )
+from tests.helpers import running_under_wine
 
 
 def _hold_lock(path: str, ready, release) -> None:
@@ -27,8 +28,6 @@ def _hold_lock(path: str, ready, release) -> None:
 class PlatformFSContract(unittest.TestCase):
     def setUp(self):
         self.fs = platform_fs()
-        if self.fs.backend_name == "windows":
-            self.skipTest("backend Windows non disponible sur ce runner")
         self.tmp = tempfile.TemporaryDirectory()
         self.directory_path = Path(self.tmp.name) / "zone"
 
@@ -67,6 +66,29 @@ class PlatformFSContract(unittest.TestCase):
             self.assertEqual({item.name for item in self.fs.entries(directory)}, {"payload.bin"})
             with self.assertRaises(EntryExistsError):
                 self.fs.create_exclusive(directory, "payload.bin")
+
+    def test_private_permissions_and_ownership(self):
+        if running_under_wine():
+            self.skipTest("Wine ne persiste pas les ACL NTFS sur ce volume")
+        with self.fs.open_directory(self.directory_path, create=True) as directory:
+            directory_audit = self.fs.audit_permissions(
+                self.directory_path,
+                directory=True,
+            )
+            self.assertTrue(directory_audit.private, directory_audit.detail)
+            with self.fs.create_exclusive(directory, "private.bin") as file:
+                file.write(b"private")
+                file.sync()
+                identity = file.identity
+            entry = self.fs.entry_info(directory, "private.bin")
+            self.assertIsNotNone(entry)
+            self.assertEqual(entry.identity, identity)
+            self.assertTrue(self.fs.is_owned(entry))
+            file_audit = self.fs.audit_permissions(
+                self.directory_path / "private.bin",
+                directory=False,
+            )
+            self.assertTrue(file_audit.private, file_audit.detail)
 
     def test_safe_component_validation(self):
         with self.fs.open_directory(self.directory_path, create=True) as directory:
