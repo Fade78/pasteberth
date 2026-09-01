@@ -11,6 +11,7 @@
  */
 (() => {
   const URL_PREFIX = document.body.dataset.urlPrefix || "";
+  const REFRESH_INTERVAL_MS = 10_000;
 
   function appPath(path) {
     return `${URL_PREFIX}${path}`;
@@ -22,6 +23,8 @@
     authEnabled: true,
     offline: false,
     selectedByZone: Object.create(null),
+    knownItemSignaturesByZone: Object.create(null),
+    newItemIdsByZone: Object.create(null),
     retryTimer: null,
     busyRefreshTimer: null,
     toastTimer: null,
@@ -617,6 +620,87 @@
     el.style.setProperty("--line", rgba(readableFg(color), 0.18));
   }
 
+  function itemSignature(item) {
+    return JSON.stringify([
+      item.created_at,
+      item.size,
+      item.kind,
+      item.mime,
+      item.format,
+      item.width,
+      item.height,
+    ]);
+  }
+
+  function newItemIds(zoneId) {
+    const ids = state.newItemIdsByZone[zoneId];
+    return ids instanceof Set ? ids : new Set();
+  }
+
+  function hasNewItems(zoneId) {
+    return newItemIds(zoneId).size > 0;
+  }
+
+  function isNewItem(zoneId, itemId) {
+    return newItemIds(zoneId).has(itemId);
+  }
+
+  function clearNewItems(zoneId, itemIds) {
+    const ids = state.newItemIdsByZone[zoneId];
+    if (!(ids instanceof Set)) return;
+    for (const itemId of itemIds) ids.delete(itemId);
+  }
+
+  function updateNewItemState(zones) {
+    const detectNewItems = state.initialized;
+    const currentZoneIds = new Set();
+    for (const zone of zones) {
+      currentZoneIds.add(zone.id);
+      const current = new Map(zone.images.map(item => [item.id, itemSignature(item)]));
+      const known = state.knownItemSignaturesByZone[zone.id];
+      const newIds = newItemIds(zone.id);
+      if (detectNewItems) {
+        for (const [itemId, signature] of current) {
+          if (!(known instanceof Map) || known.get(itemId) !== signature) {
+            newIds.add(itemId);
+          }
+        }
+      }
+      for (const itemId of newIds) {
+        if (!current.has(itemId)) newIds.delete(itemId);
+      }
+      state.knownItemSignaturesByZone[zone.id] = current;
+      state.newItemIdsByZone[zone.id] = newIds;
+    }
+    for (const zoneId of Object.keys(state.knownItemSignaturesByZone)) {
+      if (!currentZoneIds.has(zoneId)) {
+        delete state.knownItemSignaturesByZone[zoneId];
+        delete state.newItemIdsByZone[zoneId];
+      }
+    }
+  }
+
+  function rememberItem(zoneId, item) {
+    const known = state.knownItemSignaturesByZone[zoneId] instanceof Map
+      ? state.knownItemSignaturesByZone[zoneId]
+      : new Map();
+    known.set(item.id, itemSignature(item));
+    state.knownItemSignaturesByZone[zoneId] = known;
+    clearNewItems(zoneId, [item.id]);
+  }
+
+  function createNewBadge() {
+    const badge = document.createElement("span");
+    badge.className = "new-badge";
+    badge.textContent = "NEW";
+    badge.setAttribute("aria-hidden", "true");
+    return badge;
+  }
+
+  function newAccessibleSuffix(zoneId, itemId) {
+    return isNewItem(zoneId, itemId) ? ", new" : "";
+  }
+
   function selectedItemIds(zoneId) {
     const selected = state.selectedItemsByZone[zoneId];
     return selected instanceof Set ? selected : new Set();
@@ -660,6 +744,7 @@
     }
     state.selectedItemsByZone[zone.id] = next;
     state.selectedByZone[zone.id] = itemId;
+    clearNewItems(zone.id, next);
     rerenderZone(zone.id);
   }
 
@@ -829,12 +914,21 @@
     select.type = "button";
     select.className = "zone-select";
     select.setAttribute("aria-current", String(zone.id === state.activeId));
-    select.setAttribute("aria-label", `Select zone ${zone.label}`);
+    select.setAttribute(
+      "aria-label",
+      `Select zone ${zone.label}${hasNewItems(zone.id) ? ", new files available" : ""}`,
+    );
     select.innerHTML =
       '<span class="zone-marker" aria-hidden="true"></span>' +
       '<span class="zone-label"></span>' +
       '<span class="zone-count"></span>';
-    select.querySelector(".zone-label").textContent = zone.label;
+    const zoneLabel = select.querySelector(".zone-label");
+    zoneLabel.textContent = zone.label;
+    if (hasNewItems(zone.id)) {
+      const badge = createNewBadge();
+      badge.classList.add("zone-new-badge");
+      zoneLabel.appendChild(badge);
+    }
     select.querySelector(".zone-count").textContent = `${zone.images.length} / ${zone.retain}`;
     const uploadButton = document.createElement("button");
     uploadButton.type = "button";
@@ -869,7 +963,7 @@
       const selected = selectedItem(zone);
       const selectedItemsInZone = selectedItems(zone);
       el.appendChild(renderLatest(zone, selected, selectedItemsInZone));
-      el.appendChild(renderThumbs(zone.images, selected.id, selectedItemIds(zone.id)));
+      el.appendChild(renderThumbs(zone.id, zone.images, selected.id, selectedItemIds(zone.id)));
     }
     return el;
   }
@@ -891,12 +985,16 @@
     return control.closest(".zone")?.dataset.zone || null;
   }
 
-  function itemMeta(item) {
+  function itemMeta(zoneId, item) {
     const meta = document.createElement("div");
     meta.className = "meta";
     const fname = document.createElement("code");
     fname.className = "fname";
     fname.textContent = item.filename;
+    const name = document.createElement("div");
+    name.className = "meta-name";
+    name.appendChild(fname);
+    if (isNewItem(zoneId, item.id)) name.appendChild(createNewBadge());
     const ref = document.createElement("code");
     ref.className = "ref";
     ref.title = item.reference;
@@ -907,7 +1005,7 @@
     dims.textContent = item.kind === "image" && item.width != null && item.height != null
       ? `${item.width}×${item.height} · ${sizeInfo}`
       : `${kindLabel(item.kind)} · ${sizeInfo}`;
-    meta.append(fname, ref, dims);
+    meta.append(name, ref, dims);
     return meta;
   }
 
@@ -951,7 +1049,7 @@
     const zoneId = zone.id;
     const right = document.createElement("div");
     right.className = "latest-right";
-    right.appendChild(itemMeta(item));
+    right.appendChild(itemMeta(zoneId, item));
     const btn = document.createElement("button");
     btn.type = "button";
     btn.className = "copy-btn";
@@ -1023,7 +1121,10 @@
       img.loading = "lazy";
       img.tabIndex = 0;
       img.setAttribute("role", "button");
-      img.setAttribute("aria-label", `Open preview of ${item.filename}`);
+      img.setAttribute(
+        "aria-label",
+        `Open preview of ${item.filename}${newAccessibleSuffix(zoneId, item.id)}`,
+      );
       card.append(img, right);
     } else {
       const box = document.createElement("div");
@@ -1034,16 +1135,15 @@
       box.setAttribute("role", "button");
       box.setAttribute(
         "aria-label",
-        item.kind === "binary"
-          ? `Download ${item.filename}`
-          : `Open preview of ${item.filename}`,
+        `${item.kind === "binary" ? "Download" : "Open preview of"} ${item.filename}`
+          + newAccessibleSuffix(zoneId, item.id),
       );
       card.append(box, right);
     }
     return card;
   }
 
-  function renderThumbs(items, selectedId, selectedIds = new Set()) {
+  function renderThumbs(zoneId, items, selectedId, selectedIds = new Set()) {
     const index = document.createElement("div");
     index.className = "history-index";
     const title = document.createElement("div");
@@ -1060,7 +1160,10 @@
       if (selectedIds.has(item.id)) wrap.classList.add("bulk-selected");
       wrap.setAttribute("aria-current", String(item.id === selectedId));
       wrap.setAttribute("aria-pressed", String(selectedIds.has(item.id)));
-      wrap.setAttribute("aria-label", `Select ${item.filename}`);
+      wrap.setAttribute(
+        "aria-label",
+        `Select ${item.filename}${newAccessibleSuffix(zoneId, item.id)}`,
+      );
       wrap.title = `${item.filename} — ${fmtDateTime(item.created_at)}`;
       wrap.dataset.itemId = item.id;
       if (item.kind === "image") {
@@ -1077,6 +1180,7 @@
         label.setAttribute("aria-hidden", "true");
         wrap.appendChild(label);
       }
+      if (isNewItem(zoneId, item.id)) wrap.appendChild(createNewBadge());
       row.appendChild(wrap);
     }
     index.append(title, row);
@@ -1195,7 +1299,16 @@
       link.className = "tab-zone-link";
       link.dataset.zone = zone.id;
       link.textContent = zone.label;
+      if (hasNewItems(zone.id)) {
+        const badge = createNewBadge();
+        badge.classList.add("zone-new-badge");
+        link.appendChild(badge);
+      }
       link.setAttribute("aria-current", String(zone.id === state.activeId));
+      link.setAttribute(
+        "aria-label",
+        `Select zone ${zone.label}${hasNewItems(zone.id) ? ", new files available" : ""}`,
+      );
       link.setAttribute("aria-expanded", String(state.openZoneIds.includes(zone.id)));
       link.setAttribute("aria-pressed", String(state.openZoneIds.includes(zone.id)));
       link.setAttribute("aria-controls", "tab-zone-main");
@@ -1630,6 +1743,7 @@
       }
       if (generation !== refreshGeneration) return;
 
+      updateNewItemState(nextZones);
       state.authEnabled = overview.auth_enabled !== false;
       logoutForm.hidden = !state.authEnabled;
       state.zones = nextZones;
@@ -1741,6 +1855,7 @@
     zone.images = zone.images.filter(existing => existing.id !== item.id);
     zone.images.unshift(item);
     if (zone.images.length > zone.retain) zone.images.length = zone.retain;
+    rememberItem(zoneId, item);
   }
 
   async function upload(
@@ -1967,6 +2082,7 @@
       const zone = state.zones.find(z => z.id === zoneId);
       if (zone) {
         zone.images = zone.images.filter(item => item.id !== filename);
+        clearNewItems(zoneId, [filename]);
         if (state.selectedByZone[zoneId] === filename) delete state.selectedByZone[zoneId];
         const selected = selectedItemIds(zoneId);
         selected.delete(filename);
@@ -2415,7 +2531,7 @@
   });
 
   // Lightweight synchronization across tabs and machines.
-  setInterval(() => { if (document.visibilityState === "visible") boot(true); }, 45000);
+  setInterval(() => { if (document.visibilityState === "visible") boot(true); }, REFRESH_INTERVAL_MS);
 
   boot();
 })();

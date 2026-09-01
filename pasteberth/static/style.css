@@ -127,6 +127,23 @@ code, kbd {
   overflow-wrap: anywhere;
 }
 
+.new-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0.18rem 0.38rem;
+  border-radius: 999px;
+  background: #ffd166;
+  color: #17130a;
+  font-size: 0.62rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.zone-new-badge { margin-left: 0.45rem; vertical-align: middle; }
+
 .tab-zone-link:hover { color: var(--text); background: rgba(255, 255, 255, 0.05); }
 
 .tab-zone-link.active {
@@ -521,6 +538,7 @@ code, kbd {
 }
 
 .meta { display: flex; flex-direction: column; gap: 5px; min-width: 0; }
+.meta-name { display: flex; align-items: center; gap: 0.45rem; min-width: 0; flex-wrap: wrap; }
 
 .fname, .ref {
   word-break: break-all;
@@ -667,6 +685,7 @@ code, kbd {
 }
 
 .thumb-wrap {
+  position: relative;
   padding: 0;
   border: 1px solid var(--line);
   border-radius: 8px;
@@ -674,6 +693,13 @@ code, kbd {
   cursor: pointer;
   line-height: 0;
   overflow: hidden;
+}
+
+.thumb-wrap > .new-badge {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  pointer-events: none;
 }
 
 .thumb-wrap:hover { border-color: var(--halo); }

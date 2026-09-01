@@ -1,7 +1,7 @@
 # Pasteberth Operator Guide
 
 This guide is the detailed reference for installing, configuring, operating,
-and integrating Pasteberth 1.6.4. The short project overview is in
+and integrating Pasteberth 1.6.5. The short project overview is in
 [`README.md`](README.md); user-visible release history is in
 [`CHANGELOG.md`](CHANGELOG.md).
 
@@ -74,14 +74,14 @@ contexts:
 
 ## 2. Requirements and Support
 
-The 1.6.4 implementation requires:
+The 1.6.5 implementation requires:
 
 - Python 3.11 or newer;
 - a local filesystem supported by the active platform backend;
 - a modern browser for the Web UI;
 - no third-party Python runtime dependency.
 
-Linux is the current official and tested server platform for v1.6.4. The
+Linux is the current official and tested server platform for v1.6.5. The
 Windows backend has broad Wine coverage, but native Windows/NTFS validation is
 still outstanding and macOS support is not implemented. Do not infer support
 for every network or exotic filesystem from the operating system name.
@@ -93,7 +93,7 @@ Firefox when the corresponding Playwright browser is installed.
 
 ### 3.1 Source checkout
 
-The supported v1.6.4 installation is a source checkout. It needs no root access
+The supported v1.6.5 installation is a source checkout. It needs no root access
 and no installation script:
 
 ```sh
@@ -121,7 +121,7 @@ do not provide a plugin mechanism through the current directory or
 `PYTHONPATH`.
 
 The Python project also declares the `pasteberth` console entry point in
-`pyproject.toml`. The repository wrapper remains the documented v1.6.4 operator
+`pyproject.toml`. The repository wrapper remains the documented v1.6.5 operator
 path because default storage and generated configuration are deliberately
 repository-oriented.
 
@@ -241,7 +241,7 @@ Each `[[zones]]` table defines one independent project area:
 |---|---:|---|
 | `id` | required | Lowercase API/UI identifier, up to 64 characters. |
 | `label` | `id` | Human-readable UI label. |
-| `type` | `local` | Only `local` is implemented in v1.6.4. |
+| `type` | `local` | Only `local` is implemented in v1.6.5. |
 | `directory` | required | Absolute path as seen by the server and the harness. |
 | `retain` | `10` | Number of managed items retained in the zone. |
 | `reference_prefix` | `@` | Text prepended to one returned reference. |
@@ -369,6 +369,12 @@ thumbnail or history item to select it in the upper panel.
   selected managed items;
 - the full filename is available as a native tooltip when the visible list
   truncates it.
+
+Visible browsers poll for changes made by `filesystem-drop` or another client
+every 10 seconds. A browser tab that was hidden refreshes when it becomes
+visible. Newly discovered items display a `NEW` badge on the zone and history
+item until that item is selected; this indicator is local to the browser tab and
+is reset when the page is reloaded.
 
 ![Pasteberth multiple-selection panel with grouped copy, ZIP, and delete actions](docs/images/pasteberth-multiselect.png)
 
@@ -998,7 +1004,7 @@ restart the service.
 
 The next major platform goal is native Windows and macOS support with the same
 transaction and security guarantees. That work is intentionally separate from
-the v1.6.4 support matrix and must not be represented as already supported.
+the v1.6.5 support matrix and must not be represented as already supported.
 
 ## 16. License
 

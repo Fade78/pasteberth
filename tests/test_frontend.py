@@ -102,8 +102,21 @@ class TestContratsFrontend(unittest.TestCase):
     def test_refresh_ordonne_et_actions_clavier(self):
         self.assertIn("AbortController", self.app_js)
         self.assertIn("refreshGeneration", self.app_js)
+        self.assertIn("REFRESH_INTERVAL_MS = 10_000", self.app_js)
+        self.assertIn("updateNewItemState", self.app_js)
+        self.assertIn("newItemIdsByZone", self.app_js)
+        self.assertIn(
+            'setInterval(() => { if (document.visibilityState === "visible") boot(true); }, REFRESH_INTERVAL_MS)',
+            self.app_js,
+        )
         self.assertIn("zone-select", self.app_js)
         self.assertIn('tabIndex = 0', self.app_js)
+
+    def test_nouveaux_fichiers_sont_signales_jusqua_selection(self):
+        self.assertIn("createNewBadge", self.app_js)
+        self.assertIn("new files available", self.app_js)
+        self.assertIn('className = "new-badge"', self.app_js)
+        self.assertIn(".new-badge", self.style_css)
 
     def test_index_selection_et_zoom(self):
         self.assertIn("selectedByZone", self.app_js)

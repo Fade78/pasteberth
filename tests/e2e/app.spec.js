@@ -190,6 +190,20 @@ async function dispatchBinaryDrop(page, selector, name = "archive.zip") {
   }, name);
 }
 
+async function uploadExternalFile(page, name = "external.txt") {
+  const response = await page.request.post("/api/zones/default/images", {
+    multipart: {
+      image: {
+        name,
+        mimeType: "text/plain",
+        buffer: Buffer.from("external filesystem drop\n"),
+      },
+      preserve_name: "1",
+    },
+  });
+  expect(response.ok()).toBe(true);
+}
+
 test.beforeEach(async ({ request }) => {
   await resetServer(request);
 });
@@ -784,6 +798,7 @@ test("accepte le glisser-déposer sur une zone", async ({ page }) => {
   await expect(secondary.locator(".latest")).toBeVisible();
   await expect(secondary.locator(".fname")).toHaveText("dropped.png");
   await expect(secondary.locator(".zone-select")).toHaveAttribute("aria-current", "true");
+  await expect(secondary.locator(".new-badge")).toHaveCount(0);
 });
 
 test("conserve le nom et confirme le remplacement d'un binaire déposé", async ({ page }) => {
@@ -910,6 +925,28 @@ test("affiche un fichier cache depose dans l'index apres rechargement", async ({
   await page.reload({ waitUntil: "domcontentloaded" });
   await expect(page.locator('[data-zone="default"] .fname')).toHaveText(".env");
   await expect(page.locator('[data-zone="default"] .thumb-content')).toHaveText("ENV");
+});
+
+test("synchronise un filesystem drop et conserve NEW jusqu'a la selection", async ({ page }) => {
+  await page.clock.install();
+  await openApp(page);
+  const defaultZone = page.locator('[data-zone="default"]');
+  await expect(defaultZone.locator(".new-badge")).toHaveCount(0);
+
+  await uploadExternalFile(page);
+  await page.clock.fastForward(10_000);
+
+  const thumbnail = defaultZone.locator('.thumb-wrap[data-item-id="external.txt"]');
+  await expect(thumbnail).toBeVisible();
+  await expect(defaultZone.locator(".zone-new-badge")).toHaveCount(1);
+  await expect(defaultZone.locator(".latest .new-badge")).toHaveCount(1);
+  await expect(thumbnail.locator(".new-badge")).toHaveCount(1);
+  await expect(thumbnail).toHaveAttribute("aria-label", "Select external.txt, new");
+
+  await thumbnail.click();
+  await expect(defaultZone.locator(".new-badge")).toHaveCount(0);
+  await expect(defaultZone.locator('.thumb-wrap[data-item-id="external.txt"]'))
+    .toHaveAttribute("aria-label", "Select external.txt");
 });
 
 test("supprime une image depuis la carte", async ({ page }) => {  await openApp(page);

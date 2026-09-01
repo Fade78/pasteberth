@@ -2,6 +2,16 @@
 
 This file records user-visible changes to Pasteberth.
 
+## [1.6.5] - 2026-09-01
+
+### Web UI and Synchronization
+
+- poll visible browser tabs every 10 seconds for files published by
+  `filesystem-drop` or another client;
+- mark newly discovered items and zones with a local `NEW` badge until the
+  item is selected, without adding a backend push channel;
+- add frontend contract and end-to-end coverage for the synchronization flow.
+
 ## [1.6.4] - 2026-09-01
 
 ### Bug Fixes and Compatibility
