@@ -2,12 +2,21 @@
 
 This file records user-visible changes to Pasteberth.
 
+## [1.7.0] - 2026-09-01
+
+### CLI
+
+- rename the filesystem subcommands to concise `drop`, `rename`, and `delete`
+  names; the previous spellings are no longer accepted;
+- update the command help, Bash completion, documentation, and regression
+  coverage for the renamed interface.
+
 ## [1.6.5] - 2026-09-01
 
 ### Web UI and Synchronization
 
-- poll visible browser tabs every 10 seconds for files published by
-  `filesystem-drop` or another client;
+- poll visible browser tabs every 10 seconds for files published by `drop` or
+  another client;
 - mark newly discovered items and zones with a local `NEW` badge until the
   item is selected, without adding a backend push channel;
 - add frontend contract and end-to-end coverage for the synchronization flow.
@@ -88,7 +97,7 @@ This file records user-visible changes to Pasteberth.
 - image, text, and binary content handling with exact filesystem references;
 - sequential multiple-file upload and multiple selection in the Web UI;
 - copied reference lists, streamed ZIP downloads, and group deletion;
-- `filesystem-drop`, `filesystem-rename`, and `filesystem-delete` operations;
+- `drop`, `rename`, and `delete` operations;
 - configurable reference prefixes, suffixes, separators, and ZIP availability;
 - a unified bidirectional clipboard-and-zones logo in the Web UI and
   documentation;

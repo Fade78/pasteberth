@@ -27,9 +27,9 @@ _pasteberth_complete() {
 
     commands=(
         serve
-        filesystem-drop
-        filesystem-rename
-        filesystem-delete
+        drop
+        rename
+        delete
         passwd
         audit
     )
@@ -49,7 +49,7 @@ _pasteberth_complete() {
                 ;;
             --generate-config|--force|--version)
                 ;;
-            serve|filesystem-drop|filesystem-rename|filesystem-delete|passwd|audit)
+            serve|drop|rename|delete|passwd|audit)
                 command=${COMP_WORDS[i]}
                 command_index=$i
                 break
@@ -67,15 +67,15 @@ _pasteberth_complete() {
             options=(-h --help --config --log-level)
             values=(DEBUG INFO WARNING ERROR)
             ;;
-        filesystem-drop)
+        drop)
             options=(-h --help --config --replace)
             values=()
             ;;
-        filesystem-rename)
+        rename)
             options=(-h --help --config)
             values=()
             ;;
-        filesystem-delete)
+        delete)
             options=(-h --help --config --force)
             values=()
             ;;

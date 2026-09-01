@@ -26,7 +26,7 @@ Pasteberth is the small, targeted handoff layer between those two sides:
 - the browser pastes or drops content into a named project zone;
 - the server stores it in a real filesystem directory;
 - the harness receives the exact path created by the server;
-- scripts can use `filesystem-drop` to publish files back to the Web UI.
+- scripts can use `drop` to publish files back to the Web UI.
 
 A zone is a directory on the machine running Pasteberth, with a JSON sidecar
 for metadata and ownership. The browser never needs to access the returned
@@ -37,7 +37,7 @@ service between independent servers.
 
 ## Quick Start
 
-The current public release is `1.6.5`. The documented v1.6.5 server runs on
+The current public release is `1.7.0`. The documented v1.7.0 server runs on
 Linux, requires Python 3.11 or newer, and has no third-party
 Python runtime dependency. A native Windows backend is included but has only
 been validated under Wine; macOS and native Windows remain outside the official
@@ -93,7 +93,7 @@ only, without `/paste`.
 - Select several items with click, `Shift`-click, or `Ctrl`/`Command`-click.
 - Copy a reference list, download a selection as a streamed ZIP, or delete it
   as a group.
-- Publish files from scripts or agents with `filesystem-drop`.
+- Publish files from scripts or agents with `drop`.
 - Rename or delete managed files while keeping data and sidecars consistent.
 - Run behind an HTTPS reverse proxy or terminate TLS directly.
 
@@ -118,16 +118,16 @@ The filesystem client targets the exact absolute directory configured for a
 zone, not its UI label or identifier:
 
 ```sh
-pasteberth filesystem-drop --config config.toml \
+pasteberth drop --config config.toml \
   /srv/workspaces/project/captures /tmp/report.pdf /tmp/screenshot.png
 ```
 
 The source files remain unchanged. Pasteberth creates managed data/sidecar
-pairs and prints one reference for each successful source. Use
-`filesystem-rename` and `filesystem-delete` for managed operations; foreign
-files are never overwritten or removed. When a source is already the exact
-file in the destination zone, `filesystem-drop` validates it and creates its
-missing sidecar without rewriting the data file.
+pairs and prints one reference for each successful source. Use `rename` and
+`delete` for managed operations; foreign files are never overwritten or
+removed. When a source is already the exact file in the destination zone,
+`drop` validates it and creates its missing sidecar without rewriting the data
+file.
 
 ## Documentation
 
@@ -151,7 +151,7 @@ configuration template. The optional Linux user-service template is
 
 ## Support Status
 
-| Area | v1.6.5 status |
+| Area | v1.7.0 status |
 |---|---|
 | Python | 3.11 or newer |
 | Server | Linux, officially tested |

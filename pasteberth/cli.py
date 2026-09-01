@@ -2,9 +2,9 @@
 
     pasteberth                         # démarre avec les valeurs locales par défaut
     pasteberth serve   [--config PATH] [--log-level LEVEL]
-    pasteberth filesystem-drop [--config PATH] [--replace] DIRECTORY FILE...
-    pasteberth filesystem-rename [--config PATH] DIRECTORY SOURCE TARGET
-    pasteberth filesystem-delete [--config PATH] [--force] DIRECTORY FILE...
+    pasteberth drop [--config PATH] [--replace] DIRECTORY FILE...
+    pasteberth rename [--config PATH] DIRECTORY SOURCE TARGET
+    pasteberth delete [--config PATH] [--force] DIRECTORY FILE...
     pasteberth passwd  [--config PATH]
     pasteberth audit   [--config PATH]
     pasteberth [--config PATH] --generate-config [--force]
@@ -234,7 +234,7 @@ def _read_drop_source(path: Path, max_bytes: int) -> bytes:
     return data
 
 
-def _cmd_filesystem_rename(args: argparse.Namespace) -> int:
+def _cmd_rename(args: argparse.Namespace) -> int:
     loaded = _load_command_service(args)
     if loaded is None:
         return 2
@@ -252,7 +252,7 @@ def _cmd_filesystem_rename(args: argparse.Namespace) -> int:
     return 0
 
 
-def _cmd_filesystem_delete(args: argparse.Namespace) -> int:
+def _cmd_delete(args: argparse.Namespace) -> int:
     loaded = _load_command_service(args)
     if loaded is None:
         return 2
@@ -279,7 +279,7 @@ def _cmd_filesystem_delete(args: argparse.Namespace) -> int:
     return 1 if failures else 0
 
 
-def _cmd_filesystem_drop(args: argparse.Namespace) -> int:
+def _cmd_drop(args: argparse.Namespace) -> int:
     loaded = _load_command_service(args)
     if loaded is None:
         return 2
@@ -939,7 +939,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_serve.set_defaults(func=_cmd_serve)
 
     p_drop = sub.add_parser(
-        "filesystem-drop",
+        "drop",
         help="dépose ou adopte des fichiers dans une zone et crée leurs sidecars",
     )
     p_drop.add_argument("directory", help="répertoire exact de la zone configurée")
@@ -947,20 +947,20 @@ def build_parser() -> argparse.ArgumentParser:
     p_drop.add_argument("--replace", action="store_true",
                         help="autorise le remplacement explicite d'un nom géré")
     p_drop.add_argument("--config", default=argparse.SUPPRESS, help="chemin du config.toml")
-    p_drop.set_defaults(func=_cmd_filesystem_drop)
+    p_drop.set_defaults(func=_cmd_drop)
 
     p_rename = sub.add_parser(
-        "filesystem-rename",
+        "rename",
         help="renomme un fichier géré avec son sidecar",
     )
     p_rename.add_argument("directory", help="répertoire exact de la zone configurée")
     p_rename.add_argument("source", help="nom géré actuel, sans chemin")
     p_rename.add_argument("target", help="nouveau nom, sans chemin")
     p_rename.add_argument("--config", default=argparse.SUPPRESS, help="chemin du config.toml")
-    p_rename.set_defaults(func=_cmd_filesystem_rename)
+    p_rename.set_defaults(func=_cmd_rename)
 
     p_delete = sub.add_parser(
-        "filesystem-delete",
+        "delete",
         help="supprime un ou plusieurs fichiers gérés avec leurs sidecars",
     )
     p_delete.add_argument("directory", help="répertoire exact de la zone configurée")
@@ -971,7 +971,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="supprime aussi une paire dont la taille ne correspond plus au sidecar",
     )
     p_delete.add_argument("--config", default=argparse.SUPPRESS, help="chemin du config.toml")
-    p_delete.set_defaults(func=_cmd_filesystem_delete)
+    p_delete.set_defaults(func=_cmd_delete)
 
     p_pw = sub.add_parser("passwd", help="définit ou change le mot de passe")
     p_pw.add_argument(

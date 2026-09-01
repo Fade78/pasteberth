@@ -57,6 +57,21 @@ class TestVersion(unittest.TestCase):
         self.assertIn("--log-level", proc.stdout)
         self.assertIn("DEBUG", proc.stdout)
 
+    def test_aide_expose_les_sous_commandes_courtes(self):
+        proc = run_cli(["--help"])
+        self.assertEqual(proc.returncode, 0)
+        for command in ("drop", "rename", "delete"):
+            self.assertIn(command, proc.stdout)
+        for old_command in ("filesystem-drop", "filesystem-rename", "filesystem-delete"):
+            self.assertNotIn(old_command, proc.stdout)
+
+    def test_anciens_noms_de_sous_commande_sont_rejetes(self):
+        for command in ("filesystem-drop", "filesystem-rename", "filesystem-delete"):
+            with self.subTest(command=command):
+                proc = run_cli([command, "--help"])
+                self.assertEqual(proc.returncode, 2)
+                self.assertIn("invalid choice", proc.stderr)
+
 
 class TestWrappers(unittest.TestCase):
     def setUp(self):
@@ -663,7 +678,7 @@ class TestFilesystemDrop(unittest.TestCase):
         self.zone = self.tmp / "default-images"
 
     def _run_drop(self, *sources, replace=False):
-        args = ["filesystem-drop", "--config", str(self.cfg)]
+        args = ["drop", "--config", str(self.cfg)]
         if replace:
             args.append("--replace")
         args.extend([str(self.zone), *(str(source) for source in sources)])
@@ -672,7 +687,7 @@ class TestFilesystemDrop(unittest.TestCase):
     def _run_rename(self, source, target):
         return run_cli(
             [
-                "filesystem-rename",
+                "rename",
                 "--config",
                 str(self.cfg),
                 str(self.zone),
@@ -682,7 +697,7 @@ class TestFilesystemDrop(unittest.TestCase):
         )
 
     def _run_delete(self, *files, force=False):
-        args = ["filesystem-delete", "--config", str(self.cfg)]
+        args = ["delete", "--config", str(self.cfg)]
         if force:
             args.append("--force")
         args.extend([str(self.zone), *files])

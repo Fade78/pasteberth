@@ -1,7 +1,7 @@
 # Pasteberth Operator Guide
 
 This guide is the detailed reference for installing, configuring, operating,
-and integrating Pasteberth 1.6.5. The short project overview is in
+and integrating Pasteberth 1.7.0. The short project overview is in
 [`README.md`](README.md); user-visible release history is in
 [`CHANGELOG.md`](CHANGELOG.md).
 
@@ -43,7 +43,7 @@ The usual flow is:
 
 The reverse flow is also supported:
 
-1. A script or agent runs `filesystem-drop` for a file.
+1. A script or agent runs `drop` for a file.
 2. Pasteberth publishes it into a configured zone and creates its sidecar.
 3. A browser user sees the new item and can download it.
 
@@ -74,14 +74,14 @@ contexts:
 
 ## 2. Requirements and Support
 
-The 1.6.5 implementation requires:
+The 1.7.0 implementation requires:
 
 - Python 3.11 or newer;
 - a local filesystem supported by the active platform backend;
 - a modern browser for the Web UI;
 - no third-party Python runtime dependency.
 
-Linux is the current official and tested server platform for v1.6.5. The
+Linux is the current official and tested server platform for v1.7.0. The
 Windows backend has broad Wine coverage, but native Windows/NTFS validation is
 still outstanding and macOS support is not implemented. Do not infer support
 for every network or exotic filesystem from the operating system name.
@@ -93,7 +93,7 @@ Firefox when the corresponding Playwright browser is installed.
 
 ### 3.1 Source checkout
 
-The supported v1.6.5 installation is a source checkout. It needs no root access
+The supported v1.7.0 installation is a source checkout. It needs no root access
 and no installation script:
 
 ```sh
@@ -121,7 +121,7 @@ do not provide a plugin mechanism through the current directory or
 `PYTHONPATH`.
 
 The Python project also declares the `pasteberth` console entry point in
-`pyproject.toml`. The repository wrapper remains the documented v1.6.5 operator
+`pyproject.toml`. The repository wrapper remains the documented v1.7.0 operator
 path because default storage and generated configuration are deliberately
 repository-oriented.
 
@@ -241,7 +241,7 @@ Each `[[zones]]` table defines one independent project area:
 |---|---:|---|
 | `id` | required | Lowercase API/UI identifier, up to 64 characters. |
 | `label` | `id` | Human-readable UI label. |
-| `type` | `local` | Only `local` is implemented in v1.6.5. |
+| `type` | `local` | Only `local` is implemented in v1.7.0. |
 | `directory` | required | Absolute path as seen by the server and the harness. |
 | `retain` | `10` | Number of managed items retained in the zone. |
 | `reference_prefix` | `@` | Text prepended to one returned reference. |
@@ -255,7 +255,7 @@ Each `[[zones]]` table defines one independent project area:
 | `min_free_percent` | `2.0` | Required free-space reserve on the zone filesystem. |
 
 The directory is not a browser path. It is the exact server-side directory
-where the harness reads the stored content and where `filesystem-drop` writes.
+where the harness reads the stored content and where `drop` writes.
 Zone directories must be distinct. A private `0700` directory is recommended;
 deliberately shared directories are allowed but produce an audit warning when
 their permissions are broad.
@@ -370,7 +370,7 @@ thumbnail or history item to select it in the upper panel.
 - the full filename is available as a native tooltip when the visible list
   truncates it.
 
-Visible browsers poll for changes made by `filesystem-drop` or another client
+Visible browsers poll for changes made by `drop` or another client
 every 10 seconds. A browser tab that was hidden refreshes when it becomes
 visible. Newly discovered items display a `NEW` badge on the zone and history
 item until that item is selected; this indicator is local to the browser tab and
@@ -468,7 +468,7 @@ conditions that may be intentional but deserve review.
 ### 6.5 Filesystem drop
 
 ```sh
-pasteberth filesystem-drop [--config PATH] [--replace] \
+pasteberth drop [--config PATH] [--replace] \
   /absolute/path/to/configured/zone /path/to/report.pdf /path/to/screen.png
 ```
 
@@ -489,7 +489,7 @@ file is never overwritten, even with `--replace`.
 ### 6.6 Filesystem rename
 
 ```sh
-pasteberth filesystem-rename [--config PATH] \
+pasteberth rename [--config PATH] \
   /absolute/path/to/configured/zone old-name.pdf new-name.pdf
 ```
 
@@ -500,7 +500,7 @@ replaced.
 ### 6.7 Filesystem delete
 
 ```sh
-pasteberth filesystem-delete [--config PATH] [--force] \
+pasteberth delete [--config PATH] [--force] \
   /absolute/path/to/configured/zone report.pdf old-screen.png
 ```
 
@@ -565,7 +565,7 @@ zone/
 The sidecar records metadata such as `filename`, `created_at`, `size`,
 `width`, `height`, `format`, `kind`, and `mime`. Older valid sidecar schemas
 remain readable. Pasteberth recognizes an item only when the data file and
-sidecar are coherent. The `filesystem-drop` command may make the exact source
+sidecar are coherent. The `drop` command may make the exact source
 file in its destination zone managed by creating that missing sidecar after
 validation. Other foreign files remain outside managed operations.
 
@@ -1004,7 +1004,7 @@ restart the service.
 
 The next major platform goal is native Windows and macOS support with the same
 transaction and security guarantees. That work is intentionally separate from
-the v1.6.5 support matrix and must not be represented as already supported.
+the v1.7.0 support matrix and must not be represented as already supported.
 
 ## 16. License
 
