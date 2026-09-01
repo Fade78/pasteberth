@@ -2,6 +2,17 @@
 
 This file records user-visible changes to Pasteberth.
 
+## [1.6.4] - 2026-09-01
+
+### Bug Fixes and Compatibility
+
+- avoid invoking Linux `renameat2(RENAME_NOREPLACE)` on shared filesystems
+  exposed as 9p, DrvFS, virtiofs, or FUSE, using the guarded no-replace
+  fallback instead;
+- retry the guarded fallback when the underlying filesystem reports that
+  `renameat2` is unavailable;
+- add regression coverage for shared mounts and unsupported syscall errors.
+
 ## [1.6.3] - 2026-09-01
 
 ### Bug Fixes and Reliability

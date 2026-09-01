@@ -1,7 +1,7 @@
 # Pasteberth Operator Guide
 
 This guide is the detailed reference for installing, configuring, operating,
-and integrating Pasteberth 1.6.3. The short project overview is in
+and integrating Pasteberth 1.6.4. The short project overview is in
 [`README.md`](README.md); user-visible release history is in
 [`CHANGELOG.md`](CHANGELOG.md).
 
@@ -74,14 +74,14 @@ contexts:
 
 ## 2. Requirements and Support
 
-The 1.6.3 implementation requires:
+The 1.6.4 implementation requires:
 
 - Python 3.11 or newer;
 - a local filesystem supported by the active platform backend;
 - a modern browser for the Web UI;
 - no third-party Python runtime dependency.
 
-Linux is the current official and tested server platform for v1.6.3. The
+Linux is the current official and tested server platform for v1.6.4. The
 Windows backend has broad Wine coverage, but native Windows/NTFS validation is
 still outstanding and macOS support is not implemented. Do not infer support
 for every network or exotic filesystem from the operating system name.
@@ -93,7 +93,7 @@ Firefox when the corresponding Playwright browser is installed.
 
 ### 3.1 Source checkout
 
-The supported v1.6.3 installation is a source checkout. It needs no root access
+The supported v1.6.4 installation is a source checkout. It needs no root access
 and no installation script:
 
 ```sh
@@ -121,7 +121,7 @@ do not provide a plugin mechanism through the current directory or
 `PYTHONPATH`.
 
 The Python project also declares the `pasteberth` console entry point in
-`pyproject.toml`. The repository wrapper remains the documented v1.6.3 operator
+`pyproject.toml`. The repository wrapper remains the documented v1.6.4 operator
 path because default storage and generated configuration are deliberately
 repository-oriented.
 
@@ -241,7 +241,7 @@ Each `[[zones]]` table defines one independent project area:
 |---|---:|---|
 | `id` | required | Lowercase API/UI identifier, up to 64 characters. |
 | `label` | `id` | Human-readable UI label. |
-| `type` | `local` | Only `local` is implemented in v1.6.3. |
+| `type` | `local` | Only `local` is implemented in v1.6.4. |
 | `directory` | required | Absolute path as seen by the server and the harness. |
 | `retain` | `10` | Number of managed items retained in the zone. |
 | `reference_prefix` | `@` | Text prepended to one returned reference. |
@@ -998,7 +998,7 @@ restart the service.
 
 The next major platform goal is native Windows and macOS support with the same
 transaction and security guarantees. That work is intentionally separate from
-the v1.6.3 support matrix and must not be represented as already supported.
+the v1.6.4 support matrix and must not be represented as already supported.
 
 ## 16. License
 

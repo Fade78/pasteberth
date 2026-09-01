@@ -1,10 +1,12 @@
 """Contract tests for the selected semantic filesystem backend."""
 from __future__ import annotations
 
+import errno
 import multiprocessing
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from pasteberth.platformfs import (
     BusyError,
@@ -14,6 +16,7 @@ from pasteberth.platformfs import (
     InvalidNameError,
     platform_fs,
 )
+from pasteberth.platformfs.linux import LinuxPlatformFS
 from tests.helpers import running_under_wine
 
 
@@ -162,3 +165,84 @@ class PlatformFSContract(unittest.TestCase):
                 process.terminate()
                 process.join()
         self.assertEqual(process.exitcode, 0)
+
+
+class LinuxPlatformFSBehavior(unittest.TestCase):
+    def setUp(self):
+        if platform_fs().backend_name != "linux":
+            self.skipTest("comportement spécifique au backend Linux")
+        self.fs = LinuxPlatformFS()
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+
+    def test_mountinfo_selects_the_most_specific_filesystem(self):
+        mountinfo = (
+            "30 1 0:1 / / rw - ext4 /dev/root rw\n"
+            "31 30 0:2 / /mnt rw - 9p drvfs rw\n"
+            "32 31 0:3 / /mnt/c rw - drvfs C: rw\n"
+        )
+        with mock.patch(
+            "builtins.open",
+            mock.mock_open(read_data=mountinfo),
+        ):
+            self.assertEqual(
+                self.fs._filesystem_type(Path("/mnt/c/zone")),
+                "drvfs",
+            )
+
+    def test_shared_filesystem_uses_the_no_replace_fallback(self):
+        directory_path = Path(self.tmp.name) / "shared"
+        with self.fs.open_directory(directory_path, create=True) as directory:
+            with self.fs.create_exclusive(directory, "source") as source:
+                source.write(b"source")
+                source.sync()
+                identity = source.identity
+            with mock.patch.object(
+                self.fs,
+                "_uses_shared_filesystem",
+                return_value=True,
+            ), mock.patch.object(
+                self.fs,
+                "_renameat2",
+                side_effect=AssertionError("renameat2 ne doit pas être appelé"),
+            ):
+                self.fs.rename_noreplace(
+                    directory,
+                    "source",
+                    "target",
+                    expected=identity,
+                )
+            self.assertEqual(self.fs.identity(directory, "target"), identity)
+
+    def test_unsupported_renameat2_errors_use_the_no_replace_fallback(self):
+        directory_path = Path(self.tmp.name) / "unsupported"
+        with self.fs.open_directory(directory_path, create=True) as directory:
+            for index, error_number in enumerate(
+                (errno.ENOSYS, errno.EOPNOTSUPP, errno.EINVAL)
+            ):
+                source_name = f"source-{index}"
+                target_name = f"target-{index}"
+                with self.fs.create_exclusive(directory, source_name) as source:
+                    source.write(b"source")
+                    source.sync()
+                    identity = source.identity
+                with mock.patch.object(
+                    self.fs,
+                    "_uses_shared_filesystem",
+                    return_value=False,
+                ), mock.patch.object(
+                    self.fs,
+                    "_renameat2",
+                    return_value=-1,
+                ) as renameat2, mock.patch(
+                    "pasteberth.platformfs.linux.ctypes.get_errno",
+                    return_value=error_number,
+                ):
+                    self.fs.rename_noreplace(
+                        directory,
+                        source_name,
+                        target_name,
+                        expected=identity,
+                    )
+                self.assertEqual(renameat2.call_count, 1)
+                self.assertEqual(self.fs.identity(directory, target_name), identity)
