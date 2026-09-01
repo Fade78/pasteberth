@@ -80,7 +80,7 @@ def validate_comment(value: object) -> str:
         raise ValueError(f"comment must be at most {_MAX_COMMENT_BYTES} UTF-8 bytes")
     for char in value:
         category = unicodedata.category(char)
-        if category.startswith("C") and char not in {"\u200c", "\u200d"}:
+        if category.startswith("C") and char not in {"\n", "\u200c", "\u200d"}:
             raise ValueError("comment contains unsupported control characters")
         codepoint = ord(char)
         if 0xFDD0 <= codepoint <= 0xFDEF or codepoint & 0xFFFF in {0xFFFE, 0xFFFF}:

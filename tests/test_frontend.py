@@ -124,6 +124,7 @@ class TestContratsFrontend(unittest.TestCase):
         self.assertIn("function renderCommentControl", self.app_js)
         self.assertIn('button.textContent = item.comment ? "Edit comment" : "Comment";', self.app_js)
         self.assertIn("comment-text", self.app_js)
+        self.assertIn("form.requestSubmit()", self.app_js)
         self.assertIn("function itemDetails", self.app_js)
         self.assertIn("wrap.title = itemDetails", self.app_js)
         self.assertIn("img.title = itemDetails", self.app_js)

@@ -2,6 +2,14 @@
 
 This file records user-visible changes to Pasteberth.
 
+## [1.8.1] - 2026-09-01
+
+### Web UI and API
+
+- allow line breaks in comments;
+- keep the comment editor open for `Enter` and save with `Ctrl`+`Enter` (or
+  `Command`+`Enter`).
+
 ## [1.8.0] - 2026-09-01
 
 ### Web UI and API

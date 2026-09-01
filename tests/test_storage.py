@@ -112,8 +112,17 @@ class TestSauvegarde(Base):
         self.assertIn("🚀", sidecar)
         self.assertEqual(json.loads(sidecar)["comment"], "Projet 🚀 — prêt")
 
+    def test_commentaire_multiligne_est_persistant(self):
+        stored = self.dest.save(make_png(3, 2), INFO(3, 2))
+        comment = "C'est un super fichier.\nSecond line."
+
+        updated = self.dest.update_comment(stored.filename, comment)
+
+        self.assertEqual(updated.comment, comment)
+        self.assertEqual(self.dest.list()[0].comment, comment)
+
     def test_commentaire_refuse_les_caracteres_non_surs(self):
-        for value in ("line\nfeed", "zero\u200bwidth", "right\u202eleft", "\ufffe", "\ud800", "\ue000"):
+        for value in ("zero\u200bwidth", "right\u202eleft", "\ufffe", "\ud800", "\ue000"):
             with self.subTest(value=repr(value)):
                 with self.assertRaises(ValueError):
                     validate_comment(value)

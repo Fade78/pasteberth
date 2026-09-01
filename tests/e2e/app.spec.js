@@ -1037,6 +1037,34 @@ test("colle du texte et l'affiche", async ({ page }) => {
   await page.getByRole("button", { name: "Close" }).click();
 });
 
+test("conserve les retours de ligne et enregistre avec Ctrl-Entree", async ({ page }) => {
+  await openApp(page);
+  const defaultZone = page.locator('[data-zone="default"]');
+  await defaultZone.getByRole("button", { name: "Select zone Default" }).click();
+  await dispatchPaste(page);
+  await expect(defaultZone.locator(".latest")).toBeVisible();
+
+  const filename = await defaultZone.locator(".fname").textContent();
+  await defaultZone.getByRole("button", { name: `Comment for ${filename}` }).click();
+  const editor = defaultZone.locator(".comment-editor");
+  const input = editor.locator("textarea");
+  const comment = "C'est un super fichier.\nSecond line.";
+
+  await input.fill("C'est un super fichier.");
+  await input.press("Enter");
+  await input.type("Second line.");
+  await expect(input).toHaveValue(comment);
+  await expect(editor).toBeVisible();
+
+  await input.press("Control+Enter");
+  await expect(editor).toHaveCount(0);
+  await expect(defaultZone.locator(".comment-text")).toHaveText(comment);
+
+  const response = await page.request.get("/api/zones/default/images");
+  const payload = await response.json();
+  expect(payload.images.find((item) => item.filename === filename).comment).toBe(comment);
+});
+
 test("assainit la copie HTML et réserve la copie brute à l'action explicite", async ({ page, browserName }) => {
   test.skip(browserName !== "chromium", "ClipboardItem HTML support is validated in Chromium");
   await openApp(page);

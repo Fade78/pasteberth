@@ -228,8 +228,8 @@ class TestComments(Base):
     def test_commentaire_invalide_et_origine_etrangere_sont_refuses(self):
         item = self._upload()
         status, _, response = self._patch_comment(item["filename"], "line\nfeed")
-        self.assertEqual(status, 400)
-        self.assertEqual(json_of(response)["error"]["code"], "invalid_comment")
+        self.assertEqual(status, 200)
+        self.assertEqual(json_of(response)["comment"], "line\nfeed")
 
         status, _, response = self.req(
             "PATCH",

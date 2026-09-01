@@ -1086,6 +1086,13 @@
       cancel.className = "ghost-btn";
       cancel.textContent = "Cancel";
       cancel.addEventListener("click", () => rerenderZone(zoneId));
+      input.addEventListener("keydown", event => {
+        if (event.key !== "Enter") return;
+        event.stopPropagation();
+        if (!(event.ctrlKey || event.metaKey)) return;
+        event.preventDefault();
+        if (!save.disabled) form.requestSubmit();
+      });
       form.addEventListener("submit", submitEvent => {
         submitEvent.preventDefault();
         saveComment(zoneId, item.id, input.value, form);
