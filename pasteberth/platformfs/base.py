@@ -106,7 +106,7 @@ class PlatformCapabilities:
         if missing:
             joined = ", ".join(missing)
             raise UnsupportedFilesystemError(
-                f"backend {self.backend!r} sans capabilities requises : {joined}"
+                f"backend {self.backend!r} lacks required capabilities: {joined}"
             )
 
 
@@ -132,7 +132,7 @@ class DirectoryHandle:
 
     def __enter__(self) -> "DirectoryHandle":
         if self._closed:
-            raise ValueError("handle de répertoire déjà fermé")
+            raise ValueError("directory handle is already closed")
         return self
 
     def __exit__(self, exc_type, exc_value, traceback) -> None:
@@ -171,7 +171,7 @@ class FileHandle:
 
     def __enter__(self) -> "FileHandle":
         if self.closed:
-            raise ValueError("handle de fichier déjà fermé")
+            raise ValueError("file handle is already closed")
         return self
 
     def __exit__(self, exc_type, exc_value, traceback) -> None:
@@ -323,6 +323,6 @@ class PlatformFS:
     @staticmethod
     def validate_component(name: str) -> None:
         if not isinstance(name, str) or not name:
-            raise InvalidNameError(f"nom de fichier invalide : {name!r}")
+            raise InvalidNameError(f"invalid filename: {name!r}")
         if name in {".", ".."} or "/" in name or "\\" in name or "\x00" in name:
-            raise InvalidNameError(f"nom de fichier invalide : {name!r}")
+            raise InvalidNameError(f"invalid filename: {name!r}")

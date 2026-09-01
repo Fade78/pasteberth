@@ -2,6 +2,24 @@
 
 This file records user-visible changes to Pasteberth.
 
+## [1.8.0] - 2026-09-01
+
+### Web UI and API
+
+- add editable Unicode comments to managed items through the Web UI and the
+  comment endpoint;
+- add `show_full_path`, enabled by default for compatibility, to hide absolute
+  filesystem references in the Web UI without changing API references;
+- reject duplicate JSON object keys in comment requests instead of accepting
+  ambiguous input.
+
+### English Interface
+
+- translate user-visible CLI, audit, configuration, HTTP, storage, filesystem,
+  and browser messages to English;
+- align operator documentation, generated configuration text, regression
+  assertions, and platform error messages with the English interface.
+
 ## [1.7.0] - 2026-09-01
 
 ### CLI

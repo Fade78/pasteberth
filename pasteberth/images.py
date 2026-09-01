@@ -1,13 +1,13 @@
-"""Validation structurelle bornée des images : PNG, JPEG, WebP.
+"""Bounded structural validation for PNG, JPEG, and WebP images.
 
-Le serveur ne décode pas les pixels ni les bitstreams codec. Il vérifie les
-conteneurs, les dimensions et les budgets nécessaires avant une preview côté
-navigateur/harness ; la classification décide ensuite du fallback binaire.
+The server does not decode pixels or codec bitstreams. It checks containers,
+dimensions, and required budgets before a browser/harness preview; the
+classifier then decides whether to fall back to binary content.
 
-Contrat : la validation est structurelle, pas un décodage codec complet. Un
-fichier structurellement valide mais non décodable (WebP tronqué, JPEG
-minimal) peut être stocké et produire une preview cassée ; il n'est jamais
-exécuté côté serveur. Un décodage complet est un candidat V2.
+Contract: validation is structural, not complete codec decoding. A structurally
+valid but undecodable file (truncated WebP, minimal JPEG) may be stored and
+produce a broken preview; it is never executed by the server. Complete decoding
+is a V2 candidate.
 """
 from __future__ import annotations
 
@@ -27,14 +27,14 @@ _MAX_JPEG_SEGMENTS = 100_000
 _MAX_WEBP_CHUNKS = 100_000
 _PNG_CHANNELS = {0: 1, 2: 3, 3: 1, 4: 2, 6: 4}
 
-# Formats acceptés -> (extension, MIME)
+# Accepted formats -> (extension, MIME type).
 FORMATS: dict[str, tuple[str, str]] = {
     "png": (".png", "image/png"),
     "jpeg": (".jpg", "image/jpeg"),
     "webp": (".webp", "image/webp"),
 }
 
-# MIME déclarés acceptés à l'upload (indicatif : le contenu fait foi).
+# Declared MIME types accepted for upload (advisory: content is authoritative).
 ALLOWED_DECLARED_MIMES = {
     "image/png", "image/jpeg", "image/webp", "application/octet-stream",
     "text/plain", "text/markdown", "text/html", "text/css",
@@ -45,7 +45,7 @@ ALLOWED_DECLARED_MIMES = {
 
 
 class InvalidImageError(Exception):
-    """Upload refusé : contenu vide, non reconnu ou corrompu."""
+    """Rejected upload: empty, unrecognized, or corrupt content."""
 
     def __init__(self, code: str, message: str):
         super().__init__(message)
@@ -54,7 +54,7 @@ class InvalidImageError(Exception):
 
 @dataclass(frozen=True)
 class ImageInfo:
-    fmt: str  # clé de FORMATS
+    fmt: str  # FORMATS key.
     width: int
     height: int
     kind: str = "image"
@@ -66,12 +66,12 @@ def _check_dims(width: int, height: int, fmt: str, max_pixels: int) -> ImageInfo
     if not (1 <= width <= MAX_DIMENSION and 1 <= height <= MAX_DIMENSION):
         raise InvalidImageError(
             "invalid_image",
-            f"dimensions {fmt} irréalistes : {width}x{height}",
+            f"unrealistic {fmt} dimensions: {width}x{height}",
         )
     if width * height > max_pixels:
         raise InvalidImageError(
             "invalid_image",
-            f"image {fmt} trop grande à décoder : {width}x{height} "
+            f"{fmt} image is too large to decode: {width}x{height} "
             f"(maximum {max_pixels} pixels)",
         )
     return ImageInfo(fmt=fmt, width=width, height=height, mime=mime_for(fmt), ext=FORMATS[fmt][0])
@@ -80,7 +80,7 @@ def _check_dims(width: int, height: int, fmt: str, max_pixels: int) -> ImageInfo
 def _parse_png(data: bytes, max_pixels: int) -> ImageInfo:
     signature = b"\x89PNG\r\n\x1a\n"
     if len(data) < len(signature) or not data.startswith(signature):
-        raise InvalidImageError("invalid_image", "signature PNG absente")
+        raise InvalidImageError("invalid_image", "PNG signature is missing")
 
     pos = len(signature)
     saw_ihdr = False
@@ -100,28 +100,28 @@ def _parse_png(data: bytes, max_pixels: int) -> ImageInfo:
     while pos < len(data):
         chunk_count += 1
         if chunk_count > _MAX_PNG_CHUNKS:
-            raise InvalidImageError("invalid_image", "trop de chunks PNG")
+            raise InvalidImageError("invalid_image", "too many PNG chunks")
         if pos + 12 > len(data):
-            raise InvalidImageError("invalid_image", "chunk PNG tronqué")
+            raise InvalidImageError("invalid_image", "truncated PNG chunk")
         chunk_len = struct.unpack(">I", data[pos:pos + 4])[0]
         chunk_type = data[pos + 4:pos + 8]
         if not all(0x41 <= value <= 0x5A or 0x61 <= value <= 0x7A for value in chunk_type):
-            raise InvalidImageError("invalid_image", "nom de chunk PNG invalide")
+            raise InvalidImageError("invalid_image", "invalid PNG chunk name")
         if chunk_type[2] & 0x20:
-            raise InvalidImageError("invalid_image", "bit réservé de chunk PNG invalide")
+            raise InvalidImageError("invalid_image", "invalid PNG chunk reserved bit")
         chunk_start = pos + 8
         chunk_end = chunk_start + chunk_len
         if chunk_end + 4 > len(data):
-            raise InvalidImageError("invalid_image", "chunk PNG tronqué")
+            raise InvalidImageError("invalid_image", "truncated PNG chunk")
         payload = data[chunk_start:chunk_end]
         expected_crc = struct.unpack(">I", data[chunk_end:chunk_end + 4])[0]
         actual_crc = binascii.crc32(chunk_type + payload) & 0xFFFFFFFF
         if actual_crc != expected_crc:
-            raise InvalidImageError("invalid_image", "CRC PNG invalide")
+            raise InvalidImageError("invalid_image", "invalid PNG CRC")
 
         if not saw_ihdr:
             if chunk_type != b"IHDR" or chunk_len != 13:
-                raise InvalidImageError("invalid_image", "premier chunk PNG != IHDR")
+                raise InvalidImageError("invalid_image", "first PNG chunk is not IHDR")
             width, height, bit_depth, color_type, compression, filter_method, interlace = (
                 struct.unpack(">IIBBBBB", payload)
             )
@@ -133,9 +133,9 @@ def _parse_png(data: bytes, max_pixels: int) -> ImageInfo:
                 6: {8, 16},
             }
             if color_type not in valid_depths or bit_depth not in valid_depths[color_type]:
-                raise InvalidImageError("invalid_image", "type PNG invalide")
+                raise InvalidImageError("invalid_image", "invalid PNG color type")
             if compression != 0 or filter_method != 0 or interlace not in (0, 1):
-                raise InvalidImageError("invalid_image", "paramètres PNG invalides")
+                raise InvalidImageError("invalid_image", "invalid PNG parameters")
             dimensions = (width, height)
             # Bound dimensions before deriving any row-level structures from
             # attacker-controlled 32-bit values.
@@ -147,10 +147,10 @@ def _parse_png(data: bytes, max_pixels: int) -> ImageInfo:
             png_row_layout = _png_row_layout(width, height, bit_depth, color_type, interlace)
             saw_ihdr = True
         elif chunk_type == b"IHDR":
-            raise InvalidImageError("invalid_image", "chunk IHDR PNG dupliqué")
+            raise InvalidImageError("invalid_image", "duplicate PNG IHDR chunk")
         elif chunk_type == b"IDAT":
             if idat_closed:
-                raise InvalidImageError("invalid_image", "chunks IDAT PNG non contigus")
+                raise InvalidImageError("invalid_image", "PNG IDAT chunks are not contiguous")
             saw_idat = True
         elif chunk_type == b"PLTE":
             if (
@@ -161,9 +161,9 @@ def _parse_png(data: bytes, max_pixels: int) -> ImageInfo:
                 or chunk_len % 3
                 or chunk_len > 768
             ):
-                raise InvalidImageError("invalid_image", "palette PNG invalide")
+                raise InvalidImageError("invalid_image", "invalid PNG palette")
             if color_type == 3 and bit_depth is not None and chunk_len // 3 > 1 << bit_depth:
-                raise InvalidImageError("invalid_image", "palette PNG trop grande")
+                raise InvalidImageError("invalid_image", "PNG palette is too large")
             saw_plte = True
             plte_entries = chunk_len // 3
         elif chunk_type == b"tRNS":
@@ -178,21 +178,21 @@ def _parse_png(data: bytes, max_pixels: int) -> ImageInfo:
             if color_type == 3:
                 valid = valid and chunk_len > 0
             if saw_idat or saw_trns or not valid:
-                raise InvalidImageError("invalid_image", "chunk tRNS PNG invalide")
+                raise InvalidImageError("invalid_image", "invalid PNG tRNS chunk")
             saw_trns = True
         elif chunk_type == b"IEND":
             if chunk_len != 0 or not saw_idat:
-                raise InvalidImageError("invalid_image", "PNG incomplet")
+                raise InvalidImageError("invalid_image", "incomplete PNG")
             saw_iend = True
             pos = chunk_end + 4
             if pos != len(data):
-                raise InvalidImageError("invalid_image", "données après IEND PNG")
+                raise InvalidImageError("invalid_image", "data follows PNG IEND")
             break
         else:
             if saw_idat:
                 idat_closed = True
             if chunk_type[0] & 0x20 == 0:
-                raise InvalidImageError("invalid_image", "chunk critique PNG inconnu")
+                raise InvalidImageError("invalid_image", "unknown critical PNG chunk")
         pos = chunk_end + 4
 
     if (
@@ -204,11 +204,11 @@ def _parse_png(data: bytes, max_pixels: int) -> ImageInfo:
         or not saw_iend
         or pos != len(data)
     ):
-        raise InvalidImageError("invalid_image", "PNG incomplet")
+        raise InvalidImageError("invalid_image", "incomplete PNG")
     if color_type == 3 and not saw_plte:
-        raise InvalidImageError("invalid_image", "palette PNG absente")
+        raise InvalidImageError("invalid_image", "PNG palette is missing")
     if png_raw_size > _MAX_PNG_RAW_BYTES:
-        raise InvalidImageError("invalid_image", "données PNG décompressées trop volumineuses")
+        raise InvalidImageError("invalid_image", "decompressed PNG data is too large")
     filter_bpp = max(1, (_PNG_CHANNELS[color_type] * bit_depth + 7) // 8)
     _validate_png_data(
         data,
@@ -231,14 +231,14 @@ _SOF_MARKERS = {
 
 def _parse_jpeg(data: bytes, max_pixels: int) -> ImageInfo:
     if len(data) < 4 or data[0:2] != b"\xff\xd8":
-        raise InvalidImageError("invalid_image", "signature JPEG absente")
+        raise InvalidImageError("invalid_image", "JPEG signature is missing")
     pos = 2
     end = len(data)
     dimensions: tuple[int, int] | None = None
     segment_count = 0
     while pos + 1 < end:
         if data[pos] != 0xFF:
-            raise InvalidImageError("invalid_image", "flux JPEG désynchronisé")
+            raise InvalidImageError("invalid_image", "desynchronized JPEG stream")
         while pos < end and data[pos] == 0xFF:
             pos += 1
         if pos >= end:
@@ -247,46 +247,46 @@ def _parse_jpeg(data: bytes, max_pixels: int) -> ImageInfo:
         pos += 1
         segment_count += 1
         if segment_count > _MAX_JPEG_SEGMENTS:
-            raise InvalidImageError("invalid_image", "trop de segments JPEG")
+            raise InvalidImageError("invalid_image", "too many JPEG segments")
         if marker == 0xD9:
             break
         if marker == 0xDA:
             if dimensions is None or pos + 2 > end:
-                raise InvalidImageError("invalid_image", "trame JPEG incomplète")
+                raise InvalidImageError("invalid_image", "incomplete JPEG frame")
             seg_len = struct.unpack(">H", data[pos:pos + 2])[0]
             if seg_len < 2 or pos + seg_len > end:
-                raise InvalidImageError("invalid_image", "segment SOS JPEG tronqué")
+                raise InvalidImageError("invalid_image", "truncated JPEG SOS segment")
             entropy_start = pos + seg_len
             eoi = data.find(b"\xff\xd9", entropy_start)
             if eoi <= entropy_start or eoi + 2 != end:
-                raise InvalidImageError("invalid_image", "fin JPEG absente ou incohérente")
+                raise InvalidImageError("invalid_image", "JPEG end marker is missing or inconsistent")
             return _check_dims(*dimensions, "jpeg", max_pixels)
         if marker in (0x01,) or 0xD0 <= marker <= 0xD7:
             continue
         if pos + 2 > end:
-            raise InvalidImageError("invalid_image", "segment JPEG tronqué")
+            raise InvalidImageError("invalid_image", "truncated JPEG segment")
         seg_len = struct.unpack(">H", data[pos:pos + 2])[0]
         if seg_len < 2 or pos + seg_len > end:
-            raise InvalidImageError("invalid_image", "segment JPEG tronqué")
+            raise InvalidImageError("invalid_image", "truncated JPEG segment")
         if marker in _SOF_MARKERS:
             if seg_len < 8:
-                raise InvalidImageError("invalid_image", "segment SOF JPEG tronqué")
+                raise InvalidImageError("invalid_image", "truncated JPEG SOF segment")
             precision = data[pos + 2]
             height, width = struct.unpack(">HH", data[pos + 3:pos + 7])
             components = data[pos + 7]
             if precision == 0 or components == 0 or seg_len != 8 + components * 3:
-                raise InvalidImageError("invalid_image", "segment SOF JPEG invalide")
+                raise InvalidImageError("invalid_image", "invalid JPEG SOF segment")
             dimensions = (width, height)
         pos += seg_len
-    raise InvalidImageError("invalid_image", "JPEG incomplet ou en-tête de trame absent")
+    raise InvalidImageError("invalid_image", "incomplete JPEG or missing frame header")
 
 
 def _parse_webp(data: bytes, max_pixels: int) -> ImageInfo:
     if len(data) < 20 or data[0:4] != b"RIFF" or data[8:12] != b"WEBP":
-        raise InvalidImageError("invalid_image", "signature WebP absente")
+        raise InvalidImageError("invalid_image", "WebP signature is missing")
     riff_size = struct.unpack("<I", data[4:8])[0]
     if riff_size != len(data) - 8:
-        raise InvalidImageError("invalid_image", "taille RIFF WebP incohérente")
+        raise InvalidImageError("invalid_image", "inconsistent WebP RIFF size")
 
     pos = 12
     end = len(data)
@@ -299,63 +299,63 @@ def _parse_webp(data: bytes, max_pixels: int) -> ImageInfo:
     while pos < end:
         chunk_count += 1
         if chunk_count > _MAX_WEBP_CHUNKS:
-            raise InvalidImageError("invalid_image", "trop de chunks WebP")
+            raise InvalidImageError("invalid_image", "too many WebP chunks")
         if pos + 8 > end:
-            raise InvalidImageError("invalid_image", "chunk WebP tronqué")
+            raise InvalidImageError("invalid_image", "truncated WebP chunk")
         fourcc = data[pos:pos + 4]
         size = struct.unpack("<I", data[pos + 4:pos + 8])[0]
         body = pos + 8
         chunk_end = body + size
         padded_end = chunk_end + (size & 1)
         if chunk_end > end or padded_end > end:
-            raise InvalidImageError("invalid_image", "chunk WebP tronqué")
+            raise InvalidImageError("invalid_image", "truncated WebP chunk")
         if size & 1 and data[chunk_end] != 0:
-            raise InvalidImageError("invalid_image", "bourrage WebP invalide")
+            raise InvalidImageError("invalid_image", "invalid WebP padding")
         if fourcc == b"VP8X":
             if saw_vp8x or size != 10:
-                raise InvalidImageError("invalid_image", "chunk VP8X WebP tronqué")
+                raise InvalidImageError("invalid_image", "truncated WebP VP8X chunk")
             flags = data[body]
             if flags & 0xC1 or any(data[body + 1:body + 4]):
-                raise InvalidImageError("invalid_image", "bits réservés VP8X invalides")
+                raise InvalidImageError("invalid_image", "invalid VP8X reserved bits")
             if flags & 0x02:
-                raise InvalidImageError("invalid_image", "animation WebP non supportée")
+                raise InvalidImageError("invalid_image", "WebP animation is not supported")
             w = int.from_bytes(data[body + 4:body + 7], "little") + 1
             h = int.from_bytes(data[body + 7:body + 10], "little") + 1
             canvas_dimensions = (w, h)
         elif fourcc == b"VP8 ":
             if payload_count or size < 10:
-                raise InvalidImageError("invalid_image", "chunk VP8 WebP tronqué")
+                raise InvalidImageError("invalid_image", "truncated WebP VP8 chunk")
             frame_tag = data[body]
             if frame_tag & 0x01 or frame_tag & 0x0E:
-                raise InvalidImageError("invalid_image", "version VP8 invalide")
+                raise InvalidImageError("invalid_image", "invalid VP8 version")
             if data[body + 3:body + 6] != b"\x9d\x01\x2a":
-                raise InvalidImageError("invalid_image", "code de synchronisation VP8 invalide")
+                raise InvalidImageError("invalid_image", "invalid VP8 synchronization code")
             saw_image_payload = True
             payload_count += 1
             w, h = struct.unpack("<HH", data[body + 6:body + 10])
             frame_dimensions = (w & 0x3FFF, h & 0x3FFF)
         elif fourcc == b"VP8L":
             if payload_count or size < 5:
-                raise InvalidImageError("invalid_image", "chunk VP8L WebP tronqué")
+                raise InvalidImageError("invalid_image", "truncated WebP VP8L chunk")
             if data[body] != 0x2F:
-                raise InvalidImageError("invalid_image", "signature VP8L invalide")
+                raise InvalidImageError("invalid_image", "invalid VP8L signature")
             saw_image_payload = True
             payload_count += 1
             bits = struct.unpack("<I", data[body + 1:body + 5])[0]
             if bits & 0xE0000000:
-                raise InvalidImageError("invalid_image", "version VP8L invalide")
+                raise InvalidImageError("invalid_image", "invalid VP8L version")
             w = (bits & 0x3FFF) + 1
             h = ((bits >> 14) & 0x3FFF) + 1
             frame_dimensions = (w, h)
         pos = padded_end
     if canvas_dimensions is not None and frame_dimensions is not None:
         if canvas_dimensions != frame_dimensions:
-            raise InvalidImageError("invalid_image", "canvas et trame WebP incohérents")
+            raise InvalidImageError("invalid_image", "inconsistent WebP canvas and frame")
     dimensions = canvas_dimensions or frame_dimensions
     if dimensions is None:
-        raise InvalidImageError("invalid_image", "chunk de dimension WebP introuvable")
+        raise InvalidImageError("invalid_image", "WebP dimension chunk is missing")
     if not saw_image_payload:
-        raise InvalidImageError("invalid_image", "payload image WebP introuvable")
+        raise InvalidImageError("invalid_image", "WebP image payload is missing")
     return _check_dims(*dimensions, "webp", max_pixels)
 
 
@@ -458,7 +458,7 @@ def _validate_png_data(
                 predictor = left if pa <= pb and pa <= pc else up if pb <= pc else up_left
                 restored[index] = (value + predictor) & 0xFF
             else:
-                raise InvalidImageError("invalid_image", "filtre PNG invalide")
+                raise InvalidImageError("invalid_image", "invalid PNG filter")
         return bytes(restored)
 
     def check_palette(raw_row: bytes, pixel_width: int) -> None:
@@ -474,25 +474,25 @@ def _validate_png_data(
                 for index in range(pixel_width)
             )
         if any(sample >= palette_entries for sample in samples):
-            raise InvalidImageError("invalid_image", "indice de palette PNG invalide")
+            raise InvalidImageError("invalid_image", "invalid PNG palette index")
 
     def check_padding(raw_row: bytes, pixel_width: int) -> None:
         if bits_per_pixel >= 8:
             return
         unused_bits = len(raw_row) * 8 - pixel_width * bits_per_pixel
         if unused_bits and raw_row[-1] & ((1 << unused_bits) - 1):
-            raise InvalidImageError("invalid_image", "bits PNG inutilisés non nuls")
+            raise InvalidImageError("invalid_image", "unused PNG bits are not zero")
 
     def consume(output: bytes) -> None:
         nonlocal produced, filter_index, row_index, previous_row
         start = produced
         produced += len(output)
         if produced > raw_size:
-            raise InvalidImageError("invalid_image", "données PNG décompressées incohérentes")
+            raise InvalidImageError("invalid_image", "inconsistent decompressed PNG data")
         while filter_index < len(filter_offsets) and filter_offsets[filter_index] < produced:
             offset = filter_offsets[filter_index]
             if output[offset - start] > 4:
-                raise InvalidImageError("invalid_image", "filtre PNG invalide")
+                raise InvalidImageError("invalid_image", "invalid PNG filter")
             filter_index += 1
         row_buffer.extend(output)
         while row_index < len(row_layout):
@@ -519,7 +519,7 @@ def _validate_png_data(
                 break
             if chunk_type == b"IDAT":
                 if stream_ended:
-                    raise InvalidImageError("invalid_image", "flux zlib PNG incohérent")
+                    raise InvalidImageError("invalid_image", "inconsistent PNG zlib stream")
                 pending = data[chunk_start:chunk_end]
                 while pending:
                     output = decompressor.decompress(pending, 64 * 1024)
@@ -527,32 +527,32 @@ def _validate_png_data(
                     pending = decompressor.unconsumed_tail
                     if decompressor.eof:
                         if decompressor.unused_data or pending:
-                            raise InvalidImageError("invalid_image", "flux zlib PNG incohérent")
+                            raise InvalidImageError("invalid_image", "inconsistent PNG zlib stream")
                         stream_ended = True
                         break
             if chunk_type == b"IEND":
                 break
             pos = chunk_end + 4
         if not decompressor.eof:
-            raise InvalidImageError("invalid_image", "flux zlib PNG incomplet")
+            raise InvalidImageError("invalid_image", "incomplete PNG zlib stream")
         consume(decompressor.flush())
     except zlib.error as exc:
-        raise InvalidImageError("invalid_image", "compression PNG invalide") from exc
+        raise InvalidImageError("invalid_image", "invalid PNG compression") from exc
     if (
         produced != raw_size
         or filter_index != len(filter_offsets)
         or row_index != len(row_layout)
         or row_buffer
     ):
-        raise InvalidImageError("invalid_image", "taille PNG décompressée incohérente")
+        raise InvalidImageError("invalid_image", "inconsistent decompressed PNG size")
 
 
 def inspect_image(data: bytes, *, max_pixels: int = MAX_PIXELS) -> ImageInfo:
-    """Identifie et valide une image à partir de son contenu."""
+    """Identify and validate an image from its content."""
     if not (1 <= max_pixels <= HARD_MAX_PIXELS):
-        raise ValueError(f"max_pixels doit être entre 1 et {HARD_MAX_PIXELS}")
+        raise ValueError(f"max_pixels must be between 1 and {HARD_MAX_PIXELS}")
     if not data:
-        raise InvalidImageError("empty_upload", "upload vide")
+        raise InvalidImageError("empty_upload", "upload is empty")
     fmt = None
     for sig, candidate in _SIGNATURES:
         if data.startswith(sig):
@@ -561,20 +561,20 @@ def inspect_image(data: bytes, *, max_pixels: int = MAX_PIXELS) -> ImageInfo:
     if fmt is None:
         raise InvalidImageError(
             "unsupported_format",
-            "contenu non reconnu (formats acceptés : PNG, JPEG, WebP)",
+            "unrecognized content (accepted formats: PNG, JPEG, WebP)",
         )
     return _PARSERS[fmt](data, max_pixels)
 
 
 def mime_allowed(declared: str | None) -> bool:
-    """Vérifie le Content-Type déclaré (indicatif, jamais déterminant)."""
+    """Check the declared Content-Type (advisory, never authoritative)."""
     if not declared:
-        return True  # traité comme application/octet-stream
+        return True  # Treat as application/octet-stream.
     return declared.split(";")[0].strip().lower() in ALLOWED_DECLARED_MIMES
 
 
 def mime_syntax_allowed(declared: str | None) -> bool:
-    """Vérifie la syntaxe d'un MIME avant de le laisser influencer le type."""
+    """Check MIME syntax before letting it influence classification."""
     if not declared:
         return True
     value = declared.split(";", 1)[0].strip().lower()

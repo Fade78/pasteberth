@@ -1,4 +1,4 @@
-"""Lancement du serveur HTTP threadé."""
+"""Threaded HTTP server."""
 from __future__ import annotations
 
 import logging
@@ -13,7 +13,7 @@ log = logging.getLogger("pasteberth.server")
 
 
 def create_tls_context(certificate, private_key) -> ssl.SSLContext:
-    """Charge un contexte TLS serveur avec TLS 1.2 minimum."""
+    """Load a server TLS context with TLS 1.2 as the minimum version."""
     context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
     context.minimum_version = ssl.TLSVersion.TLSv1_2
     context.load_cert_chain(str(certificate), str(private_key))
@@ -21,7 +21,7 @@ def create_tls_context(certificate, private_key) -> ssl.SSLContext:
 
 
 def _resolve_bind_address(host: str, port: int) -> tuple[int, tuple]:
-    """Résout une adresse une seule fois avant de créer la socket d'écoute."""
+    """Resolve an address once before creating the listening socket."""
     try:
         address = ipaddress.ip_address(host)
     except ValueError:
@@ -32,7 +32,7 @@ def _resolve_bind_address(host: str, port: int) -> tuple[int, tuple]:
             proto=socket.IPPROTO_TCP,
         )
         if not infos:
-            raise OSError(f"adresse d'écoute introuvable : {host}")
+            raise OSError(f"listening address not found: {host}")
         family, _, _, _, sockaddr = infos[0]
         return family, sockaddr
     family = socket.AF_INET6 if address.version == 6 else socket.AF_INET
@@ -40,7 +40,7 @@ def _resolve_bind_address(host: str, port: int) -> tuple[int, tuple]:
 
 
 def address_family_for(host: str) -> int:
-    """Retourne la famille d'adresse correspondant à l'écoute demandée."""
+    """Return the address family for the requested listener."""
     return _resolve_bind_address(host, 0)[0]
 
 
@@ -143,10 +143,10 @@ class PasteberthServer(ThreadingHTTPServer):
             self._active_slots.release()
 
     def close_active_connections(self) -> None:
-        """Ferme les connexions en attente pour débloquer l'arrêt gracieux.
+        """Close active connections so graceful shutdown can complete.
 
-        Sans cela, les connexions keep-alive (polling navigateur) laissent
-        leurs threads bloqués en lecture et server_close() attend indéfiniment.
+        Otherwise, keep-alive connections (browser polling) leave their
+        threads blocked in reads and server_close() waits indefinitely.
         """
         with self._sockets_lock:
             sockets = list(self._active_sockets)
@@ -161,8 +161,8 @@ class PasteberthServer(ThreadingHTTPServer):
                 pass
 
     def server_close(self) -> None:
-        # Ferme d'abord les connexions actives : les threads bloqués en
-        # lecture se réveillent et server_close() peut les drainer.
+        # Close active connections first so blocked reader threads wake up and
+        # server_close() can drain them.
         self.close_active_connections()
         super().server_close()
 
@@ -184,11 +184,11 @@ def serve_forever(
         if not bound_loopback:
             server.server_close()
             raise OSError(
-                f"adresse effectivement liée non locale : {server.server_address[0]}"
+                f"effective bound address is not local: {server.server_address[0]}"
             )
 
     def _shutdown(signum, _frame) -> None:
-        log.info("signal %s reçu, arrêt…", signal.Signals(signum).name)
+        log.info("received signal %s, shutting down", signal.Signals(signum).name)
         server.close_active_connections()
         threading.Thread(target=server.shutdown, daemon=True).start()
 

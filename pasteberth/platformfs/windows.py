@@ -479,7 +479,7 @@ def _raise_code(code: int, operation: str, path: str | None = None):
         _ERROR_NOT_SAME_DEVICE,
     ):
         raise UnsupportedFilesystemError(
-            f"{operation} indisponible ({code}: {message})"
+            f"{operation} unavailable ({code}: {message})"
         )
     raise OSError(code, message, path or operation)
 
@@ -521,7 +521,7 @@ class WindowsPlatformFS(PlatformFS):
             value = os.fsdecode(value)
         value = value.replace("/", "\\")
         if not ntpath.isabs(value):
-            raise ValueError(f"chemin absolu attendu : {value!r}")
+            raise ValueError(f"absolute path expected: {value!r}")
         return ntpath.normpath(value)
 
     @staticmethod
@@ -595,7 +595,7 @@ class WindowsPlatformFS(PlatformFS):
             if result < size - 1:
                 return buffer.value
             size *= 2
-        raise UnsupportedFilesystemError("chemin Windows trop long à vérifier")
+        raise UnsupportedFilesystemError("Windows path is too long to verify")
 
     def _query_raw(self, handle: int) -> dict:
         basic = _BY_HANDLE_FILE_INFORMATION()
@@ -673,11 +673,11 @@ class WindowsPlatformFS(PlatformFS):
         )
         if result:
             raise PermissionSecurityError(
-                f"lecture du propriétaire Windows impossible ({result})"
+                f"cannot read Windows owner ({result})"
             )
         try:
             if not owner.value:
-                raise PermissionSecurityError("propriétaire Windows absent")
+                raise PermissionSecurityError("Windows owner is missing")
             return self._sid_string(owner)
         finally:
             if descriptor.value:
@@ -741,11 +741,11 @@ class WindowsPlatformFS(PlatformFS):
         )
         if result:
             raise PermissionSecurityError(
-                f"lecture de l'ACL Windows impossible ({result})"
+                f"cannot read Windows ACL ({result})"
             )
         try:
             if not owner.value:
-                return "", False, "propriétaire absent"
+                return "", False, "owner is missing"
             owner_sid = self._sid_string(owner)
             present = ctypes.c_int()
             defaulted = ctypes.c_int()
@@ -758,7 +758,7 @@ class WindowsPlatformFS(PlatformFS):
             ):
                 _raise_code(ctypes.get_last_error(), "GetSecurityDescriptorDacl")
             if not present.value or not dacl_pointer.value:
-                return owner_sid, False, "DACL absente ou héritée implicitement"
+                return owner_sid, False, "DACL is missing or implicitly inherited"
             size_info = _ACL_SIZE_INFORMATION()
             if not self._api.GetAclInformation(
                 dacl_pointer,
@@ -792,7 +792,7 @@ class WindowsPlatformFS(PlatformFS):
                 sid_address = _handle_value(ace) + 8
                 ace_sid = self._sid_string(sid_address)
                 if ace_sid != owner_sid and mask & sensitive:
-                    return owner_sid, False, "ACL autorisant un autre principal"
+                    return owner_sid, False, "ACL grants access to another principal"
             return owner_sid, True, None
         finally:
             if descriptor.value:
@@ -839,7 +839,7 @@ class WindowsPlatformFS(PlatformFS):
                 self._close_native(handle)
             if result:
                 raise PermissionSecurityError(
-                    f"ACL privée impossible pour {path} ({result})"
+                    f"cannot set private ACL for {path} ({result})"
                 )
         finally:
             if descriptor.value:
@@ -847,7 +847,7 @@ class WindowsPlatformFS(PlatformFS):
 
     def _directory_stable(self, directory: DirectoryHandle) -> None:
         if not isinstance(directory, _WindowsDirectoryHandle):
-            raise TypeError("handle Windows attendu")
+            raise TypeError("Windows handle expected")
         current = self._open_native(
             self._path_string(directory.path),
             desired_access=_GENERIC_READ | _READ_CONTROL | _SYNCHRONIZE,
@@ -855,11 +855,11 @@ class WindowsPlatformFS(PlatformFS):
         try:
             raw = self._query_raw(current)
             if raw["identity"] != directory.identity:
-                raise EntryChangedError(f"répertoire remplacé : {directory.path}")
+                raise EntryChangedError(f"directory was replaced: {directory.path}")
             if self._compare_path(self._final_path(current)) != self._compare_path(
                 self._path_string(directory.path)
             ):
-                raise UnsafeLinkError(f"chemin de zone redirigé : {directory.path}")
+                raise UnsafeLinkError(f"zone path was redirected: {directory.path}")
         finally:
             self._close_native(current)
 
@@ -879,7 +879,7 @@ class WindowsPlatformFS(PlatformFS):
         try:
             raw = self._query_raw(handle)
             if raw["attributes"] & _FILE_ATTRIBUTE_REPARSE_POINT:
-                raise UnsafeLinkError(f"répertoire symbolique refusé : {current}")
+                raise UnsafeLinkError(f"symbolic directory rejected: {current}")
             if not raw["attributes"] & _FILE_ATTRIBUTE_DIRECTORY:
                 raise NotADirectoryError(current)
             for part in parts:
@@ -905,13 +905,13 @@ class WindowsPlatformFS(PlatformFS):
                 try:
                     next_raw = self._query_raw(next_handle)
                     if next_raw["attributes"] & _FILE_ATTRIBUTE_REPARSE_POINT:
-                        raise UnsafeLinkError(f"répertoire symbolique refusé : {next_path}")
+                        raise UnsafeLinkError(f"symbolic directory rejected: {next_path}")
                     if not next_raw["attributes"] & _FILE_ATTRIBUTE_DIRECTORY:
                         raise NotADirectoryError(next_path)
                     if self._compare_path(self._final_path(next_handle)) != self._compare_path(
                         next_path
                     ):
-                        raise UnsafeLinkError(f"chemin de zone redirigé : {next_path}")
+                        raise UnsafeLinkError(f"zone path was redirected: {next_path}")
                     if created:
                         self._set_private_acl(next_path)
                 except BaseException:
@@ -924,7 +924,7 @@ class WindowsPlatformFS(PlatformFS):
             if self._compare_path(self._final_path(handle)) != self._compare_path(
                 self._path_string(path)
             ):
-                raise UnsafeLinkError(f"chemin de zone redirigé : {path}")
+                raise UnsafeLinkError(f"zone path was redirected: {path}")
             return _WindowsDirectoryHandle(
                 self._api,
                 Path(path),
@@ -984,12 +984,12 @@ class WindowsPlatformFS(PlatformFS):
         try:
             raw = self._query_raw(handle)
             if self._compare_path(self._final_path(handle)) != self._compare_path(path):
-                raise UnsafeLinkError(f"chemin d'entrée redirigé : {name!r}")
+                raise UnsafeLinkError(f"entry path was redirected: {name!r}")
             if require_regular and (
                 raw["attributes"] & _FILE_ATTRIBUTE_REPARSE_POINT
                 or raw["attributes"] & _FILE_ATTRIBUTE_DIRECTORY
             ):
-                raise UnsafeLinkError(f"fichier non régulier : {name!r}")
+                raise UnsafeLinkError(f"file is not regular: {name!r}")
             self._directory_stable(directory)
             return handle, raw
         except BaseException:
@@ -1075,7 +1075,7 @@ class WindowsPlatformFS(PlatformFS):
             if raw["attributes"] & (
                 _FILE_ATTRIBUTE_REPARSE_POINT | _FILE_ATTRIBUTE_DIRECTORY
             ):
-                raise UnsafeLinkError(f"fichier non régulier : {name!r}")
+                raise UnsafeLinkError(f"file is not regular: {name!r}")
             self._set_private_acl(path)
             native_handle = handle
             stream = self._stream_from_handle(handle, mode)
@@ -1147,7 +1147,7 @@ class WindowsPlatformFS(PlatformFS):
         if info is None:
             return None
         if require_regular and not info.is_regular:
-            raise UnsafeLinkError(f"fichier non régulier : {name!r}")
+            raise UnsafeLinkError(f"file is not regular: {name!r}")
         return info.identity
 
     def is_owned(self, entry: EntryInfo) -> bool:
@@ -1166,9 +1166,9 @@ class WindowsPlatformFS(PlatformFS):
     ) -> EntryInfo:
         info = self.entry_info(directory, name)
         if info is None or info.identity != expected:
-            raise EntryChangedError(f"fichier modifié : {name!r}")
+            raise EntryChangedError(f"file changed: {name!r}")
         if not info.is_regular or not self.is_owned(info):
-            raise PermissionSecurityError(f"fichier non détenu : {name!r}")
+            raise PermissionSecurityError(f"file is not owned: {name!r}")
         return info
 
     def link_expected(
@@ -1191,7 +1191,7 @@ class WindowsPlatformFS(PlatformFS):
             _raise_code(ctypes.get_last_error(), "CreateHardLinkW", target_path)
         self._directory_stable(directory)
         if self.identity(directory, target) != expected:
-            raise EntryChangedError(f"cible étrangère apparue : {target!r}")
+            raise EntryChangedError(f"foreign target appeared: {target!r}")
 
     def _rename_buffer(self, target: str, directory: DirectoryHandle, *, replace: bool):
         target_path = self._extended_path(
@@ -1289,7 +1289,7 @@ class WindowsPlatformFS(PlatformFS):
         try:
             source_identity = raw["identity"]
             if expected_source is not None and source_identity != expected_source:
-                raise EntryChangedError(f"source modifiée : {source!r}")
+                raise EntryChangedError(f"source changed: {source!r}")
             # The directory and identity checks above mirror the POSIX
             # contract.  Do not query the source ACL before renaming: some
             # Windows-compatible runtimes reject a later rename after a
@@ -1297,18 +1297,18 @@ class WindowsPlatformFS(PlatformFS):
             target_info = self.entry_info(directory, target)
             if not replace:
                 if target_info is not None:
-                    raise EntryExistsError(f"cible déjà existante : {target!r}")
+                    raise EntryExistsError(f"target already exists: {target!r}")
             elif target_info is not None:
                 if not target_info.is_regular or not self.is_owned(target_info):
-                    raise PermissionSecurityError(f"cible non remplaçable : {target!r}")
+                    raise PermissionSecurityError(f"target cannot be replaced: {target!r}")
                 if expected_target is not None and target_info.identity != expected_target:
-                    raise EntryChangedError(f"cible modifiée : {target!r}")
+                    raise EntryChangedError(f"target changed: {target!r}")
             elif expected_target is not None:
-                raise EntryChangedError(f"cible disparue : {target!r}")
+                raise EntryChangedError(f"target disappeared: {target!r}")
             self._rename_native(handle, directory, target, replace=replace)
             self._directory_stable(directory)
             if self.identity(directory, target) != source_identity:
-                raise EntryChangedError(f"cible étrangère apparue : {target!r}")
+                raise EntryChangedError(f"foreign target appeared: {target!r}")
         finally:
             self._close_native(handle)
 
@@ -1424,12 +1424,12 @@ class WindowsPlatformFS(PlatformFS):
             if raw["attributes"] & (
                 _FILE_ATTRIBUTE_REPARSE_POINT | _FILE_ATTRIBUTE_DIRECTORY
             ):
-                raise UnsafeLinkError(f"verrou non régulier : {name!r}")
+                raise UnsafeLinkError(f"lock file is not regular: {name!r}")
             info = self.entry_info(directory, name)
             if info is None or info.identity != raw["identity"]:
-                raise EntryChangedError(f"verrou modifié : {name!r}")
+                raise EntryChangedError(f"lock file changed: {name!r}")
             if not self.is_owned(info):
-                raise PermissionSecurityError(f"verrou non détenu : {name!r}")
+                raise PermissionSecurityError(f"lock file is not owned: {name!r}")
             flags = _LOCKFILE_EXCLUSIVE_LOCK if exclusive else 0
             if not blocking:
                 flags |= _LOCKFILE_FAIL_IMMEDIATELY
@@ -1460,9 +1460,9 @@ class WindowsPlatformFS(PlatformFS):
 
     def flush_directory(self, directory: DirectoryHandle) -> None:
         if not isinstance(directory, _WindowsDirectoryHandle):
-            raise TypeError("handle Windows attendu")
+            raise TypeError("Windows handle expected")
         if directory.closed:
-            raise ValueError("handle de répertoire fermé")
+            raise ValueError("directory handle is closed")
         handle = self._open_native(
             self._path_string(directory.path),
             desired_access=_GENERIC_WRITE | _READ_CONTROL | _SYNCHRONIZE,
@@ -1485,12 +1485,12 @@ class WindowsPlatformFS(PlatformFS):
         ):
             _raise_code(ctypes.get_last_error(), "GetDiskFreeSpaceExW", str(directory.path))
         if not total.value:
-            raise UnsupportedFilesystemError("filesystem sans capacité mesurable")
+            raise UnsupportedFilesystemError("filesystem capacity cannot be measured")
         return VolumeSpace(int(total.value), int(available.value))
 
     def volume_identity(self, directory: DirectoryHandle) -> int:
         if not isinstance(directory, _WindowsDirectoryHandle):
-            raise TypeError("handle Windows attendu")
+            raise TypeError("Windows handle expected")
         return directory.identity.volume
 
     def check_access(
@@ -1532,7 +1532,7 @@ class WindowsPlatformFS(PlatformFS):
     def runtime_directory(self) -> Path:
         root = os.environ.get("LOCALAPPDATA") or os.environ.get("USERPROFILE")
         if not root:
-            raise UnsupportedFilesystemError("répertoire runtime Windows introuvable")
+            raise UnsupportedFilesystemError("Windows runtime directory not found")
         return Path(root) / ".cache"
 
     def audit_permissions(self, path: Path, *, directory: bool) -> PermissionAudit:

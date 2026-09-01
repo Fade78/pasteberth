@@ -134,7 +134,7 @@ class LinuxPlatformFS(PosixPlatformFS):
         self.validate_component(source)
         self.validate_component(target)
         if not isinstance(directory, PosixDirectoryHandle):
-            raise TypeError("handle POSIX attendu")
+            raise TypeError("POSIX handle expected")
         if self._uses_shared_filesystem(directory.path):
             return super().rename_noreplace(
                 directory,
@@ -144,7 +144,7 @@ class LinuxPlatformFS(PosixPlatformFS):
             )
         source_identity = self.identity(directory, source)
         if expected is not None and source_identity != expected:
-            raise EntryChangedError(f"source modifiée : {source!r}")
+            raise EntryChangedError(f"source changed: {source!r}")
         if source_identity is None:
             raise FileNotFoundError(source)
         result = self._renameat2(
@@ -169,4 +169,4 @@ class LinuxPlatformFS(PosixPlatformFS):
                 )
             raise OSError(error_number, os.strerror(error_number), source, target)
         if self.identity(directory, target) != source_identity:
-            raise EntryChangedError(f"cible étrangère apparue : {target!r}")
+            raise EntryChangedError(f"foreign target appeared: {target!r}")

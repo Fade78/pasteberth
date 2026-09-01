@@ -1,10 +1,10 @@
-"""Authentification : hash de mot de passe (scrypt), sessions serveur,
-limitation des tentatives de connexion.
+"""Authentication: scrypt password hashes, server sessions, and login rate
+limiting.
 
-- Le mot de passe n'est JAMAIS stocké en clair : hash scrypt salé dans un
-  fichier ``passwd`` (mode 0600) à côté de la configuration.
-- Les sessions sont côté serveur (révocables par logout), identifiées par un
-  token aléatoire de 256 bits ; le cookie n'est qu'une référence.
+- The password is NEVER stored in plaintext: a salted scrypt hash is kept in a
+  ``passwd`` file (mode 0600) next to the configuration.
+- Sessions are server-side (revocable by logout), identified by a random
+  256-bit token; the cookie is only a reference.
 """
 from __future__ import annotations
 
@@ -52,7 +52,7 @@ def hash_password(password: str) -> str:
 
 
 def verify_password(password: str, stored: str | None) -> bool:
-    """Comparaison sûre ; retourne False si aucun hash configuré."""
+    """Compare safely; return false when no hash is configured."""
     if not stored:
         return False
     try:
@@ -84,7 +84,7 @@ def verify_password(password: str, stored: str | None) -> bool:
 
 
 def valid_password_hash(stored: str | None) -> bool:
-    """Vérifie la structure du hash sans exécuter scrypt."""
+    """Check hash structure without running scrypt."""
     if not stored:
         return False
     try:
@@ -101,8 +101,10 @@ def valid_password_hash(stored: str | None) -> bool:
 
 
 def load_password_hash(path: Path) -> str | None:
-    """Lit le fichier ``passwd`` (première ligne). Rechargé à chaque essai :
-    un changement via `pasteberth passwd` est effectif sans redémarrage."""
+    """Read the first line of ``passwd`` on every attempt.
+
+    A change made by `pasteberth passwd` takes effect without a restart.
+    """
     path = Path(path)
     if not path.is_absolute():
         path = Path.cwd() / path
@@ -117,21 +119,21 @@ def load_password_hash(path: Path) -> str | None:
                     or entry.is_symlink
                     or entry.identity != fh.identity
                 ):
-                    raise RuntimeError(f"fichier passwd non régulier : {path}")
+                    raise RuntimeError(f"passwd is not a regular file: {path}")
                 if entry.mode is not None and entry.mode & 0o077:
-                    raise RuntimeError(f"permissions trop ouvertes sur {path} (0600 requis)")
+                    raise RuntimeError(f"permissions are too open on {path} (0600 required)")
                 if not fs.is_owned(entry):
-                    raise RuntimeError(f"fichier passwd non détenu par le processus : {path}")
+                    raise RuntimeError(f"passwd is not owned by the process: {path}")
                 encoded = fh.read(_MAX_PASSWORD_FILE_BYTES + 1)
         if len(encoded) > _MAX_PASSWORD_FILE_BYTES:
-            raise RuntimeError(f"fichier passwd trop volumineux : {path}")
+            raise RuntimeError(f"passwd file is too large: {path}")
         raw = encoded.decode("utf-8").strip()
     except FileNotFoundError:
         return None
     except RuntimeError:
         raise
     except (OSError, ValueError, UnicodeError, UnsupportedFilesystemError) as exc:
-        raise RuntimeError(f"lecture impossible de {path} : {exc}") from exc
+        raise RuntimeError(f"cannot read {path}: {exc}") from exc
     return raw.splitlines()[0] if raw else None
 
 
@@ -177,7 +179,7 @@ def save_password_hash(path: Path, password_hash: str) -> None:
 
 
 class SessionStore:
-    """Sessions en mémoire : token -> expiration (monotonic)."""
+    """In-memory sessions: token -> expiration (monotonic clock)."""
 
     def __init__(
         self,
@@ -187,9 +189,9 @@ class SessionStore:
         max_sessions: int = DEFAULT_MAX_SESSIONS,
     ):
         if isinstance(max_sessions, bool) or not isinstance(max_sessions, int):
-            raise ValueError("max_sessions doit être un entier positif")
+            raise ValueError("max_sessions must be a positive integer")
         if not (1 <= max_sessions <= MAX_SESSIONS):
-            raise ValueError(f"max_sessions doit être entre 1 et {MAX_SESSIONS}")
+            raise ValueError(f"max_sessions must be between 1 and {MAX_SESSIONS}")
         self.ttl = ttl_seconds
         self._password_file = password_file
         self.max_sessions = max_sessions
@@ -251,7 +253,7 @@ class SessionStore:
 
 
 class LoginRateLimiter:
-    """Limitation par IP : après N échecs consécutifs, délai croissant."""
+    """Per-IP limiting: consecutive failures cause an increasing delay."""
 
     THRESHOLD = 5
     BASE_DELAY = 30.0
@@ -259,11 +261,11 @@ class LoginRateLimiter:
     MAX_CONCURRENT_CHECKS = 4
     MAX_TRACKED_IPS = 4096
 
-    _FORGET_AFTER = 3600.0  # sans échec pendant 1h, on oublie l'historique
+    _FORGET_AFTER = 3600.0  # Forget the history after one hour without failure.
 
     def __init__(self, max_concurrent_checks: int | None = None) -> None:
-        # ip -> [échecs consécutifs, verrouillé jusqu'à, dernier événement,
-        #        tentatives coûteuses en cours]
+        # ip -> [consecutive failures, locked until, last event,
+        #        expensive checks in progress]
         self._state: dict[str, list[float]] = {}
         self._lock = threading.Lock()
         checks = (
@@ -272,7 +274,7 @@ class LoginRateLimiter:
             else max_concurrent_checks
         )
         if checks < 1:
-            raise ValueError("max_concurrent_checks doit être positif")
+            raise ValueError("max_concurrent_checks must be positive")
         self._expensive_slots = threading.BoundedSemaphore(checks)
 
     def _make_room_locked(self, ip: str, now: float) -> bool:
@@ -299,7 +301,7 @@ class LoginRateLimiter:
             del self._state[ip]
 
     def acquire(self, ip: str) -> float:
-        """Réserve atomiquement au plus une vérification scrypt par IP."""
+        """Atomically reserve at most one scrypt check per IP."""
         now = time.monotonic()
         with self._lock:
             self._prune_locked(now)

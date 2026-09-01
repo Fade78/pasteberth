@@ -1,6 +1,6 @@
-"""Interface en ligne de commande.
+"""Command-line interface.
 
-    pasteberth                         # démarre avec les valeurs locales par défaut
+    pasteberth                         # start with local default values
     pasteberth serve   [--config PATH] [--log-level LEVEL]
     pasteberth drop [--config PATH] [--replace] DIRECTORY FILE...
     pasteberth rename [--config PATH] DIRECTORY SOURCE TARGET
@@ -67,19 +67,19 @@ def _cmd_serve(args: argparse.Namespace) -> int:
     try:
         cfg = build_default_config() if config_path is None else load_config(config_path)
     except ConfigError as exc:
-        print(f"pasteberth : erreur de configuration\n  {exc}", file=sys.stderr)
+        print(f"pasteberth: configuration error\n  {exc}", file=sys.stderr)
         return 2
     if cfg.auth.enabled:
         try:
             stored_hash = load_password_hash(cfg.password_file())
         except RuntimeError as exc:
-            print(f"pasteberth : erreur de configuration\n  {exc}", file=sys.stderr)
+            print(f"pasteberth: configuration error\n  {exc}", file=sys.stderr)
             return 2
         if not valid_password_hash(stored_hash):
             print(
-                "pasteberth : erreur de configuration\n"
-                f"  [auth] enabled = true exige un hash scrypt valide dans {cfg.password_file()}\n"
-                "  exécutez `pasteberth passwd` avant de démarrer le service",
+                "pasteberth: configuration error\n"
+                f"  [auth] enabled = true requires a valid scrypt hash in {cfg.password_file()}\n"
+                "  run `pasteberth passwd` before starting the service",
                 file=sys.stderr,
             )
             return 2
@@ -91,7 +91,7 @@ def _cmd_serve(args: argparse.Namespace) -> int:
             tls_context = create_tls_context(cfg.tls.certificate, cfg.tls.private_key)
         except (OSError, ssl.SSLError, ValueError) as exc:
             print(
-                f"pasteberth : erreur TLS\n  certificat ou clé illisible : {exc}",
+                f"pasteberth: TLS error\n  unreadable certificate or key: {exc}",
                 file=sys.stderr,
             )
             return 2
@@ -101,21 +101,21 @@ def _cmd_serve(args: argparse.Namespace) -> int:
     )
     if cfg.using_default_config:
         logging.getLogger("pasteberth.config").warning(
-            "aucune configuration trouvée : utilisation du stockage par défaut %s "
-            "(loopback uniquement, authentification désactivée) ; "
-            "exécutez `pasteberth --generate-config` pour le personnaliser",
+            "no configuration found: using default storage %s "
+            "(loopback only, authentication disabled); "
+            "run `pasteberth --generate-config` to customize it",
             default_storage_path(),
         )
     elif uses_default_storage:
         logging.getLogger("pasteberth.config").warning(
-            "utilisation du stockage par défaut %s ; modifiez config.toml pour le déplacer",
+            "using default storage %s; edit config.toml to move it",
             default_storage_path(),
         )
     for warning in cfg.warnings:
         logging.getLogger("pasteberth.config").warning("%s", warning)
 
-    # Revalider juste avant la résolution et le bind réduit la fenêtre où un
-    # nom d'hôte pourrait changer de résolution entre la politique et l'écoute.
+    # Revalidating immediately before resolution and bind reduces the window
+    # in which a hostname could resolve differently between policy and listen.
     log = logging.getLogger("pasteberth.cli")
     try:
         prepare_directories(cfg)
@@ -126,7 +126,7 @@ def _cmd_serve(args: argparse.Namespace) -> int:
     try:
         service = PasteService(cfg)
     except (DestinationError, OSError) as exc:
-        log.error("pasteberth : erreur de destination\n  %s", exc)
+        log.error("pasteberth: destination error\n  %s", exc)
         return 2
     sessions = SessionStore(
         cfg.auth.session_ttl_hours * 3600,
@@ -141,21 +141,21 @@ def _cmd_serve(args: argparse.Namespace) -> int:
     try:
         expected_loopback = check_startup_policy(cfg)
     except ConfigError as exc:
-        log.error("pasteberth : politique d'écoute invalide\n  %s", exc)
+        log.error("pasteberth: invalid listener policy\n  %s", exc)
         return 2
 
     log.info(
-        "Pasteberth %s démarre sur %s://%s:%d (%d zone(s), auth=%s)",
+        "Pasteberth %s listening on %s://%s:%d (%d zone(s), auth=%s)",
         __version__,
         "https" if cfg.tls.enabled else "http",
         cfg.listen_address,
         cfg.port,
         len(cfg.zones),
-        "activée" if cfg.auth.enabled else "DÉSACTIVÉE",
+        "enabled" if cfg.auth.enabled else "DISABLED",
     )
     if not cfg.auth.enabled and not cfg.allow_unauthenticated_remote:
         log.info(
-            "écoute locale uniquement : prévoir un reverse proxy HTTPS pour un accès réseau"
+            "local-only listener: use an HTTPS reverse proxy for network access"
         )
     try:
         serve_forever(
@@ -166,9 +166,9 @@ def _cmd_serve(args: argparse.Namespace) -> int:
             expected_loopback=expected_loopback,
         )
     except OSError as exc:
-        log.error("impossible d'écouter sur %s:%d : %s", cfg.listen_address, cfg.port, exc)
+        log.error("cannot listen on %s:%d: %s", cfg.listen_address, cfg.port, exc)
         return 1
-    log.info("serveur arrêté")
+    log.info("server stopped")
     return 0
 
 
@@ -184,17 +184,17 @@ def _load_command_service(args: argparse.Namespace):
         prepare_directories(cfg)
         service = PasteService(cfg)
     except ConfigError as exc:
-        print(f"pasteberth : erreur de configuration\n  {exc}", file=sys.stderr)
+        print(f"pasteberth: configuration error\n  {exc}", file=sys.stderr)
         return None
     except (DestinationError, OSError) as exc:
-        print(f"pasteberth : erreur de destination\n  {exc}", file=sys.stderr)
+        print(f"pasteberth: destination error\n  {exc}", file=sys.stderr)
         return None
     return cfg, service
 
 
 def _command_path(raw: str) -> Path:
     if "\x00" in raw:
-        raise ValueError("chemin contenant un caractère NUL")
+        raise ValueError("path contains a NUL character")
     return Path(os.path.abspath(os.path.expanduser(raw)))
 
 
@@ -203,15 +203,15 @@ def _zone_for_directory(cfg, raw_directory: str):
         directory = _command_path(raw_directory)
         symlink = platform_fs().first_symlink_component(directory)
     except (OSError, ValueError) as exc:
-        raise ConfigError(f"répertoire de zone invalide : {raw_directory!r} ({exc})") from exc
+        raise ConfigError(f"invalid zone directory: {raw_directory!r} ({exc})") from exc
     if symlink is not None:
-        raise ConfigError(f"le répertoire cible contient un lien symbolique : {symlink}")
+        raise ConfigError(f"target directory contains a symbolic link: {symlink}")
     normalized = Path(os.path.normpath(str(directory)))
     for zone in cfg.zones.values():
         if normalized == Path(os.path.normpath(str(zone.directory))):
             return zone
     raise ConfigError(
-        f"le répertoire cible ne correspond à aucune zone configurée : {directory}"
+        f"target directory does not match any configured zone: {directory}"
     )
 
 
@@ -224,12 +224,12 @@ def _read_drop_source(path: Path, max_bytes: int) -> bytes:
                 # bounded reads keep the CLI from loading an oversized source.
                 data = stream.read(max_bytes + 1)
     except UnsafeLinkError as exc:
-        raise ValueError("la source n'est pas un fichier régulier") from exc
+        raise ValueError("source is not a regular file") from exc
     except (OSError, ValueError, UnsupportedFilesystemError) as exc:
-        raise ValueError(f"lecture impossible : {exc}") from exc
+        raise ValueError(f"cannot read source: {exc}") from exc
     if len(data) > max_bytes:
         raise ValueError(
-            f"fichier trop grand ({len(data)} > {max_bytes} octets)"
+            f"file is too large ({len(data)} > {max_bytes} bytes)"
         )
     return data
 
@@ -243,10 +243,10 @@ def _cmd_rename(args: argparse.Namespace) -> int:
         zone = _zone_for_directory(cfg, args.directory)
         item = service.rename(zone.id, args.source, args.target)
     except ConfigError as exc:
-        print(f"pasteberth : erreur de configuration\n  {exc}", file=sys.stderr)
+        print(f"pasteberth: configuration error\n  {exc}", file=sys.stderr)
         return 2
     except (OSError, ValueError, ServiceError) as exc:
-        print(f"pasteberth : renommage impossible : {exc}", file=sys.stderr)
+        print(f"pasteberth: rename failed: {exc}", file=sys.stderr)
         return 1
     print(item["reference"])
     return 0
@@ -260,7 +260,7 @@ def _cmd_delete(args: argparse.Namespace) -> int:
     try:
         zone = _zone_for_directory(cfg, args.directory)
     except ConfigError as exc:
-        print(f"pasteberth : erreur de configuration\n  {exc}", file=sys.stderr)
+        print(f"pasteberth: configuration error\n  {exc}", file=sys.stderr)
         return 2
 
     failures = 0
@@ -273,7 +273,7 @@ def _cmd_delete(args: argparse.Namespace) -> int:
             )
         except (OSError, ValueError, ServiceError) as exc:
             failures += 1
-            print(f"pasteberth : suppression impossible {filename!r} : {exc}", file=sys.stderr)
+            print(f"pasteberth: cannot delete {filename!r}: {exc}", file=sys.stderr)
             continue
         print(filename)
     return 1 if failures else 0
@@ -287,7 +287,7 @@ def _cmd_drop(args: argparse.Namespace) -> int:
     try:
         zone = _zone_for_directory(cfg, args.directory)
     except ConfigError as exc:
-        print(f"pasteberth : erreur de configuration\n  {exc}", file=sys.stderr)
+        print(f"pasteberth: configuration error\n  {exc}", file=sys.stderr)
         return 2
 
     failures = 0
@@ -310,7 +310,7 @@ def _cmd_drop(args: argparse.Namespace) -> int:
             )
         except (OSError, ValueError, ServiceError) as exc:
             failures += 1
-            print(f"pasteberth : {raw_source} : {exc}", file=sys.stderr)
+            print(f"pasteberth: {raw_source}: {exc}", file=sys.stderr)
             continue
         print(item["reference"])
     return 1 if failures else 0
@@ -328,6 +328,8 @@ max_upload_size = "20MiB"
 max_image_pixels = 25000000        # structural pixel budget; maximum 50 MP
 # Public path prefix: empty for root, or e.g. "/paste" behind a reverse proxy.
 url_prefix = ""
+# Display absolute file paths in the web UI. Set false when paths are sensitive.
+show_full_path = true
 # Trust no forwarded headers by default; list only the actual reverse proxy IP.
 trusted_proxies = []
 # With authentication enabled, an empty list accepts any public hostname.
@@ -393,12 +395,12 @@ def _cmd_generate_config(args: argparse.Namespace) -> int:
     if not target.is_absolute():
         target = Path.cwd() / target
     if "\x00" in str(target):
-        print(f"chemin de configuration invalide : {target}", file=sys.stderr)
+        print(f"invalid configuration path: {target}", file=sys.stderr)
         return 2
     if target.exists() and not args.force:
         print(
-            f"configuration déjà présente : {target}\n"
-            "utilisez --force uniquement pour la remplacer",
+            f"configuration already exists: {target}\n"
+            "use --force only after checking the target",
             file=sys.stderr,
         )
         return 2
@@ -433,10 +435,10 @@ def _cmd_generate_config(args: argparse.Namespace) -> int:
                     pass
                 raise
     except (OSError, ValueError, UnsupportedFilesystemError) as exc:
-        print(f"impossible d'écrire {target} : {exc}", file=sys.stderr)
+        print(f"cannot write {target}: {exc}", file=sys.stderr)
         return 1
-    print(f"configuration générée : {target}")
-    print("prochaine étape : pasteberth passwd")
+    print(f"configuration generated: {target}")
+    print("next step: pasteberth passwd")
     return 0
 
 
@@ -448,45 +450,44 @@ def _audit_zone(cfg, zone) -> tuple[list[str], list[str]]:
     try:
         symlink = fs.first_symlink_component(path)
     except (OSError, ValueError, UnsupportedFilesystemError) as exc:
-        errors.append(f"zone {zone.id}: inspection impossible ({exc})")
+        errors.append(f"zone {zone.id}: inspection failed ({exc})")
         return errors, warnings
     if symlink is not None:
-        errors.append(f"zone {zone.id}: lien symbolique refusé : {symlink}")
+        errors.append(f"zone {zone.id}: symbolic link rejected: {symlink}")
         return errors, warnings
     if not path.exists():
         if zone.create_directory:
-            warnings.append(f"zone {zone.id}: sera créée au démarrage : {path}")
+            warnings.append(f"zone {zone.id}: will be created at startup: {path}")
         else:
-            errors.append(f"zone {zone.id}: répertoire absent : {path}")
+            errors.append(f"zone {zone.id}: directory is missing: {path}")
         return errors, warnings
     try:
         directory = fs.open_directory(path)
     except FileNotFoundError:
-        errors.append(f"zone {zone.id}: répertoire absent : {path}")
+        errors.append(f"zone {zone.id}: directory is missing: {path}")
         return errors, warnings
     except NotADirectoryError:
-        errors.append(f"zone {zone.id}: n'est pas un répertoire : {path}")
+        errors.append(f"zone {zone.id}: not a directory: {path}")
         return errors, warnings
     except (OSError, ValueError, UnsupportedFilesystemError) as exc:
-        errors.append(f"zone {zone.id}: inspection impossible ({exc})")
+        errors.append(f"zone {zone.id}: inspection failed ({exc})")
         return errors, warnings
     try:
         with directory:
             audit = fs.audit_permissions(path, directory=True)
             mode = audit.mode
-        # Feature: avertissement seul, pas d'erreur — les zones partagées sont
-        # légitimes (partage contrôlé entre utilisateurs). Refuser pousserait à
-        # contourner la protection.
+        # This is a warning, not an error: shared zones are legitimate for
+        # controlled multi-user sharing. Rejecting them would bypass protection.
         if (mode is not None and mode & 0o077) or (mode is None and not audit.private):
             permission_detail = oct(mode) if mode is not None else (audit.detail or "ACL")
             warnings.append(
-                f"zone {zone.id}: permissions non privées ({permission_detail}) : {path} "
-                "(0700 recommandé)"
+                f"zone {zone.id}: permissions are not private ({permission_detail}): {path} "
+                "(0700 recommended)"
             )
     except (OSError, UnsupportedFilesystemError) as exc:
-        errors.append(f"zone {zone.id}: inspection impossible ({exc})")
+        errors.append(f"zone {zone.id}: inspection failed ({exc})")
     if not fs.check_access(path, write=True, execute=True):
-        errors.append(f"zone {zone.id}: répertoire non accessible en écriture : {path}")
+        errors.append(f"zone {zone.id}: directory is not writable: {path}")
     lock_path = path / ".pasteberth.lock"
     try:
         with fs.open_directory(path) as directory:
@@ -494,15 +495,15 @@ def _audit_zone(cfg, zone) -> tuple[list[str], list[str]]:
     except FileNotFoundError:
         lock_info = None
     except (OSError, UnsupportedFilesystemError) as exc:
-        errors.append(f"zone {zone.id}: inspection du verrou impossible ({exc})")
+        errors.append(f"zone {zone.id}: lock inspection failed ({exc})")
         lock_info = None
     if lock_info is not None:
         if lock_info.is_symlink:
-            errors.append(f"zone {zone.id}: le verrou est un lien symbolique : {lock_path}")
+            errors.append(f"zone {zone.id}: lock is a symbolic link: {lock_path}")
         elif not lock_info.is_regular:
-            errors.append(f"zone {zone.id}: le verrou n'est pas un fichier régulier : {lock_path}")
+            errors.append(f"zone {zone.id}: lock is not a regular file: {lock_path}")
         elif not fs.check_access(lock_path, read=True, write=True):
-            errors.append(f"zone {zone.id}: verrou non accessible en lecture/écriture : {lock_path}")
+            errors.append(f"zone {zone.id}: lock is not readable/writable: {lock_path}")
     try:
         with fs.open_directory(path) as directory:
             usage = fs.volume_space(directory)
@@ -513,22 +514,22 @@ def _audit_zone(cfg, zone) -> tuple[list[str], list[str]]:
         )
         if free_percent < zone.min_free_percent:
             errors.append(
-                f"zone {zone.id}: espace libre {free_percent:.2f}% "
+                f"zone {zone.id}: free space {free_percent:.2f}% "
                 f"< minimum {zone.min_free_percent:.2f}%"
             )
     except (OSError, UnsupportedFilesystemError) as exc:
-        warnings.append(f"zone {zone.id}: espace libre non mesurable ({exc})")
+        warnings.append(f"zone {zone.id}: free space cannot be measured ({exc})")
     return errors, warnings
 
 
 def _audit_controlled_parents(fs, path: Path) -> str | None:
-    """Refuse les parents qui permettent à un tiers de remplacer une cible."""
+    """Reject parents that let a third party replace a target."""
     current = path
     while True:
         try:
             audit = fs.audit_permissions(current, directory=True)
         except (OSError, UnsupportedFilesystemError) as exc:
-            return f"parent inaccessible ({current}: {exc})"
+            return f"inaccessible parent ({current}: {exc})"
         mode = audit.mode
         if mode is not None:
             world_writable_sticky = bool(mode & stat.S_IWOTH and mode & stat.S_ISVTX)
@@ -536,9 +537,9 @@ def _audit_controlled_parents(fs, path: Path) -> str | None:
             if (mode & stat.S_IWGRP and not group_writable_sticky) or (
                 mode & stat.S_IWOTH and not world_writable_sticky
             ):
-                return f"parent inscriptible par un tiers : {current}"
+                return f"parent writable by a third party: {current}"
         elif not audit.private:
-            return f"ACL non privée sur le parent : {current}"
+            return f"non-private ACL on parent: {current}"
         if current == Path(current.anchor):
             return None
         current = current.parent
@@ -553,7 +554,7 @@ def _audit_regular_file(
     allow_symlink: bool = False,
     symlink_warnings: list[str] | None = None,
 ) -> tuple[list[str], Path | None]:
-    """Audite un fichier et retourne la cible résolue utilisable par OpenSSL."""
+    """Audit a file and return the resolved target usable by OpenSSL."""
     fs = platform_fs()
     path = Path(path).expanduser()
     if not path.is_absolute():
@@ -562,18 +563,18 @@ def _audit_regular_file(
     try:
         symlink = fs.first_symlink_component(path)
     except (OSError, ValueError, UnsupportedFilesystemError) as exc:
-        return [f"{label} : inspection impossible ({exc})"], None
+        return [f"{label}: inspection failed ({exc})"], None
     target = path
     if symlink is not None:
         if not allow_symlink:
-            return [f"{label} : lien symbolique refusé : {symlink}"], None
+            return [f"{label}: symbolic link rejected: {symlink}"], None
         try:
             target = path.resolve(strict=True)
         except (OSError, RuntimeError) as exc:
-            return [f"{label} : cible du lien illisible ({exc})"], None
+            return [f"{label}: symbolic-link target unreadable ({exc})"], None
         if symlink_warnings is not None:
             symlink_warnings.append(
-                f"{label} : lien symbolique accepté après contrôle de la cible : {symlink}"
+                f"{label}: symbolic link accepted after target checks: {symlink}"
             )
 
     for parent in dict.fromkeys((path.parent, target.parent)):
@@ -584,35 +585,35 @@ def _audit_regular_file(
         with fs.open_directory(target.parent) as parent:
             info = fs.entry_info(parent, target.name)
     except FileNotFoundError:
-        return errors + [f"{label} absent : {path}"], None
+        return errors + [f"{label} missing: {path}"], None
     except (OSError, ValueError, UnsupportedFilesystemError) as exc:
-        return errors + [f"{label} : inspection impossible ({exc})"], None
+        return errors + [f"{label}: inspection failed ({exc})"], None
     if info is None:
-        return errors + [f"{label} absent : {path}"], None
+        return errors + [f"{label} missing: {path}"], None
     if info.is_symlink or not info.is_regular:
-        return errors + [f"{label} : fichier régulier requis : {path}"], None
+        return errors + [f"{label}: regular file required: {path}"], None
     mode = info.mode
     if mode is not None and mode & (stat.S_IWGRP | stat.S_IWOTH):
-        errors.append(f"{label} : permissions inscriptibles par un tiers : {path}")
+        errors.append(f"{label}: writable by a third party: {path}")
     if require_owner and not fs.is_owned(info):
-        errors.append(f"{label} : fichier non détenu par le processus : {path}")
+        errors.append(f"{label}: file is not owned by the process: {path}")
     if require_private:
         try:
             audit = fs.audit_permissions(target, directory=False)
         except (OSError, UnsupportedFilesystemError) as exc:
-            errors.append(f"{label} : permissions illisibles ({exc})")
+            errors.append(f"{label}: permissions unreadable ({exc})")
         else:
             if not audit.private:
                 detail = oct(audit.mode) if audit.mode is not None else (audit.detail or "ACL")
-                errors.append(f"{label} : permissions trop ouvertes ({detail}) : {path}")
+                errors.append(f"{label}: permissions too open ({detail}): {path}")
     if not fs.check_access(target, read=True):
-        errors.append(f"{label} : fichier non lisible : {path}")
+        errors.append(f"{label}: file is not readable: {path}")
     return errors, target
 
 
 def _audit_listener(cfg) -> tuple[str | None, str | None]:
     if cfg.port < 1024 and getattr(os, "geteuid", lambda: 1)() != 0:
-        return f"port privilégié inaccessible sans root : {cfg.port}", None
+        return f"privileged port requires root: {cfg.port}", None
     try:
         addresses = socket.getaddrinfo(
             cfg.listen_address,
@@ -620,9 +621,9 @@ def _audit_listener(cfg) -> tuple[str | None, str | None]:
             type=socket.SOCK_STREAM,
         )
     except OSError as exc:
-        return f"adresse d'écoute invalide : {exc}", None
+        return f"invalid listener address: {exc}", None
     if not addresses:
-        return f"adresse d'écoute introuvable : {cfg.listen_address}", None
+        return f"listener address not found: {cfg.listen_address}", None
 
     family, socktype, protocol, _, sockaddr = addresses[0]
     try:
@@ -630,11 +631,11 @@ def _audit_listener(cfg) -> tuple[str | None, str | None]:
             sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
             sock.bind(sockaddr)
     except OSError as exc:
-        message = f"bind impossible sur {cfg.listen_address}:{cfg.port} ({exc})"
+        message = f"cannot bind {cfg.listen_address}:{cfg.port} ({exc})"
         if exc.errno in (errno.EADDRINUSE, errno.EACCES) or getattr(exc, "winerror", None) == 10013:
             return None, (
-                f"port déjà utilisé sur {cfg.listen_address}:{cfg.port} : "
-                "une instance est peut-être déjà lancée"
+                f"port already in use on {cfg.listen_address}:{cfg.port}: "
+                "another instance may already be running"
             )
         return message, None
     return None, None
@@ -648,12 +649,12 @@ def _audit_tls(cfg) -> list[str]:
     errors: list[str] = []
     certificate_errors, certificate = _audit_regular_file(
         cfg.tls.certificate,
-        "certificat TLS",
+        "TLS certificate",
         allow_symlink=True,
     )
     key_errors, private_key = _audit_regular_file(
         cfg.tls.private_key,
-        "clé privée TLS",
+        "TLS private key",
         require_owner=True,
         require_private=True,
     )
@@ -665,20 +666,20 @@ def _audit_tls(cfg) -> list[str]:
             not_before = ssl.cert_time_to_seconds(decoded["notBefore"])
             not_after = ssl.cert_time_to_seconds(decoded["notAfter"])
         except (KeyError, OSError, ssl.SSLError, ValueError) as exc:
-            errors.append(f"certificat TLS : dates illisibles ({exc})")
+            errors.append(f"TLS certificate: unreadable dates ({exc})")
         else:
             now = time.time()
             if now < not_before:
-                errors.append("certificat TLS : certificat pas encore valide")
+                errors.append("TLS certificate: certificate is not valid yet")
             if now >= not_after:
-                errors.append("certificat TLS : certificat expiré")
+                errors.append("TLS certificate: certificate has expired")
     if certificate is not None and private_key is not None:
         try:
             create_tls_context(certificate, private_key)
         except (OSError, ssl.SSLError, ValueError) as exc:
-            errors.append(f"configuration TLS invalide : {exc}")
-    elif not any(error.startswith("configuration TLS invalide") for error in errors):
-        errors.append("configuration TLS invalide : certificat ou clé indisponible")
+            errors.append(f"invalid TLS configuration: {exc}")
+    elif not any(error.startswith("invalid TLS configuration") for error in errors):
+        errors.append("invalid TLS configuration: certificate or key unavailable")
     return errors
 
 
@@ -687,11 +688,11 @@ def _network_warning(cfg) -> str | None:
         return None
     if cfg.tls.enabled:
         if not cfg.auth.enabled:
-            return "écoute réseau TLS directe détectée avec authentification désactivée"
+            return "direct TLS network listener detected with authentication disabled"
         return None
     return (
-        "écoute réseau HTTP non chiffrée malgré l'opt-in ; "
-        "préférez [tls] ou un reverse proxy HTTPS"
+        "unencrypted network HTTP listener despite explicit opt-in; "
+        "prefer [tls] or an HTTPS reverse proxy"
     )
 
 
@@ -701,23 +702,23 @@ def _audit_groups(cfg) -> list[str]:
     other_groups = [group for group in cfg.groups if group.selection == "other"]
     if len(all_groups) > 1:
         warnings.append(
-            "groupes selection='all' redondants : "
+            "redundant selection='all' groups: "
             + ", ".join(group.name for group in all_groups)
         )
     if len(other_groups) > 1:
         warnings.append(
-            "groupes selection='other' redondants : "
+            "redundant selection='other' groups: "
             + ", ".join(group.name for group in other_groups)
         )
     if all_groups and other_groups:
         warnings.append(
-            "selection='all' et selection='other' coexistent ; "
-            "les groupes peuvent se recouvrir"
+            "selection='all' and selection='other' coexist; "
+            "groups may overlap"
         )
     for group in cfg.groups:
         if group.selection in {"all", "other"} and group.pattern_defined:
             warnings.append(
-                f"groupe {group.name}: 'pattern' ignoré avec "
+                f"group {group.name}: 'pattern' ignored with "
                 f"selection='{group.selection}'"
             )
 
@@ -730,8 +731,8 @@ def _audit_groups(cfg) -> list[str]:
             previous = seen_pattern_memberships.get(zone_ids)
             if previous is not None:
                 warnings.append(
-                    f"groupes pattern redondants : {previous} et {group.name} "
-                    f"sélectionnent les mêmes zones"
+                    f"redundant pattern groups: {previous} and {group.name} "
+                    f"select the same zones"
                 )
             else:
                 seen_pattern_memberships[zone_ids] = group.name
@@ -742,8 +743,8 @@ def _audit_groups(cfg) -> list[str]:
                 if {previous_selection, group.selection} == {"all", "other"}:
                     continue
                 warnings.append(
-                    f"groupes redondants : {previous_name} ({previous_selection}) et "
-                    f"{group.name} ({group.selection}) sélectionnent les mêmes zones"
+                    f"redundant groups: {previous_name} ({previous_selection}) and "
+                    f"{group.name} ({group.selection}) select the same zones"
                 )
             groups_by_selection[group.selection] = group.name
     return warnings
@@ -756,13 +757,13 @@ def _cmd_audit(args: argparse.Namespace) -> int:
     if config_path is None:
         cfg = build_default_config()
         warnings.append(
-            f"aucun config.toml trouvé : stockage par défaut {default_storage_path()}"
+            f"no config.toml found: default storage {default_storage_path()}"
         )
     else:
         try:
             cfg = load_config(config_path)
         except ConfigError as exc:
-            print(f"ERREUR configuration : {exc}", file=sys.stderr)
+            print(f"ERROR configuration: {exc}", file=sys.stderr)
             return 2
     warnings.extend(cfg.warnings)
 
@@ -777,14 +778,14 @@ def _cmd_audit(args: argparse.Namespace) -> int:
         errors.extend(config_errors)
 
     if sys.version_info < (3, 11):
-        errors.append("Python 3.11 ou plus récent est requis")
+        errors.append("Python 3.11 or newer is required")
     uses_default_storage = any(
         zone.directory == default_storage_path() for zone in cfg.zones.values()
     )
     if cfg.using_default_config:
-        warnings.append("authentification désactivée dans le mode par défaut loopback")
+        warnings.append("authentication disabled in default loopback mode")
     elif not cfg.auth.enabled:
-        warnings.append("authentification désactivée dans la configuration")
+        warnings.append("authentication disabled in configuration")
     elif cfg.auth.enabled:
         try:
             stored_hash = load_password_hash(cfg.password_file())
@@ -792,27 +793,32 @@ def _cmd_audit(args: argparse.Namespace) -> int:
             errors.append(str(exc))
         else:
             if not valid_password_hash(stored_hash):
-                errors.append(f"hash scrypt absent ou invalide : {cfg.password_file()}")
+                errors.append(f"missing or invalid scrypt hash: {cfg.password_file()}")
     if uses_default_storage and config_path is not None:
         warnings.append(
-            f"stockage par défaut utilisé : {default_storage_path()}"
+            f"default storage in use: {default_storage_path()}"
         )
     if not cfg.allowed_hosts:
         warnings.append(
-            "allowed_hosts vide : contrôle de Host désactivé (wildcard) ; "
-            "listez vos noms d'hôte exposés pour le réactiver"
+            "allowed_hosts is empty: Host checking is disabled (wildcard); "
+            "list exposed hostnames to enable it"
+        )
+    if cfg.show_full_path:
+        warnings.append(
+            "show_full_path = true exposes absolute paths in the Web UI; "
+            "set it to false when those paths are sensitive"
         )
     broad_proxies = [str(network) for network in cfg.trusted_proxies if network.prefixlen == 0]
     if broad_proxies:
         errors.append(
-            "trusted_proxies trop large(s) : "
+            "trusted_proxies is too broad: "
             + ", ".join(broad_proxies)
-            + " (proxy global non autorisé par l'audit)"
+            + " (global proxy is not allowed by the audit)"
         )
     if not (cfg.accept_bin or cfg.accept_img or cfg.accept_doc):
         warnings.append(
-            "accept_bin, accept_img et accept_doc sont tous à false : "
-            "le serveur refusera tout contenu"
+            "accept_bin, accept_img, and accept_doc are all false: "
+            "the server will reject all content"
         )
     warnings.extend(_audit_groups(cfg))
 
@@ -836,16 +842,16 @@ def _cmd_audit(args: argparse.Namespace) -> int:
     errors.extend(_audit_tls(cfg))
 
     for message in warnings:
-        print(f"AVERTISSEMENT : {message}")
+        print(f"WARNING: {message}")
     for message in errors:
-        print(f"ERREUR : {message}")
+        print(f"ERROR: {message}")
     if errors:
-        print(f"Audit échoué : {len(errors)} erreur(s), {len(warnings)} avertissement(s)")
+        print(f"Audit failed: {len(errors)} error(s), {len(warnings)} warning(s)")
         return 2
     if warnings:
-        print(f"Audit prêt avec {len(warnings)} avertissement(s)")
+        print(f"Audit ready with {len(warnings)} warning(s)")
         return 1
-    print("Audit réussi : configuration prête")
+    print("Audit passed: configuration is ready")
     return 0
 
 
@@ -860,48 +866,48 @@ def _cmd_passwd(args: argparse.Namespace) -> int:
     config_path = find_config_path(_config_arg(args))
     if config_path is None:
         print(
-            "configuration absente : exécutez d'abord `pasteberth --generate-config`",
+            "configuration missing: run `pasteberth --generate-config` first",
             file=sys.stderr,
         )
         return 2
     if "\x00" in str(config_path):
-        print(f"chemin de configuration invalide : {config_path}", file=sys.stderr)
+        print(f"invalid configuration path: {config_path}", file=sys.stderr)
         return 2
     if not config_path.is_file():
-        print(f"configuration introuvable : {config_path}", file=sys.stderr)
+        print(f"configuration not found: {config_path}", file=sys.stderr)
         return 2
     try:
         cfg = load_config(config_path)
     except ConfigError as exc:
         print(
-            f"pasteberth : configuration invalide ({config_path})\n  {exc}\n"
-            "aucun hash n'a été écrit",
+            f"pasteberth: invalid configuration ({config_path})\n  {exc}\n"
+            "no hash was written",
             file=sys.stderr,
         )
         return 2
     password_file = cfg.password_file()
 
-    pw1 = getpass.getpass("Nouveau mot de passe : ")
+    pw1 = getpass.getpass("New password: ")
     if len(pw1) < 8:
-        print("refus : au moins 8 caractères requis", file=sys.stderr)
+        print("rejected: at least 8 characters are required", file=sys.stderr)
         return 1
-    pw2 = getpass.getpass("Confirmation       : ")
+    pw2 = getpass.getpass("Confirmation: ")
     if pw1 != pw2:
-        print("refus : les deux saisies diffèrent", file=sys.stderr)
+        print("rejected: the two entries differ", file=sys.stderr)
         return 1
     try:
         save_password_hash(password_file, hash_password(pw1))
     except OSError as exc:
-        print(f"erreur : impossible d'écrire {password_file} : {exc}", file=sys.stderr)
+        print(f"error: cannot write {password_file}: {exc}", file=sys.stderr)
         return 1
     try:
         mode = oct(password_file.stat().st_mode & 0o777)
     except OSError:
         mode = "?"
-    print(f"hash scrypt écrit dans {password_file} (mode {mode})")
+    print(f"scrypt hash written to {password_file} (mode {mode})")
     print(
-        "pensez à activer [auth] enabled = true dans "
-        f"{config_path if config_path.exists() else 'votre config.toml'}"
+        "remember to enable [auth] enabled = true in "
+        f"{config_path if config_path.exists() else 'your config.toml'}"
     )
     return 0
 
@@ -909,78 +915,78 @@ def _cmd_passwd(args: argparse.Namespace) -> int:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="pasteberth",
-        description="Pont clipboard navigateur <-> filesystem du harness.",
+        description="Bridge between a browser clipboard and the harness filesystem.",
     )
     parser.add_argument("--version", action="version", version=f"pasteberth {__version__}")
     parser.add_argument(
         "--config",
         dest="global_config",
-        help="chemin global du fichier de configuration (avant la commande)",
+        help="global configuration file path (before the command)",
     )
     parser.add_argument(
         "--generate-config",
         action="store_true",
-        help="génère une configuration sans démarrer le serveur",
+        help="generate a configuration without starting the server",
     )
     parser.add_argument(
         "--force",
         action="store_true",
-        help="écrase la configuration cible existante",
+        help="replace an existing target configuration",
     )
     sub = parser.add_subparsers(dest="command", required=False)
 
-    p_serve = sub.add_parser("serve", help="démarre le serveur")
-    p_serve.add_argument("--config", default=argparse.SUPPRESS, help="chemin du config.toml")
+    p_serve = sub.add_parser("serve", help="start the server")
+    p_serve.add_argument("--config", default=argparse.SUPPRESS, help="path to config.toml")
     p_serve.add_argument(
         "--log-level",
         choices=["DEBUG", "INFO", "WARNING", "ERROR"],
-        help="surcharge le niveau log_level pour cette exécution",
+        help="override log_level for this invocation",
     )
     p_serve.set_defaults(func=_cmd_serve)
 
     p_drop = sub.add_parser(
         "drop",
-        help="dépose ou adopte des fichiers dans une zone et crée leurs sidecars",
+        help="drop or adopt files into a zone and create their sidecars",
     )
-    p_drop.add_argument("directory", help="répertoire exact de la zone configurée")
-    p_drop.add_argument("files", nargs="+", help="fichiers sources à copier")
+    p_drop.add_argument("directory", help="exact directory of the configured zone")
+    p_drop.add_argument("files", nargs="+", help="source files to copy")
     p_drop.add_argument("--replace", action="store_true",
-                        help="autorise le remplacement explicite d'un nom géré")
-    p_drop.add_argument("--config", default=argparse.SUPPRESS, help="chemin du config.toml")
+                        help="allow explicit replacement of a managed name")
+    p_drop.add_argument("--config", default=argparse.SUPPRESS, help="path to config.toml")
     p_drop.set_defaults(func=_cmd_drop)
 
     p_rename = sub.add_parser(
         "rename",
-        help="renomme un fichier géré avec son sidecar",
+        help="rename a managed file and its sidecar",
     )
-    p_rename.add_argument("directory", help="répertoire exact de la zone configurée")
-    p_rename.add_argument("source", help="nom géré actuel, sans chemin")
-    p_rename.add_argument("target", help="nouveau nom, sans chemin")
-    p_rename.add_argument("--config", default=argparse.SUPPRESS, help="chemin du config.toml")
+    p_rename.add_argument("directory", help="exact directory of the configured zone")
+    p_rename.add_argument("source", help="current managed name, without a path")
+    p_rename.add_argument("target", help="new name, without a path")
+    p_rename.add_argument("--config", default=argparse.SUPPRESS, help="path to config.toml")
     p_rename.set_defaults(func=_cmd_rename)
 
     p_delete = sub.add_parser(
         "delete",
-        help="supprime un ou plusieurs fichiers gérés avec leurs sidecars",
+        help="delete one or more managed files and their sidecars",
     )
-    p_delete.add_argument("directory", help="répertoire exact de la zone configurée")
-    p_delete.add_argument("files", nargs="+", help="noms gérés à supprimer, sans chemin")
+    p_delete.add_argument("directory", help="exact directory of the configured zone")
+    p_delete.add_argument("files", nargs="+", help="managed names to delete, without paths")
     p_delete.add_argument(
         "--force",
         action="store_true",
-        help="supprime aussi une paire dont la taille ne correspond plus au sidecar",
+        help="also delete a pair whose size no longer matches its sidecar",
     )
-    p_delete.add_argument("--config", default=argparse.SUPPRESS, help="chemin du config.toml")
+    p_delete.add_argument("--config", default=argparse.SUPPRESS, help="path to config.toml")
     p_delete.set_defaults(func=_cmd_delete)
 
-    p_pw = sub.add_parser("passwd", help="définit ou change le mot de passe")
+    p_pw = sub.add_parser("passwd", help="set or change the password")
     p_pw.add_argument(
-        "--config", default=argparse.SUPPRESS, help="chemin du config.toml (le hash suit [auth])"
+        "--config", default=argparse.SUPPRESS, help="path to config.toml (the hash follows [auth])"
     )
     p_pw.set_defaults(func=_cmd_passwd)
 
-    p_audit = sub.add_parser("audit", help="vérifie l'environnement sans le modifier")
-    p_audit.add_argument("--config", default=argparse.SUPPRESS, help="chemin du config.toml")
+    p_audit = sub.add_parser("audit", help="check the environment without modifying it")
+    p_audit.add_argument("--config", default=argparse.SUPPRESS, help="path to config.toml")
     p_audit.set_defaults(func=_cmd_audit)
     return parser
 

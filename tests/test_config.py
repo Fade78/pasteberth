@@ -84,6 +84,7 @@ class TestParsing(unittest.TestCase):
         self.assertEqual(cfg.auth.max_sessions, 4096)
         self.assertEqual(cfg.allowed_hosts, ("localhost", "127.0.0.1", "::1"))
         self.assertEqual(cfg.url_prefix, "")
+        self.assertTrue(cfg.show_full_path)
         self.assertEqual(set(cfg.zones), {"default", "secondary"})
         self.assertEqual(cfg.groups, ())
         self.assertEqual(cfg.zones["default"].reference_prefix, "@")
@@ -94,6 +95,10 @@ class TestParsing(unittest.TestCase):
         self.assertTrue(cfg.zones["default"].allow_zip_download)
         self.assertTrue(cfg.zones["default"].create_directory)
         self.assertEqual(cfg.zones["default"].min_free_percent, 2.0)
+
+    def test_show_full_path_est_configurable(self):
+        cfg = make_cfg(self.tmp, show_full_path=False)
+        self.assertFalse(cfg.show_full_path)
 
     def test_format_reference_configurable(self):
         cfg = load_config(
@@ -285,11 +290,11 @@ class TestParsing(unittest.TestCase):
             make_cfg(self.tmp, groups=[{"name": "Bad", "pattern": [".*"], "layout": "stack"}])
         with self.assertRaisesRegex(ConfigError, "pattern"):
             make_cfg(self.tmp, groups=[{"name": "Bad", "selection": "pattern"}])
-        with self.assertRaisesRegex(ConfigError, "expression régulière"):
+        with self.assertRaisesRegex(ConfigError, "invalid regular expression"):
             make_cfg(self.tmp, groups=[{"name": "Bad", "pattern": ["["]}])
 
     def test_groupes_refusent_les_noms_dupliques_et_patterns_vides(self):
-        with self.assertRaisesRegex(ConfigError, "dupliqué"):
+        with self.assertRaisesRegex(ConfigError, "duplicate group name"):
             make_cfg(
                 self.tmp,
                 groups=[
@@ -297,7 +302,7 @@ class TestParsing(unittest.TestCase):
                     {"name": "Ops", "pattern": ["secondary"]},
                 ],
             )
-        with self.assertRaisesRegex(ConfigError, "ne peut pas être vide"):
+        with self.assertRaisesRegex(ConfigError, "cannot be empty"):
             make_cfg(self.tmp, groups=[{"name": "Empty", "pattern": []}])
 
     def test_cle_inconnue_avertissement(self):
@@ -347,7 +352,7 @@ class TestParsing(unittest.TestCase):
         z = {"id": "dup", "directory": str(self.tmp / "a")}
         with self.assertRaises(ConfigError) as ctx:
             make_cfg(self.tmp, zones=[z, dict(z)])
-        self.assertIn("dupliqué", str(ctx.exception))
+        self.assertIn("duplicate zone ID", str(ctx.exception))
 
     def test_port_invalide(self):
         with self.assertRaises(ConfigError):
@@ -381,7 +386,7 @@ class TestPolitiqueSecurite(unittest.TestCase):
     def test_refus_non_loopback_sans_auth(self):
         with self.assertRaises(ConfigError) as ctx:
             make_cfg(self.tmp, listen_address="0.0.0.0", auth_enabled=False)
-        self.assertIn("refus de démarrer", str(ctx.exception))
+        self.assertIn("refusing to start", str(ctx.exception))
 
     def test_accepte_loopback_sans_auth(self):
         cfg = make_cfg(self.tmp, listen_address="127.0.0.1", auth_enabled=False)
@@ -531,7 +536,7 @@ class TestRepertoires(unittest.TestCase):
         cfg = load_config(
             write_config(self.tmp, zones=[{"id": "x", "directory": str(link / "images")}])
         )
-        with self.assertRaisesRegex(ConfigError, "lien symbolique"):
+        with self.assertRaisesRegex(ConfigError, "path contains a symbolic link"):
             prepare_directories(cfg)
 
     def test_chemin_nul_retourne_une_erreur_de_configuration(self):

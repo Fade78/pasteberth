@@ -12,6 +12,8 @@ max_upload_size = "20MiB"         # 20 MiB per upload; absolute maximum 50 MiB
 max_image_pixels = 25000000        # structural pixel budget; default 25 MP, max 50 MP
 # Empty for a root deployment, or e.g. "/paste" when mounted below a proxy path.
 url_prefix = ""
+# Display absolute file paths in the web UI; set false when paths are sensitive.
+show_full_path = true
 
 # Proxies allowed to set X-Forwarded-* (IP or CIDR).
 # Never include addresses reachable from the Internet.

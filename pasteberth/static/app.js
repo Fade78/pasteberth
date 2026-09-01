@@ -21,6 +21,7 @@
     zones: [],            // [{id,label,color,retain,count,images:[...]}]
     activeId: null,
     authEnabled: true,
+    showFullPath: true,
     offline: false,
     selectedByZone: Object.create(null),
     knownItemSignaturesByZone: Object.create(null),
@@ -194,6 +195,7 @@
         preview_busy: "Too many previews are currently being served",
         rate_limited: "Too many attempts; try again later",
         upload_busy: "Too many uploads are currently in memory",
+        invalid_comment: "The comment is invalid or too long",
       };
       const message = knownMessages[code]
         || (payload && payload.error ? payload.error.message : `error ${res.status}`);
@@ -340,9 +342,9 @@
     });
   }
 
-  // Presse-papiers mixte : un seul document HTML, texte + images incrustées
-  // dans l'ordre des flavors. Les appels getAsString/getAsFile doivent être
-  // émis pendant l'événement ; les slots préservent l'ordre d'origine.
+  // Mixed clipboard: one HTML document with text and embedded images, in
+  // flavor order. getAsString/getAsFile must be called during the event;
+  // slots preserve the original order.
   async function uploadMixedClipboard(zoneId, items) {
     const slots = [];
     const waits = [];
@@ -360,7 +362,7 @@
       }
     }
     if (waits.length) await Promise.all(waits);
-    // Texte absent ou vide : un collage d'image reste une image simple.
+    // Missing or empty text: an image paste remains a simple image upload.
     let hasText = false;
     for (const part of slots) {
       if (part && part.kind === "text" && part.text.trim()) {
@@ -386,7 +388,7 @@
         try {
           const url = await blobToDataUrl(part.blob);
           chunks.push(`<p><img alt="" src="${escapeHtmlText(url)}"></p>`);
-        } catch (_) { /* image illisible : ignorée */ }
+        } catch (_) { /* unreadable image: ignore it */ }
       }
     }
     if (!chunks.length) return;
@@ -630,6 +632,23 @@
       item.width,
       item.height,
     ]);
+  }
+
+  function itemDetails(zoneId, item) {
+    const details = [
+      `Name: ${item.filename}`,
+      `Type: ${kindLabel(item.kind)}`,
+      `MIME: ${item.mime || "unknown"}`,
+      `Size: ${fmtBytes(item.size)}`,
+      `Created: ${fmtDateTime(item.created_at)}`,
+    ];
+    if (item.kind === "image" && item.width != null && item.height != null) {
+      details.splice(3, 0, `Dimensions: ${item.width}×${item.height}`);
+    }
+    if (item.format) details.splice(3, 0, `Format: ${item.format.toUpperCase()}`);
+    if (state.showFullPath && item.reference) details.push(`Reference: ${item.reference}`);
+    if (item.comment) details.push(`Comment: ${item.comment}`);
+    return details.join("\n");
   }
 
   function newItemIds(zoneId) {
@@ -995,18 +1014,88 @@
     name.className = "meta-name";
     name.appendChild(fname);
     if (isNewItem(zoneId, item.id)) name.appendChild(createNewBadge());
-    const ref = document.createElement("code");
-    ref.className = "ref";
-    ref.title = item.reference;
-    ref.textContent = item.reference;
+    const comment = item.comment ? document.createElement("p") : null;
+    if (comment) {
+      comment.className = "comment-text";
+      comment.textContent = item.comment;
+    }
+    const ref = state.showFullPath ? document.createElement("code") : null;
+    if (ref) {
+      ref.className = "ref";
+      ref.title = item.reference;
+      ref.textContent = item.reference;
+    }
     const dims = document.createElement("span");
     dims.className = "dims";
     const sizeInfo = `${fmtBytes(item.size)} · ${fmtTime(item.created_at)}`;
     dims.textContent = item.kind === "image" && item.width != null && item.height != null
       ? `${item.width}×${item.height} · ${sizeInfo}`
       : `${kindLabel(item.kind)} · ${sizeInfo}`;
-    meta.append(name, ref, dims);
+    meta.append(name);
+    if (comment) meta.appendChild(comment);
+    if (ref) meta.appendChild(ref);
+    meta.appendChild(dims);
     return meta;
+  }
+
+  function saveComment(zoneId, itemId, comment, form) {
+    const submit = form.querySelector("button[type='submit']");
+    if (submit) submit.disabled = true;
+    return api(
+      `/api/zones/${encodeURIComponent(zoneId)}/images/${encodeURIComponent(itemId)}/comment`,
+      {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ comment }),
+      },
+    ).then(updated => {
+      const zone = state.zones.find(item => item.id === zoneId);
+      const index = zone ? zone.images.findIndex(item => item.id === itemId) : -1;
+      if (zone && index >= 0) zone.images[index] = Object.assign({}, zone.images[index], updated);
+      rerenderZone(zoneId);
+      toast("Comment saved");
+    }).catch(err => {
+      toast(err.message, "error");
+      if (submit) submit.disabled = false;
+    });
+  }
+
+  function renderCommentControl(zoneId, item) {
+    const control = document.createElement("div");
+    control.className = "comment-control";
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "comment-btn";
+    button.textContent = item.comment ? "Edit comment" : "Comment";
+    button.setAttribute("aria-label", `${button.textContent} for ${item.filename}`);
+    button.addEventListener("click", event => {
+      event.stopPropagation();
+      const form = document.createElement("form");
+      form.className = "comment-editor";
+      const input = document.createElement("textarea");
+      input.value = item.comment || "";
+      input.maxLength = 280;
+      input.rows = 2;
+      input.setAttribute("aria-label", `Comment for ${item.filename}`);
+      const save = document.createElement("button");
+      save.type = "submit";
+      save.className = "comment-save-btn";
+      save.textContent = "Save";
+      const cancel = document.createElement("button");
+      cancel.type = "button";
+      cancel.className = "ghost-btn";
+      cancel.textContent = "Cancel";
+      cancel.addEventListener("click", () => rerenderZone(zoneId));
+      form.addEventListener("submit", submitEvent => {
+        submitEvent.preventDefault();
+        saveComment(zoneId, item.id, input.value, form);
+      });
+      form.append(input, save, cancel);
+      control.replaceChildren(form);
+      input.focus();
+    });
+    control.appendChild(button);
+    return control;
   }
 
   function renderLatest(zone, item, selectedItemsInZone = []) {
@@ -1110,6 +1199,7 @@
     if (item.kind !== "binary") actions.append(imageCopy);
     actions.append(download, clear);
     if (zoom) actions.append(zoom);
+    actions.append(renderCommentControl(zoneId, item));
     actions.append(del);
     right.appendChild(actions);
     if (item.kind === "image") {
@@ -1118,6 +1208,7 @@
       img.dataset.itemId = item.id;
       setPreviewSource(img, item.preview_url);
       img.alt = `Latest image ${item.filename}`;
+      img.title = itemDetails(zoneId, item);
       img.loading = "lazy";
       img.tabIndex = 0;
       img.setAttribute("role", "button");
@@ -1131,6 +1222,7 @@
       box.className = "file-box";
       box.dataset.itemId = item.id;
       box.textContent = item.kind === "text" ? "TXT" : "FILE";
+      box.title = itemDetails(zoneId, item);
       box.tabIndex = 0;
       box.setAttribute("role", "button");
       box.setAttribute(
@@ -1164,7 +1256,7 @@
         "aria-label",
         `Select ${item.filename}${newAccessibleSuffix(zoneId, item.id)}`,
       );
-      wrap.title = `${item.filename} — ${fmtDateTime(item.created_at)}`;
+      wrap.title = itemDetails(zoneId, item);
       wrap.dataset.itemId = item.id;
       if (item.kind === "image") {
         const img = document.createElement("img");
@@ -1745,6 +1837,7 @@
 
       updateNewItemState(nextZones);
       state.authEnabled = overview.auth_enabled !== false;
+      state.showFullPath = overview.show_full_path !== false;
       logoutForm.hidden = !state.authEnabled;
       state.zones = nextZones;
       state.groups = overview.groups || [];
@@ -1879,7 +1972,7 @@
         if (!allowReplace) return null;
       }
       const fd = new FormData();
-      // Le serveur conserve le nom seulement pour les fichiers déposés.
+      // The server preserves names only for dropped files.
       fd.append("image", file, file.name || "clipboard");
       if (preserveName) fd.append("preserve_name", "1");
       if (allowReplace) fd.append("replace", "1");
@@ -1896,8 +1989,8 @@
         toast(`${item.kind === "image" ? "Image" : "Content"} uploaded (${shortRef(item.reference)})`);
       }
       if (autoCopy) {
-        // Copie automatique best-effort : si elle échoue, on le signale
-        // explicitement (le bouton Copy link reste disponible).
+        // Best-effort automatic copy: report failures explicitly; the Copy link
+        // button remains available.
         writeClipboard(item.reference).then(ok => {
           if (ok) toast("Link copied");
           else toast("Link NOT copied — use the Copy link button", "error");
@@ -2155,8 +2248,7 @@
       upload(zoneId, file);
       return;
     }
-    // Texte : préférer le texte brut, mais ne pas laisser un flavor vide
-    // masquer un autre flavor réellement exploitable.
+    // Prefer plain text, but do not let an empty flavor hide another usable one.
     const textItems = [...items].filter(i => i.kind === "string");
     const orderedTextItems = [
       ...textItems.filter(i => i.kind === "string" && i.type === "text/plain"),
@@ -2401,6 +2493,7 @@
     pvImg.hidden = false;
     pvText.hidden = true;
     pvRef.textContent = reference;
+    pvRef.hidden = !state.showFullPath;
     setPreviewCopyLabel("image");
     pvDownload.textContent = downloadLabel(storedFilename);
     pvDownload.setAttribute("aria-label", downloadLabel(storedFilename));
@@ -2438,6 +2531,7 @@
     setPreviewSource(pvImg, "");
     setPreviewCopyLabel(item.kind);
     pvRef.textContent = item.reference;
+    pvRef.hidden = !state.showFullPath;
     pvDownload.textContent = downloadLabel(item.filename);
     pvDownload.setAttribute("aria-label", downloadLabel(item.filename));
     pvDownload.dataset.preview = item.preview_url;
@@ -2477,7 +2571,7 @@
       }
       return;
     }
-    // Binaire : téléchargement direct (Content-Disposition: attachment).
+    // Binary content: direct download (Content-Disposition: attachment).
     downloadContent(item.preview_url, item.filename);
   }
   function closePreview() {

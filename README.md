@@ -37,7 +37,7 @@ service between independent servers.
 
 ## Quick Start
 
-The current public release is `1.7.0`. The documented v1.7.0 server runs on
+The current public release is `1.8.0`. The documented v1.8.0 server runs on
 Linux, requires Python 3.11 or newer, and has no third-party
 Python runtime dependency. A native Windows backend is included but has only
 been validated under Wine; macOS and native Windows remain outside the official
@@ -93,6 +93,10 @@ only, without `/paste`.
 - Select several items with click, `Shift`-click, or `Ctrl`/`Command`-click.
 - Copy a reference list, download a selection as a streamed ZIP, or delete it
   as a group.
+- Add a short Unicode comment to a managed item and edit it from the selected
+  item panel.
+- Hover the selected file or a history icon to see complete, untruncated item
+  details.
 - Publish files from scripts or agents with `drop`.
 - Rename or delete managed files while keeping data and sidecars consistent.
 - Run behind an HTTPS reverse proxy or terminate TLS directly.
@@ -107,10 +111,17 @@ number keys select visible zones, and tab-layout groups support `A` to open all
 visible zones and `U` to close them.
 
 The upper panel shows the current item and its copy, download, clear, and
-preview actions. With multiple selected items it shows their names, sizes, and
-stored dates, then provides group actions instead. In a tab-layout group,
+preview, and comment actions. With multiple selected items it shows their names,
+sizes, and stored dates, then provides group actions instead. In a tab-layout group,
 `Shift`-click selects a contiguous range of zones and `Ctrl`/`Command`-click
 adds or removes zones; Group options can show or hide the left zone column.
+
+![Pasteberth history with the local NEW indicator and item details](docs/images/pasteberth-new-files.png)
+
+The `show_full_path` configuration option controls whether absolute references
+are displayed in the Web UI. It defaults to `true` for compatibility; set it to
+`false` when server-side paths contain sensitive information. The API still
+returns the exact reference needed by the harness and copy actions.
 
 ## Filesystem Handoff
 
@@ -151,7 +162,7 @@ configuration template. The optional Linux user-service template is
 
 ## Support Status
 
-| Area | v1.7.0 status |
+| Area | v1.8.0 status |
 |---|---|
 | Python | 3.11 or newer |
 | Server | Linux, officially tested |

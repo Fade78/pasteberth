@@ -1,9 +1,8 @@
-"""Parser ``multipart/form-data`` minimal et borné (bibliothèque standard).
+"""Minimal bounded ``multipart/form-data`` parser (standard library).
 
-Le corps est déjà plafonné en amont (taille de contenu plus enveloppe multipart
-bornée) ; ce parser borne en plus le nombre de parties et la taille des
-en-têtes. Le nom de fichier est retourné comme indication ; la couche stockage
-le valide avant tout usage.
+The body is already capped upstream (content size plus bounded multipart
+overhead); this parser additionally caps the number of parts and header size.
+The filename is returned as a hint; the storage layer validates it before use.
 """
 from __future__ import annotations
 
@@ -23,7 +22,7 @@ _PARAM_RE = {
 
 
 class MultipartError(Exception):
-    """Corps multipart malformé."""
+    """Malformed multipart body."""
 
 
 def extract_boundary(content_type: str) -> str | None:
@@ -42,7 +41,7 @@ def _unescape(value: str) -> str:
 
 
 def _boundary_at(body: bytes, delimiter: bytes, start: int) -> int:
-    """Retourne le prochain délimiteur positionné en début de ligne."""
+    """Return the next delimiter positioned at the start of a line."""
     cursor = start
     while True:
         position = body.find(delimiter, cursor)
@@ -56,13 +55,13 @@ def _boundary_at(body: bytes, delimiter: bytes, start: int) -> int:
 
 
 def parse_multipart(body: bytes, boundary: str) -> dict[str, tuple[str | None, str | None, bytes]]:
-    """Retourne {nom du champ: (filename_client|None, content_type|None, contenu)}."""
+    """Return {field name: (client filename|None, content type|None, content)}."""
     delimiter = b"--" + boundary.encode("utf-8")
     fields: dict[str, tuple[str | None, str | None, bytes]] = {}
     part_count = 0
     position = _boundary_at(body, delimiter, 0)
     if position < 0:
-        raise MultipartError("délimiteur multipart introuvable")
+        raise MultipartError("multipart delimiter not found")
 
     while True:
         after_delimiter = position + len(delimiter)
@@ -73,11 +72,11 @@ def parse_multipart(body: bytes, boundary: str) -> dict[str, tuple[str | None, s
         elif body[after_delimiter:after_delimiter + 1] == b"\n":
             headers_start = after_delimiter + 1
         else:
-            raise MultipartError("délimiteur multipart mal terminé")
+            raise MultipartError("multipart delimiter is improperly terminated")
 
         part_count += 1
         if part_count > MAX_PARTS:
-            raise MultipartError("trop de parties dans le corps multipart")
+            raise MultipartError("too many parts in multipart body")
 
         header_end = body.find(b"\r\n\r\n", headers_start)
         sep_len = 4
@@ -85,14 +84,14 @@ def parse_multipart(body: bytes, boundary: str) -> dict[str, tuple[str | None, s
             header_end = body.find(b"\n\n", headers_start)
             sep_len = 2
         if header_end < headers_start:
-            raise MultipartError("séparation en-têtes/contenu introuvable")
+            raise MultipartError("header/content separator not found")
         if header_end - headers_start > MAX_HEADER_BLOCK:
-            raise MultipartError("bloc d'en-têtes trop grand")
+            raise MultipartError("header block is too large")
 
         content_start = header_end + sep_len
         next_position = _boundary_at(body, delimiter, content_start)
         if next_position < 0:
-            raise MultipartError("délimiteur multipart final absent")
+            raise MultipartError("final multipart delimiter is missing")
         content_end = next_position
         if body[content_end - 2:content_end] == b"\r\n":
             content_end -= 2
@@ -113,7 +112,7 @@ def parse_multipart(body: bytes, boundary: str) -> dict[str, tuple[str | None, s
         if name_match:
             name = _unescape(name_match.group(1))
             if not name or len(name) > _MAX_TOKEN:
-                raise MultipartError("nom de champ invalide")
+                raise MultipartError("invalid field name")
             file_match = _PARAM_RE["filename"].search(disposition)
             filename = _unescape(file_match.group(1)) if file_match else None
             fields[name] = (filename, part_ctype, content)
@@ -121,5 +120,5 @@ def parse_multipart(body: bytes, boundary: str) -> dict[str, tuple[str | None, s
         position = next_position
 
     if not fields:
-        raise MultipartError("aucun champ dans le corps multipart")
+        raise MultipartError("multipart body contains no fields")
     return fields

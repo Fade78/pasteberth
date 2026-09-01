@@ -60,10 +60,10 @@ class DarwinPlatformFS(PosixPlatformFS):
         self.validate_component(source)
         self.validate_component(target)
         if not isinstance(directory, PosixDirectoryHandle):
-            raise TypeError("handle POSIX attendu")
+            raise TypeError("POSIX handle expected")
         source_identity = self.identity(directory, source)
         if expected is not None and source_identity != expected:
-            raise EntryChangedError(f"source modifiée : {source!r}")
+            raise EntryChangedError(f"source changed: {source!r}")
         if source_identity is None:
             raise FileNotFoundError(source)
         result = self._renameatx_np(
@@ -81,4 +81,4 @@ class DarwinPlatformFS(PosixPlatformFS):
                 )
             raise OSError(error_number, os.strerror(error_number), source, target)
         if self.identity(directory, target) != source_identity:
-            raise EntryChangedError(f"cible étrangère apparue : {target!r}")
+            raise EntryChangedError(f"foreign target appeared: {target!r}")

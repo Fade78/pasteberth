@@ -1,15 +1,14 @@
-"""Couche HTTP : serveur threadé standard, routage, sécurité.
+"""HTTP layer: threaded standard-library server, routing, and security.
 
-Points de sécurité traités ici :
-- authentification par session côté serveur (cookie HttpOnly / SameSite=Lax,
-  Secure dès que le schéma effectif est https) ;
-- vérification d'Origin sur toute requête non sûre (CSRF), combinée à
-  SameSite=Lax ;
-- en-têtes X-Forwarded-* honorés UNIQUEMENT depuis un pair déclaré dans
-  ``trusted_proxies`` ;
-- en-têtes de sécurité systématiques (CSP stricte sans inline, nosniff…) ;
-- corps de requête plafonnés et parsés de façon bornée ;
-- aucune réflexion de contenu non contrôlé dans les réponses.
+Security checks handled here:
+- server-side session authentication (HttpOnly / SameSite=Lax cookie, Secure
+  whenever the effective scheme is HTTPS);
+- Origin checks on every unsafe request (CSRF), combined with SameSite=Lax;
+- X-Forwarded-* headers honored ONLY from a peer declared in
+  ``trusted_proxies``;
+- systematic security headers (strict CSP without inline content, nosniff);
+- request bodies capped and parsed within fixed bounds;
+- no uncontrolled content reflected in responses.
 """
 from __future__ import annotations
 
@@ -51,6 +50,7 @@ _ZONE_RE = r"([a-z0-9][a-z0-9_-]{0,63})"
 _FILENAME_RE = r"([^/\\\x00]{1,200})"
 _MAX_BATCH_NAMES = 10_000
 _MAX_BATCH_NAMES_BODY = 2 * 1024 * 1024
+_MAX_COMMENT_BODY_BYTES = 8 * 1024
 
 _ROUTES: tuple[tuple[str, re.Pattern, str], ...] = tuple(
     (method, re.compile(pattern), name)
@@ -59,6 +59,7 @@ _ROUTES: tuple[tuple[str, re.Pattern, str], ...] = tuple(
         ("GET", r"^/api/zones$", "h_zones"),
         ("GET", r"^/api/groups$", "h_groups"),
         ("GET", rf"^/api/zones/{_ZONE_RE}/images$", "h_zone_images"),
+        ("PATCH", rf"^/api/zones/{_ZONE_RE}/images/{_FILENAME_RE}/comment$", "h_zone_comment"),
         ("POST", rf"^/api/zones/{_ZONE_RE}/images$", "h_zone_upload"),
         ("POST", rf"^/api/zones/{_ZONE_RE}/images/batch-delete$", "h_zone_delete_batch"),
         ("POST", rf"^/api/zones/{_ZONE_RE}/images/archive$", "h_zone_archive"),
@@ -87,7 +88,7 @@ _SECURITY_HEADERS = (
 
 
 class ClientAbort(Exception):
-    """Le client a interrompu la requête (réseau perdu, timeout…)."""
+    """The client interrupted the request (lost network, timeout, etc.)."""
 
 
 class BodyTooLarge(Exception):
@@ -103,7 +104,7 @@ class HeaderTooLarge(Exception):
 
 
 class HeaderBudgetReader:
-    """Compteur de bytes lu pendant la phase d'en-têtes HTTP."""
+    """Count bytes read during the HTTP header phase."""
 
     def __init__(self, raw, max_bytes: int):
         self._raw = raw
@@ -136,7 +137,7 @@ class HeaderBudgetReader:
 
 
 class BodyMemoryBudget:
-    """Budget non bloquant pour les copies temporaires des uploads."""
+    """Non-blocking budget for temporary upload copies."""
 
     def __init__(self, max_bytes: int):
         self.max_bytes = max_bytes
@@ -144,7 +145,7 @@ class BodyMemoryBudget:
         self._lock = threading.Lock()
 
     def reserve(self, body_bytes: int) -> int | None:
-        # Le corps brut et une copie extraite par multipart peuvent coexister.
+            # The raw body and a multipart-extracted copy may coexist.
         charge = body_bytes * 2 + 64 * 1024
         if charge > self.max_bytes:
             return None
@@ -162,7 +163,7 @@ class BodyMemoryBudget:
 
 
 class _ChunkedWriter:
-    """Adaptateur non seekable pour écrire un ZIP en HTTP chunked."""
+    """Non-seekable adapter for writing a ZIP with HTTP chunked encoding."""
 
     def __init__(self, handler):
         self.handler = handler
@@ -191,13 +192,13 @@ class _ChunkedWriter:
 
 
 def _parse_filename_list(body: bytes, content_type: str) -> list[str]:
-    """Parse une liste de noms pour les opérations de zone."""
+    """Parse a list of names for zone operations."""
     media_type = (content_type or "").split(";", 1)[0].strip().lower()
     if media_type == "application/json":
         try:
             payload = json.loads(body.decode("utf-8"))
         except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-            raise ValueError("JSON invalide") from exc
+            raise ValueError("invalid JSON") from exc
         filenames = payload.get("filenames") if isinstance(payload, dict) else None
     elif media_type == "application/x-www-form-urlencoded":
         try:
@@ -207,17 +208,27 @@ def _parse_filename_list(body: bytes, content_type: str) -> list[str]:
                 max_num_fields=_MAX_BATCH_NAMES,
             )
         except (UnicodeDecodeError, ValueError) as exc:
-            raise ValueError("formulaire invalide") from exc
+            raise ValueError("invalid form") from exc
         filenames = fields.get("filename", [])
     else:
-        raise ValueError("Content-Type JSON ou formulaire attendu")
+        raise ValueError("Content-Type must be JSON or form data")
     if not isinstance(filenames, list) or not filenames:
-        raise ValueError("la liste 'filenames' est requise")
+        raise ValueError("'filenames' list is required")
     if len(filenames) > _MAX_BATCH_NAMES:
-        raise ValueError("trop de fichiers demandés")
+        raise ValueError("too many files requested")
     if not all(isinstance(filename, str) for filename in filenames):
-        raise ValueError("les noms de fichiers doivent être des chaînes")
+        raise ValueError("filenames must be strings")
     return filenames
+
+
+def _json_object_without_duplicates(pairs):
+    """Reject duplicate keys instead of silently accepting the last value."""
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError(f"duplicate JSON key: {key!r}")
+        result[key] = value
+    return result
 
 
 _UPLOAD_MEMORY_BUDGET = 128 * 1024 * 1024
@@ -225,7 +236,7 @@ _MAX_HEADER_BYTES = 64 * 1024
 
 
 def _safe_log_text(value: object, *, limit: int | None = None) -> str:
-    """Rend les contrôles HTTP inoffensifs dans les sorties texte des logs."""
+    """Make HTTP control characters harmless in log text output."""
     text = str(value)
     if limit is not None:
         text = text[:limit]
@@ -239,7 +250,7 @@ def _safe_log_text(value: object, *, limit: int | None = None) -> str:
 
 def make_handler(cfg: Config, service: PasteService, sessions: SessionStore,
                  limiter: LoginRateLimiter) -> type[BaseHTTPRequestHandler]:
-    """Construit la classe de handler avec les dépendances injectées."""
+    """Build the handler class with injected dependencies."""
     upload_memory = BodyMemoryBudget(_UPLOAD_MEMORY_BUDGET)
     preview_slots = threading.BoundedSemaphore(
         max(1, _UPLOAD_MEMORY_BUDGET // cfg.max_upload_bytes)
@@ -269,8 +280,8 @@ def make_handler(cfg: Config, service: PasteService, sessions: SessionStore,
                 pass
 
         def handle_one_request(self) -> None:
-            # Le timeout socket est réinitialisé par les lectures ; ce timer
-            # impose une vraie durée maximale à la requête entière.
+            # Socket timeouts reset on reads; this timer imposes a real maximum
+            # duration for the whole request.
             self._response_started = False
             self._streaming_response = False
             self.rfile.reset()
@@ -283,7 +294,7 @@ def make_handler(cfg: Config, service: PasteService, sessions: SessionStore,
             except HeaderTooLarge:
                 self.close_connection = True
                 try:
-                    self.send_error(431, "en-têtes HTTP trop volumineux")
+                    self.send_error(431, "HTTP headers are too large")
                 except OSError:
                     pass
             except (OSError, TimeoutError):
@@ -308,7 +319,7 @@ def make_handler(cfg: Config, service: PasteService, sessions: SessionStore,
                 if parsed and not self._host_allowed():
                     self.close_connection = True
                     self._route_path = self.path.split("?")[0]
-                    self._error(403, "forbidden_host", "hôte non autorisé")
+                    self._error(403, "forbidden_host", "host is not allowed")
                     return False
                 if parsed and not self.server.promote_request(self.connection):
                     self.close_connection = True
@@ -316,19 +327,19 @@ def make_handler(cfg: Config, service: PasteService, sessions: SessionStore,
                     self._error(
                         503,
                         "server_busy",
-                        "capacité de requêtes temporairement épuisée",
+                        "request capacity is temporarily exhausted",
                         extra_headers=[("Retry-After", "1")],
                     )
                     return False
                 return parsed
             except HeaderTooLarge:
                 self.close_connection = True
-                self.send_error(431, "en-têtes HTTP trop volumineux")
+                self.send_error(431, "HTTP headers are too large")
                 return False
             finally:
                 self.rfile.disable()
 
-        # ---------------------------------------------------- contexte réseau
+        # ---------------------------------------------------- network context
 
         def _peer_ip(self) -> str:
             try:
@@ -347,9 +358,9 @@ def make_handler(cfg: Config, service: PasteService, sessions: SessionStore,
             if self._trusted_peer():
                 xff = self.headers.get("X-Forwarded-For")
                 if xff:
-                    # Le proxy de confiance peut écraser XFF ou ajouter le
-                    # client réel à droite ; seul le saut le plus proche est
-                    # donc accepté, jamais une valeur client plus à gauche.
+                    # A trusted proxy may overwrite XFF or append the real
+                    # client on the right; only the nearest hop is
+                    # Therefore accept it, never a client value farther left.
                     candidate = xff.rsplit(",", 1)[-1].strip()
                     try:
                         return str(ipaddress.ip_address(candidate))
@@ -403,9 +414,9 @@ def make_handler(cfg: Config, service: PasteService, sessions: SessionStore,
             host_name = self._host_name(self._host())
             if host_name is None:
                 return False
-            # Feature: allowed_hosts vide = wildcard. Tout nom d'hôte est
-            # accepté (l'Origin doit toujours matcher le Host de la requête).
-            # Une liste explicite restaure la vérification stricte.
+            # An empty allowed_hosts list is a wildcard. Every hostname is
+            # accepted, while Origin must still match the request Host.
+            # An explicit list restores strict checking.
             if not cfg.allowed_hosts:
                 return True
             return host_name in cfg.allowed_hosts
@@ -443,7 +454,7 @@ def make_handler(cfg: Config, service: PasteService, sessions: SessionStore,
             return normalized
 
         def _origin_allowed(self) -> bool:
-            """CSRF : si le navigateur fournit Origin/Referer, il doit correspondre."""
+            """CSRF: a browser-provided Origin/Referer must match the request."""
             if not self._host_allowed():
                 return False
             origin = self.headers.get("Origin")
@@ -456,7 +467,7 @@ def make_handler(cfg: Config, service: PasteService, sessions: SessionStore,
                     if opaque_origin:
                         fetch_site = self.headers.get("Sec-Fetch-Site", "").lower()
                         return fetch_site == "same-origin"
-                    # Clients non-navigateurs (curl, scripts) : autorisés.
+                    # Non-browser clients (curl, scripts) are allowed.
                     return True
                 try:
                     parsed = urllib.parse.urlsplit(referer)
@@ -530,7 +541,7 @@ def make_handler(cfg: Config, service: PasteService, sessions: SessionStore,
                 attrs.append("Secure")
             return "; ".join(attrs)
 
-        # ------------------------------------------------------------ réponses
+        # ------------------------------------------------------------ responses
 
         def _finish(
             self,
@@ -626,7 +637,7 @@ def make_handler(cfg: Config, service: PasteService, sessions: SessionStore,
         ) -> tuple[bytes, int]:
             if "chunked" in (self.headers.get("Transfer-Encoding") or "").lower():
                 self.close_connection = True
-                raise BodyTooLarge()  # le protocole chunked n'est pas supporté en V1
+                raise BodyTooLarge()  # Chunked encoding is not supported in V1.
             length_raw = self.headers.get("Content-Length")
             if length_raw is None:
                 return b"", 0
@@ -671,18 +682,18 @@ def make_handler(cfg: Config, service: PasteService, sessions: SessionStore,
                 return
             if re.search(r"%(?![0-9A-Fa-f]{2})", self.path):
                 self.close_connection = True
-                self._error(400, "invalid_request", "encodage de chemin invalide")
+                self._error(400, "invalid_request", "invalid path encoding")
                 return
             try:
                 path = urllib.parse.unquote(self.path.split("?")[0], errors="strict")
             except (UnicodeDecodeError, ValueError):
                 self.close_connection = True
-                self._error(400, "invalid_request", "encodage de chemin invalide")
+                self._error(400, "invalid_request", "invalid path encoding")
                 return
             self._route_path = path
             if "\\" in path or any(ord(char) < 0x20 or ord(char) == 0x7F for char in path):
                 self.close_connection = True
-                self._error(400, "invalid_request", "requête invalide")
+                self._error(400, "invalid_request", "invalid request")
                 return
             if cfg.url_prefix:
                 if path == cfg.url_prefix:
@@ -693,41 +704,41 @@ def make_handler(cfg: Config, service: PasteService, sessions: SessionStore,
                             location += "?" + query
                         self._redirect(location)
                     else:
-                        self._error(404, "not_found", "ressource introuvable")
+                        self._error(404, "not_found", "resource not found")
                     return
                 prefix = cfg.url_prefix + "/"
                 if not path.startswith(prefix):
-                    self._error(404, "not_found", "ressource introuvable")
+                    self._error(404, "not_found", "resource not found")
                     return
                 path = path[len(cfg.url_prefix):]
                 self._route_path = path
             if not self._host_allowed():
-                self._error(403, "forbidden_host", "hôte non autorisé")
+                self._error(403, "forbidden_host", "host is not allowed")
                 return
             for method, pattern, name in _ROUTES:
                 if self.command != method:
                     continue
                 match = pattern.fullmatch(path)
                 if match:
-                    if method in ("POST", "DELETE") and not self._origin_allowed():
+                    if method in ("POST", "DELETE", "PATCH") and not self._origin_allowed():
                         log.warning(
-                            "origine refusée %s depuis %s",
+                            "origin rejected %s from %s",
                             _safe_log_text(
                                 self.headers.get("Origin") or self.headers.get("Referer")
                             ),
                             _safe_log_text(self._client_ip()),
                         )
-                        self._error(403, "forbidden_origin", "origine non autorisée")
+                        self._error(403, "forbidden_origin", "origin is not allowed")
                         return
                     handler = getattr(self, "_" + name)
                     handler(*match.groups())
                     return
             if self.command not in ("GET", "POST"):
-                self._error(405, "method_not_allowed", "méthode non autorisée")
+                self._error(405, "method_not_allowed", "method is not allowed")
             elif any(p.fullmatch(path) for _, p, _ in _ROUTES):
-                self._error(405, "method_not_allowed", "méthode non autorisée pour cette ressource")
+                self._error(405, "method_not_allowed", "method is not allowed for this resource")
             else:
-                self._error(404, "not_found", "ressource introuvable")
+                self._error(404, "not_found", "resource not found")
 
         def do_GET(self) -> None:
             try:
@@ -735,21 +746,21 @@ def make_handler(cfg: Config, service: PasteService, sessions: SessionStore,
             except ClientAbort:
                 self.close_connection = True
                 log.info(
-                    "client déconnecté pendant la requête (%s)",
+                    "client disconnected during request (%s)",
                     _safe_log_text(self.path, limit=100),
                 )
             except BrokenPipeError:
                 self.close_connection = True
             except Exception:
                 log.exception(
-                    "erreur interne sur %s",
+                    "internal error on %s",
                     _safe_log_text(self.path, limit=200),
                 )
                 if getattr(self, "_response_started", False):
                     self.close_connection = True
                     return
                 try:
-                    self._error(500, "internal", "erreur interne")
+                    self._error(500, "internal", "internal error")
                 except Exception:
                     self.close_connection = True
 
@@ -759,7 +770,7 @@ def make_handler(cfg: Config, service: PasteService, sessions: SessionStore,
         do_PATCH = do_GET
         do_OPTIONS = do_GET
 
-        def log_message(self, fmt: str, *args) -> None:  # neutralise le logger par défaut
+        def log_message(self, fmt: str, *args) -> None:  # Disable the default logger.
             try:
                 rendered = fmt % args
             except (TypeError, ValueError):
@@ -788,7 +799,7 @@ def make_handler(cfg: Config, service: PasteService, sessions: SessionStore,
             try:
                 data = path.read_bytes()
             except OSError:
-                self._error(404, "not_found", "ressource introuvable")
+                self._error(404, "not_found", "resource not found")
                 return
             self._finish(200, ctype, data, cache_control=cache_control)
 
@@ -815,7 +826,7 @@ def make_handler(cfg: Config, service: PasteService, sessions: SessionStore,
             try:
                 data = (_TEMPLATES_DIR / "index.html").read_bytes()
             except OSError:
-                self._error(500, "internal", "interface indisponible")
+                self._error(500, "internal", "interface unavailable")
                 return
             data = data.replace(b"__PASTEBERTH_VERSION__", __version__.encode("ascii"))
             data = data.replace(
@@ -849,7 +860,7 @@ def make_handler(cfg: Config, service: PasteService, sessions: SessionStore,
             try:
                 template = (_TEMPLATES_DIR / "login.html").read_text(encoding="utf-8")
             except OSError:
-                self._error(500, "internal", "interface indisponible")
+                self._error(500, "internal", "interface unavailable")
                 return
             block = (
                 f'<p class="login-error" role="alert">{html.escape(message)}</p>'
@@ -883,7 +894,7 @@ def make_handler(cfg: Config, service: PasteService, sessions: SessionStore,
                     body, _ = self._read_body(4 * 1024)
                 except BodyTooLarge:
                     self.close_connection = True
-                    self._error(413, "too_large", "corps de login trop grand")
+                    self._error(413, "too_large", "login body is too large")
                     return
                 except ClientAbort:
                     raise
@@ -928,19 +939,19 @@ def make_handler(cfg: Config, service: PasteService, sessions: SessionStore,
                 if password and verify_password(password, stored_hash):
                     limiter.complete(ip, success=True)
                     released = True
-                    log.info("connexion réussie (%s)", _safe_log_text(ip))
+                    log.info("login succeeded (%s)", _safe_log_text(ip))
                     self._do_login_success()
                 else:
                     time.sleep(0.5)
                     limiter.complete(ip, success=False)
                     released = True
-                    log.warning("échec de connexion (%s)", _safe_log_text(ip))
+                    log.warning("login failed (%s)", _safe_log_text(ip))
                     self._render_login(401, "Incorrect password.")
             finally:
                 if acquired and not released:
                     limiter.release(ip)
 
-        # Connexion réussie : redirection + cookie de session sur la même réponse.
+        # Successful login: redirect and set the session cookie in one response.
         def _do_login_success(self) -> None:
             token = sessions.create()
             self.send_response(303)
@@ -974,7 +985,7 @@ def make_handler(cfg: Config, service: PasteService, sessions: SessionStore,
                 return True
             self._json(
                 401,
-                {"error": {"code": "unauthorized", "message": "authentification requise"}},
+                {"error": {"code": "unauthorized", "message": "authentication required"}},
             )
             return False
 
@@ -1019,14 +1030,14 @@ def make_handler(cfg: Config, service: PasteService, sessions: SessionStore,
                 )
             except BodyTooLarge:
                 self.close_connection = True
-                self._error(413, "too_large", "corps trop grand")
+                self._error(413, "too_large", "request body is too large")
                 return
             except BodyMemoryUnavailable:
                 self.close_connection = True
                 self._error(
                     503,
                     "upload_busy",
-                    "trop de données d'upload sont actuellement en mémoire",
+                    "too much upload data is currently in memory",
                     extra_headers=[("Retry-After", "1")],
                 )
                 return
@@ -1036,12 +1047,12 @@ def make_handler(cfg: Config, service: PasteService, sessions: SessionStore,
                 if ctype == "multipart/form-data":
                     boundary = extract_boundary(ctype_raw)
                     if not boundary:
-                        self._error(400, "invalid_request", "boundary multipart manquant")
+                        self._error(400, "invalid_request", "multipart boundary is missing")
                         return
                     try:
                         fields = parse_multipart(body, boundary)
                     except MultipartError as exc:
-                        self._error(400, "invalid_request", f"multipart invalide : {exc}")
+                        self._error(400, "invalid_request", f"invalid multipart body: {exc}")
                         return
                     if "image" in fields:
                         filename_client, part_ctype, data = fields["image"]
@@ -1049,7 +1060,7 @@ def make_handler(cfg: Config, service: PasteService, sessions: SessionStore,
                         filename_client, part_ctype, data = next(iter(fields.values()))
                     else:
                         self._error(400, "invalid_request",
-                                    "champ 'image' attendu (multipart)")
+                                    "'image' field expected (multipart)")
                         return
                     declared = part_ctype or "application/octet-stream"
                     preserve_name = (
@@ -1072,7 +1083,7 @@ def make_handler(cfg: Config, service: PasteService, sessions: SessionStore,
                     allow_replace = False
                 else:
                     self._error(415, "unsupported_media_type",
-                                f"Content-Type refusé : {ctype!r}")
+                                f"Content-Type is not allowed: {ctype!r}")
                     return
                 item = service.upload(
                     zid,
@@ -1094,7 +1105,7 @@ def make_handler(cfg: Config, service: PasteService, sessions: SessionStore,
                 body, _ = self._read_body(max_bytes=_MAX_BATCH_NAMES_BODY)
             except BodyTooLarge:
                 self.close_connection = True
-                self._error(413, "too_large", "liste de fichiers trop grande")
+                self._error(413, "too_large", "file list is too large")
                 return None
             except ClientAbort:
                 raise
@@ -1118,6 +1129,37 @@ def make_handler(cfg: Config, service: PasteService, sessions: SessionStore,
                 self._service_error(exc)
                 return
             self._json(200, result)
+
+        def _h_zone_comment(self, zid: str, filename: str) -> None:
+            if not self._require_auth_api():
+                return
+            ctype = (self.headers.get("Content-Type") or "").split(";", 1)[0].strip().lower()
+            if ctype != "application/json":
+                self._error(415, "unsupported_media_type", "Content-Type must be application/json")
+                return
+            try:
+                body, _ = self._read_body(max_bytes=_MAX_COMMENT_BODY_BYTES)
+            except BodyTooLarge:
+                self.close_connection = True
+                self._error(413, "too_large", "comment request is too large")
+                return
+            try:
+                payload = json.loads(
+                    body.decode("utf-8"),
+                    object_pairs_hook=_json_object_without_duplicates,
+                )
+            except (UnicodeDecodeError, json.JSONDecodeError, ValueError, RecursionError):
+                self._error(400, "invalid_request", "comment request must contain valid JSON")
+                return
+            if not isinstance(payload, dict) or set(payload) != {"comment"}:
+                self._error(400, "invalid_request", "comment request must contain only 'comment'")
+                return
+            try:
+                item = service.update_comment(zid, filename, payload["comment"])
+            except ServiceError as exc:
+                self._service_error(exc)
+                return
+            self._json(200, item)
 
         def _send_zip_response(self, zid: str, destination, items) -> None:
             self._response_started = True
@@ -1158,7 +1200,7 @@ def make_handler(cfg: Config, service: PasteService, sessions: SessionStore,
                 self.wfile.flush()
                 self._stream_last_activity = time.monotonic()
                 log.info(
-                    "archive zone=%s fichiers=%d taille_zip=%d",
+                    "archive zone=%s files=%d zip_size=%d",
                     zid,
                     len(items),
                     writer.offset,
@@ -1199,7 +1241,7 @@ def make_handler(cfg: Config, service: PasteService, sessions: SessionStore,
                 self._error(
                     503,
                     "preview_busy",
-                    "trop de previews sont actuellement servies",
+                    "too many previews are currently being served",
                     extra_headers=[("Retry-After", "1")],
                 )
                 return
@@ -1211,9 +1253,9 @@ def make_handler(cfg: Config, service: PasteService, sessions: SessionStore,
                     return
                 extra = []
                 if mime not in ("image/png", "image/jpeg", "image/webp"):
-                    # Pièce jointe : l'HTML stocké ne doit jamais être rendu
-                    # same-origin par navigation directe (défense en profondeur,
-                    # la CSP bloque déjà les scripts inline).
+                    # Attachment: stored HTML must never be rendered same-origin
+                    # by direct navigation (defense in depth; CSP already blocks
+                    # inline scripts).
                     fallback = "".join(
                         char if 32 <= ord(char) < 127 and char not in {'"', "\\"} else "_"
                         for char in filename

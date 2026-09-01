@@ -37,14 +37,14 @@ class PosixDirectoryHandle(DirectoryHandle):
         info = os.fstat(fd)
         if not stat.S_ISDIR(info.st_mode):
             os.close(fd)
-            raise UnsafeLinkError(f"répertoire attendu : {path}")
+            raise UnsafeLinkError(f"directory expected: {path}")
         super().__init__(path, FileIdentity(info.st_dev, info.st_ino))
         self._fd = fd
 
     @property
     def fd(self) -> int:
         if self.closed:
-            raise ValueError("handle de répertoire fermé")
+            raise ValueError("directory handle is closed")
         return self._fd
 
     def _close_native(self) -> None:
@@ -59,7 +59,7 @@ class PosixFileHandle(FileHandle):
     @property
     def fd(self) -> int:
         if self.closed:
-            raise ValueError("handle de fichier fermé")
+            raise ValueError("file handle is closed")
         return self._fd
 
     def _sync_native(self) -> None:
@@ -101,13 +101,13 @@ class PosixPlatformFS(PlatformFS):
         # DirectoryHandle.  Native descriptor handling remains in this module.
         if isinstance(directory, int):
             return directory
-        raise TypeError("handle POSIX attendu")
+        raise TypeError("POSIX handle expected")
 
     @staticmethod
     def _path(path: Path) -> Path:
         path = Path(path)
         if not path.is_absolute():
-            raise ValueError(f"chemin de répertoire non absolu : {path}")
+            raise ValueError(f"directory path must be absolute: {path}")
         return path
 
     def open_directory(
@@ -165,7 +165,7 @@ class PosixPlatformFS(PlatformFS):
             return os.O_WRONLY, mode == "w"
         if mode in {"r+b", "rb+", "w+b", "wb+"}:
             return os.O_RDWR, False
-        raise ValueError(f"mode de fichier non supporté : {mode!r}")
+        raise ValueError(f"unsupported file mode: {mode!r}")
 
     @staticmethod
     def _stream_from_fd(fd: int, mode: str):
@@ -181,7 +181,7 @@ class PosixPlatformFS(PlatformFS):
             raise
         if not stat.S_ISREG(info.st_mode):
             os.close(fd)
-            raise UnsafeLinkError(f"fichier non régulier : {name!r}")
+            raise UnsafeLinkError(f"file is not regular: {name!r}")
         identity = FileIdentity(info.st_dev, info.st_ino)
         try:
             stream = self._stream_from_fd(fd, mode)
@@ -199,7 +199,7 @@ class PosixPlatformFS(PlatformFS):
     ) -> PosixFileHandle:
         self.validate_component(name)
         if not isinstance(directory, PosixDirectoryHandle):
-            raise TypeError("handle POSIX attendu")
+            raise TypeError("POSIX handle expected")
         flags, _text = self._mode_flags(mode)
         try:
             fd = os.open(
@@ -225,7 +225,7 @@ class PosixPlatformFS(PlatformFS):
     ) -> PosixFileHandle:
         self.validate_component(name)
         if not isinstance(directory, PosixDirectoryHandle):
-            raise TypeError("handle POSIX attendu")
+            raise TypeError("POSIX handle expected")
         flags, _text = self._mode_flags(mode)
         try:
             fd = os.open(
@@ -285,7 +285,7 @@ class PosixPlatformFS(PlatformFS):
         if info is None:
             return None
         if require_regular and not info.is_regular:
-            raise UnsafeLinkError(f"fichier non régulier : {name!r}")
+            raise UnsafeLinkError(f"file is not regular: {name!r}")
         return info.identity
 
     def _check_expected(
@@ -296,7 +296,7 @@ class PosixPlatformFS(PlatformFS):
     ) -> None:
         actual = self.identity(directory, name)
         if actual != expected:
-            raise EntryChangedError(f"fichier modifié pendant l'opération : {name!r}")
+            raise EntryChangedError(f"file changed during operation: {name!r}")
 
     def link_expected(
         self,
@@ -320,7 +320,7 @@ class PosixPlatformFS(PlatformFS):
         except FileExistsError as exc:
             raise EntryExistsError(str(exc)) from exc
         if self.identity(directory, target) != expected:
-            raise EntryChangedError(f"cible étrangère apparue : {target!r}")
+            raise EntryChangedError(f"foreign target appeared: {target!r}")
 
     def rename_noreplace_fallback(
         self,
@@ -336,7 +336,7 @@ class PosixPlatformFS(PlatformFS):
         directory_fd = self._native_fd(directory)
         source_identity = self.identity(directory, source)
         if expected is not None and source_identity != expected:
-            raise EntryChangedError(f"source modifiée : {source!r}")
+            raise EntryChangedError(f"source changed: {source!r}")
         if source_identity is None:
             raise FileNotFoundError(source)
         try:
@@ -352,9 +352,9 @@ class PosixPlatformFS(PlatformFS):
         if self.identity(directory, source) != source_identity:
             # Keep the extra link: deleting it would require trusting a name
             # after the source changed.
-            raise EntryChangedError(f"source modifiée : {source!r}")
+            raise EntryChangedError(f"source changed: {source!r}")
         if self.identity(directory, target) != source_identity:
-            raise EntryChangedError(f"cible étrangère apparue : {target!r}")
+            raise EntryChangedError(f"foreign target appeared: {target!r}")
         os.unlink(source, dir_fd=directory_fd)
 
     def rename_noreplace(
@@ -409,20 +409,20 @@ class PosixPlatformFS(PlatformFS):
         if source_identity is None or (
             expected_source is not None and source_identity != expected_source
         ):
-            raise EntryChangedError(f"source modifiée : {source!r}")
+            raise EntryChangedError(f"source changed: {source!r}")
         target_info = self.entry_info(directory, target)
         if target_info is not None:
             if not target_info.is_regular:
-                raise UnsafeLinkError(f"cible non régulière : {target!r}")
+                raise UnsafeLinkError(f"target is not regular: {target!r}")
             if not self.is_owned(target_info):
-                raise PermissionSecurityError(f"cible non détenue : {target!r}")
+                raise PermissionSecurityError(f"target is not owned: {target!r}")
             if expected_target is not None and target_info.identity != expected_target:
-                raise EntryChangedError(f"cible modifiée : {target!r}")
+                raise EntryChangedError(f"target changed: {target!r}")
         elif expected_target is not None:
-            raise EntryChangedError(f"cible disparue : {target!r}")
+            raise EntryChangedError(f"target disappeared: {target!r}")
         os.rename(source, target, src_dir_fd=directory_fd, dst_dir_fd=directory_fd)
         if self.identity(directory, target) != source_identity:
-            raise EntryChangedError(f"cible étrangère apparue : {target!r}")
+            raise EntryChangedError(f"foreign target appeared: {target!r}")
 
     @contextmanager
     def acquire_lock(
@@ -435,7 +435,7 @@ class PosixPlatformFS(PlatformFS):
     ):
         self.validate_component(name)
         if not isinstance(directory, PosixDirectoryHandle):
-            raise TypeError("handle POSIX attendu")
+            raise TypeError("POSIX handle expected")
         fd = -1
         locked = False
         try:
@@ -447,10 +447,10 @@ class PosixPlatformFS(PlatformFS):
             )
             info = os.fstat(fd)
             if not stat.S_ISREG(info.st_mode):
-                raise UnsafeLinkError(f"verrou non régulier : {name!r}")
+                raise UnsafeLinkError(f"lock is not regular: {name!r}")
             uid_getter = getattr(os, "getuid", None)
             if uid_getter is not None and info.st_uid != uid_getter():
-                raise PermissionSecurityError(f"verrou non détenu : {name!r}")
+                raise PermissionSecurityError(f"lock is not owned: {name!r}")
             os.fchmod(fd, 0o600)
             flags = fcntl.LOCK_EX if exclusive else fcntl.LOCK_SH
             if not blocking:
@@ -459,7 +459,7 @@ class PosixPlatformFS(PlatformFS):
                 fcntl.flock(fd, flags)
             except OSError as exc:
                 if not blocking and exc.errno in (errno.EACCES, errno.EAGAIN):
-                    raise BusyError(f"verrou occupé : {name!r}") from exc
+                    raise BusyError(f"lock is busy: {name!r}") from exc
                 raise
             locked = True
             yield
@@ -476,7 +476,7 @@ class PosixPlatformFS(PlatformFS):
         try:
             os.fsync(directory_fd)
         except OSError as exc:
-            raise OSError(f"synchronisation du répertoire impossible : {exc}") from exc
+            raise OSError(f"cannot synchronize directory: {exc}") from exc
 
     def volume_space(self, directory: DirectoryHandle) -> VolumeSpace:
         directory_fd = self._native_fd(directory)
@@ -484,7 +484,7 @@ class PosixPlatformFS(PlatformFS):
         total = info.f_blocks * info.f_frsize
         available = info.f_bavail * info.f_frsize
         if total <= 0:
-            raise OSError("filesystem sans capacité mesurable")
+            raise OSError("filesystem has no measurable capacity")
         return VolumeSpace(total, available)
 
     def volume_identity(self, directory: DirectoryHandle) -> int:
@@ -558,7 +558,7 @@ class PosixPlatformFS(PlatformFS):
         owner = info.st_uid
         if uid_getter is not None and owner != uid_getter():
             private = False
-        detail = None if private else "propriétaire ou permissions trop larges"
+        detail = None if private else "owner or permissions are too broad"
         return PermissionAudit(path, private, owner, mode, detail)
 
     def is_owned(self, entry: EntryInfo) -> bool:

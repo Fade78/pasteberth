@@ -1,9 +1,8 @@
-"""Destinations de stockage et rétention circulaire par zone.
+"""Storage destinations and circular per-zone retention.
 
-La destination locale suppose un répertoire privé au processus Pasteberth.
-Les accès aux fichiers passent par un descripteur de répertoire et refusent
-les liens symboliques afin que la preuve de propriété du sidecar ne devienne
-pas une primitive de lecture ou de suppression arbitraire.
+The local destination assumes a directory private to the Pasteberth process.
+File access goes through a directory descriptor and rejects symbolic links so
+sidecar ownership checks cannot become an arbitrary read or delete primitive.
 """
 from __future__ import annotations
 
@@ -47,15 +46,46 @@ _GENERATED_FILENAME_RE = re.compile(
 )
 _CLIENT_FILENAME_RE = re.compile(r"^[^/\\\x00\r\n]{1,200}$")
 _META_KEYS = {"filename", "created_at", "width", "height", "size", "format"}
-# kind/mime ajoutés en v1.0.3 ; les sidecars v1.0.1/v1.0.2 (6 clés) restent valides.
+# kind/mime were added in v1.0.3; v1.0.1/v1.0.2 sidecars (6 keys) remain valid.
 _META_KEYS_NEW = _META_KEYS | {"kind", "mime"}
+_META_KEYS_WITH_COMMENT = _META_KEYS | {"comment"}
+_META_KEYS_NEW_WITH_COMMENT = _META_KEYS_NEW | {"comment"}
 _MIME_RE = re.compile(r"^[A-Za-z0-9!#$%&'*+.^_`|~-]+/[A-Za-z0-9!#$%&'*+.^_`|~-]+$")
 _TEXT_MIMES = {"application/json", "application/xml", "application/x-yaml"}
 _MAX_META_BYTES = 64 * 1024
+_MAX_COMMENT_LENGTH = 280
+_MAX_COMMENT_BYTES = 1024
 
 
 def _meta_keys_ok(raw: dict) -> bool:
-    return set(raw) in (_META_KEYS, _META_KEYS_NEW)
+    return set(raw) in (
+        _META_KEYS,
+        _META_KEYS_NEW,
+        _META_KEYS_WITH_COMMENT,
+        _META_KEYS_NEW_WITH_COMMENT,
+    )
+
+
+def validate_comment(value: object) -> str:
+    """Validate a short, safe Unicode comment suitable for a JSON sidecar."""
+    if not isinstance(value, str):
+        raise ValueError("comment must be a string")
+    if len(value) > _MAX_COMMENT_LENGTH:
+        raise ValueError(f"comment must be at most {_MAX_COMMENT_LENGTH} characters")
+    try:
+        encoded = value.encode("utf-8")
+    except UnicodeEncodeError as exc:
+        raise ValueError("comment contains invalid Unicode") from exc
+    if len(encoded) > _MAX_COMMENT_BYTES:
+        raise ValueError(f"comment must be at most {_MAX_COMMENT_BYTES} UTF-8 bytes")
+    for char in value:
+        category = unicodedata.category(char)
+        if category.startswith("C") and char not in {"\u200c", "\u200d"}:
+            raise ValueError("comment contains unsupported control characters")
+        codepoint = ord(char)
+        if 0xFDD0 <= codepoint <= 0xFDEF or codepoint & 0xFFFF in {0xFFFE, 0xFFFF}:
+            raise ValueError("comment contains a noncharacter")
+    return value
 _SPACE_MARGIN_BYTES = 64 * 1024
 _TXN_MARKER_RE = re.compile(r"^\.pbtxn-([0-9a-f]{24})\.json$")
 _TXN_COMMIT_RE = re.compile(r"^\.pbtxn-([0-9a-f]{24})\.commit$")
@@ -208,7 +238,7 @@ def valid_filename(name: object) -> bool:
 
 
 def generated_filename(name: object) -> bool:
-    """Indique si un nom provient du générateur interne historique."""
+    """Return whether a name comes from the historical internal generator."""
     return isinstance(name, str) and bool(_GENERATED_FILENAME_RE.fullmatch(name))
 
 
@@ -235,6 +265,7 @@ class StoredImage:
     fmt: str | None
     kind: str = "image"  # "image" | "text" | "binary"
     mime: str = "image/png"
+    comment: str = ""
 
 
 @dataclass(frozen=True)
@@ -250,47 +281,47 @@ class SpaceInfo:
 
 
 class DestinationError(Exception):
-    """Erreur d'E/S d'une destination (répertoire disparu, permissions…)."""
+    """Destination I/O error (missing directory, permissions, etc.)."""
 
 
 class UnknownImageError(DestinationError):
-    """Le fichier n'est plus un objet Pasteberth connu."""
+    """The file is no longer a known Pasteberth object."""
 
 
 class DestinationBusyError(DestinationError):
-    """La destination est déjà verrouillée par une autre opération."""
+    """The destination is already locked by another operation."""
 
 
 class StorageLowError(DestinationError):
-    """L'écriture ferait franchir le seuil d'espace libre configuré."""
+    """The write would cross the configured free-space threshold."""
 
     def __init__(self, info: SpaceInfo, minimum_percent: float):
         self.info = info
         self.minimum_percent = minimum_percent
         super().__init__(
-            f"espace libre insuffisant ({info.available_percent:.2f}% disponible, "
+            f"insufficient free space ({info.available_percent:.2f}% available, "
             f"minimum {minimum_percent:.2f}%)"
         )
 
 
 class StorageConflictError(DestinationError):
-    """Le nom cible existe sans sidecar cohérent (fichier étranger)."""
+    """The target exists without a coherent sidecar (foreign file)."""
 
 
 class ReplacementRequiredError(DestinationError):
-    """Une paire Pasteberth existante exige un remplacement explicite."""
+    """An existing Pasteberth pair requires explicit replacement."""
 
 
 class RetentionError(DestinationError):
-    """Au moins une suppression de rétention a échoué."""
+    """At least one retention deletion failed."""
 
     def __init__(self, failures: list[str]):
         self.failures = failures
-        super().__init__(f"{len(failures)} suppression(s) de rétention impossible(s)")
+        super().__init__(f"{len(failures)} retention deletion(s) failed")
 
 
 class Destination(ABC):
-    """Interface pragmatique : future SshDestination => mêmes méthodes."""
+    """Pragmatic interface: a future SshDestination uses the same methods."""
 
     @abstractmethod
     def save(
@@ -305,7 +336,7 @@ class Destination(ABC):
 
     @abstractmethod
     def list(self) -> list[StoredImage]:
-        """Historique, de la plus récente à la plus ancienne."""
+        """History, newest first."""
 
     @abstractmethod
     def delete(self, filename: str, *, allow_stale_sidecar: bool = False) -> None: ...
@@ -318,16 +349,19 @@ class Destination(ABC):
     ) -> StoredImage: ...
 
     @abstractmethod
+    def update_comment(self, filename: str, comment: str) -> StoredImage: ...
+
+    @abstractmethod
     def read(self, filename: str) -> bytes: ...
 
     @abstractmethod
     def open_read(self, filename: str):
-        """Ouvre un fichier géré pour une lecture maintenue sous verrou."""
+        """Open a managed file for a read held under the destination lock."""
         ...
 
     @abstractmethod
     def reference_path(self, filename: str) -> str:
-        """Chemin tel que le voit le harness (base de la référence)."""
+        """Path as seen by the harness (reference base)."""
 
 
 class LocalDestination(Destination):
@@ -367,20 +401,19 @@ class LocalDestination(Destination):
         bound = self._operation_directory.get()
         if bound is not None:
             if bound.closed:
-                raise DestinationError("handle de répertoire lié déjà fermé")
+                raise DestinationError("bound directory handle is already closed")
             return
-        # Feature: on n'inspecte plus les permissions ici — les répertoires
-        # partagés sont acceptés (avertissement au démarrage via config.py).
-        # Refuser au runtime casserait les zones partagées légitimes et
-        # pousserait à contourner la protection.
+        # Permissions are not inspected here: shared directories are accepted
+        # with a startup warning from config.py. Rejecting them at runtime would
+        # break legitimate shared zones and encourage bypassing protection.
         try:
             symlink = self._fs.first_symlink_component(self.directory)
         except (OSError, ValueError) as exc:
             raise DestinationError(
-                f"inspection impossible de {self.directory} : {exc}"
+                f"cannot inspect {self.directory}: {exc}"
             ) from exc
         if symlink is not None:
-            raise DestinationError(f"chemin zone symbolique refusé : {symlink}")
+            raise DestinationError(f"zone path contains a rejected symbolic link: {symlink}")
         directory = None
         try:
             directory = self._fs.open_directory(
@@ -392,16 +425,16 @@ class LocalDestination(Destination):
         except FileNotFoundError as exc:
             if self._directory_identity is not None:
                 raise DestinationError(
-                    f"répertoire de zone remplacé : {self.directory}"
+                    f"zone directory was replaced: {self.directory}"
                 ) from exc
             if not self.create_directory:
-                raise DestinationError(f"répertoire inexistant : {self.directory}") from exc
+                raise DestinationError(f"zone directory is missing: {self.directory}") from exc
             raise DestinationError(
-                f"impossible de créer {self.directory} : {exc}"
+                f"cannot create {self.directory}: {exc}"
             ) from exc
         except (OSError, ValueError, UnsupportedFilesystemError) as exc:
             raise DestinationError(
-                f"impossible d'ouvrir {self.directory} : {exc}"
+                f"cannot open {self.directory}: {exc}"
             ) from exc
         finally:
             if directory is not None:
@@ -414,7 +447,7 @@ class LocalDestination(Destination):
             return
         if directory.identity != expected:
             raise DestinationError(
-                f"répertoire de zone remplacé : {self.directory}"
+                f"zone directory was replaced: {self.directory}"
             )
 
     @contextmanager
@@ -435,7 +468,7 @@ class LocalDestination(Destination):
             raise
         except (OSError, UnsupportedFilesystemError) as exc:
             raise DestinationError(
-                f"verrouillage stable impossible de {self.directory} : {exc}"
+                f"cannot acquire stable lock for {self.directory}: {exc}"
             ) from exc
 
     @contextmanager
@@ -443,7 +476,7 @@ class LocalDestination(Destination):
         bound = self._operation_directory.get()
         if bound is not None:
             if bound.closed:
-                raise DestinationError("handle de répertoire lié déjà fermé")
+                raise DestinationError("bound directory handle is already closed")
             yield bound
             return
         self._ensure_dir()
@@ -454,7 +487,7 @@ class LocalDestination(Destination):
         except OSError as exc:
             if directory is not None:
                 directory.close()
-            raise DestinationError(f"ouverture impossible de {self.directory} : {exc}") from exc
+            raise DestinationError(f"cannot open {self.directory}: {exc}") from exc
         except BaseException:
             if directory is not None:
                 directory.close()
@@ -467,7 +500,7 @@ class LocalDestination(Destination):
 
     @contextmanager
     def operation_lock(self, *, exclusive: bool, blocking: bool = True):
-        """Verrouille les opérations même entre processus du même utilisateur."""
+        """Lock operations even between processes belonging to the same user."""
         try:
             with self._stable_operation_lock(
                 exclusive=exclusive,
@@ -486,13 +519,13 @@ class LocalDestination(Destination):
                             self._operation_directory.reset(token)
         except BusyError as exc:
             raise DestinationBusyError(
-                f"destination occupée : {self.directory}"
+                f"destination is busy: {self.directory}"
             ) from exc
         except DestinationError:
             raise
         except (OSError, UnsupportedFilesystemError) as exc:
             raise DestinationError(
-                f"verrouillage impossible de {self.directory} : {exc}"
+                f"cannot acquire lock for {self.directory}: {exc}"
             ) from exc
 
     def _open_file(self, directory: DirectoryHandle, name: str, mode: str = "rb") -> FileHandle:
@@ -502,7 +535,7 @@ class LocalDestination(Destination):
             and _persisted_filename(name[:-5])
         )
         if not valid_filename(name) and not is_sidecar_name and not _internal_marker_name(name):
-            raise DestinationError(f"nom de fichier invalide : {name!r}")
+            raise DestinationError(f"invalid filename: {name!r}")
         try:
             return self._fs.open_existing(directory, name, mode=mode)
         except FileNotFoundError:
@@ -510,7 +543,7 @@ class LocalDestination(Destination):
         except (DestinationError, UnsafeLinkError):
             raise
         except (OSError, UnsupportedFilesystemError) as exc:
-            raise DestinationError(f"ouverture impossible de {name!r} : {exc}") from exc
+            raise DestinationError(f"cannot open {name!r}: {exc}") from exc
 
     def _write_transaction_file(
         self,
@@ -518,9 +551,9 @@ class LocalDestination(Destination):
         name: str,
         transaction: dict,
     ) -> None:
-        """Publie un marqueur de transaction sans remplacer un nom existant."""
+        """Publish a transaction marker without replacing an existing name."""
         if not _internal_marker_name(name):
-            raise ValueError(f"nom de transaction invalide : {name!r}")
+            raise ValueError(f"invalid transaction name: {name!r}")
         temp_name = name.rsplit(".", 1)[0] + ".tmp"
         file_handle = None
         temp_identity = None
@@ -561,9 +594,9 @@ class LocalDestination(Destination):
         if value is None:
             return None
         if not isinstance(value, list) or len(value) != 2:
-            raise ValueError(f"identité de transaction invalide : {key}")
+            raise ValueError(f"invalid transaction identity: {key}")
         if any(isinstance(part, bool) or not isinstance(part, int) for part in value):
-            raise ValueError(f"identité de transaction invalide : {key}")
+            raise ValueError(f"invalid transaction identity: {key}")
         return (value[0], value[1])
 
     @staticmethod
@@ -573,62 +606,62 @@ class LocalDestination(Destination):
             _TXN_KEYS_WITHOUT_GUARDS,
             _TXN_KEYS_WITHOUT_META_GUARD,
         ):
-            raise ValueError("marqueur de transaction invalide")
+            raise ValueError("invalid transaction marker")
         raw = dict(raw)
         token = _txn_token(marker_name)
         if token is None or raw["version"] != 1 or raw["state"] not in ("prepared", "committed"):
-            raise ValueError("marqueur de transaction invalide")
+            raise ValueError("invalid transaction marker")
         if (
             (_TXN_MARKER_RE.fullmatch(marker_name) and raw["state"] != "prepared")
             or (_TXN_COMMIT_RE.fullmatch(marker_name) and raw["state"] != "committed")
         ):
-            raise ValueError("état de transaction incohérent")
+            raise ValueError("inconsistent transaction state")
         target = raw["target"]
         if not _persisted_filename(target):
-            raise ValueError("cible de transaction invalide")
+            raise ValueError("invalid transaction target")
         expected_names = {
             "data_backup": f".pbbackup-{token}.data",
             "meta_backup": f".pbbackup-{token}.json",
         }
         if any(raw[key] != value for key, value in expected_names.items()):
-            raise ValueError("fichiers de transaction incohérents")
+            raise ValueError("inconsistent transaction files")
         if not _DATA_TEMP_RE.fullmatch(raw["data_temp"]):
-            raise ValueError("temporaire de données invalide")
+            raise ValueError("invalid data temporary file")
         if not _META_TEMP_RE.fullmatch(raw["meta_temp"]):
-            raise ValueError("temporaire de sidecar invalide")
+            raise ValueError("invalid sidecar temporary file")
         if raw.get("data_guard") is not None:
             if raw["data_guard"] != f".pbtxn-guard-{token}.data":
-                raise ValueError("garde de données incohérente")
+                raise ValueError("inconsistent data guard")
         if raw.get("meta_guard") is not None:
             if raw["meta_guard"] != f".pbtxn-guard-{token}.json":
-                raise ValueError("garde de sidecar incohérente")
+                raise ValueError("inconsistent sidecar guard")
         raw.setdefault("data_guard", None)
         raw.setdefault("meta_guard", None)
         for key in ("target_identity", "meta_identity"):
             LocalDestination._transaction_identity(raw, key)
         for key in ("new_data_identity", "new_meta_identity"):
             if LocalDestination._transaction_identity(raw, key) is None:
-                raise ValueError(f"identité de transaction absente : {key}")
+                raise ValueError(f"missing transaction identity: {key}")
         return raw
 
     @staticmethod
     def _parse_delete_transaction(marker_name: str, raw: object) -> dict:
         if not isinstance(raw, dict) or set(raw) != _DELETE_KEYS:
-            raise ValueError("marqueur de suppression invalide")
+            raise ValueError("invalid deletion marker")
         token = _delete_token(marker_name)
         if token is None or raw["version"] != 1:
-            raise ValueError("marqueur de suppression invalide")
+            raise ValueError("invalid deletion marker")
         target = raw["target"]
         if not _persisted_filename(target):
-            raise ValueError("cible de suppression invalide")
+            raise ValueError("invalid deletion target")
         if (
             raw["data_trash"] != f".pbtrash-{token}.data"
             or raw["meta_trash"] != f".pbtrash-{token}.json"
         ):
-            raise ValueError("fichiers de suppression incohérents")
+            raise ValueError("inconsistent deletion files")
         for key in ("target_identity", "meta_identity"):
             if LocalDestination._transaction_identity(raw, key) is None:
-                raise ValueError(f"identité de suppression absente : {key}")
+                raise ValueError(f"missing deletion identity: {key}")
         return raw
 
     @staticmethod
@@ -639,19 +672,19 @@ class LocalDestination(Destination):
             _RENAME_KEYS_WITHOUT_META_GUARDS,
             _LEGACY_RENAME_KEYS,
         ):
-            raise ValueError("marqueur de renommage invalide")
+            raise ValueError("invalid rename marker")
         raw = dict(raw)
         token = _rename_token(marker_name)
         if token is None or raw["version"] != 1 or raw["state"] not in (
             "prepared",
             "committed",
         ):
-            raise ValueError("marqueur de renommage invalide")
+            raise ValueError("invalid rename marker")
         if (
             (_RENAME_MARKER_RE.fullmatch(marker_name) and raw["state"] != "prepared")
             or (_RENAME_COMMIT_RE.fullmatch(marker_name) and raw["state"] != "committed")
         ):
-            raise ValueError("état de renommage incohérent")
+            raise ValueError("inconsistent rename state")
         source = raw["source"]
         target = raw["target"]
         if (
@@ -659,33 +692,33 @@ class LocalDestination(Destination):
             or not _persisted_filename(target)
             or source == target
         ):
-            raise ValueError("noms de renommage invalides")
+            raise ValueError("invalid rename names")
         if raw["meta_backup"] != f".pbrename-backup-{token}.json":
-            raise ValueError("sauvegarde de renommage incohérente")
+            raise ValueError("inconsistent rename backup")
         if "data_backup" in raw:
             if raw["data_backup"] != f".pbrename-backup-{token}.data":
-                raise ValueError("sauvegarde de données incohérente")
+                raise ValueError("inconsistent data backup")
         else:
             # Markers created before the data backup was added remain
             # recoverable; they simply retain the old best-effort semantics.
             raw["data_backup"] = None
         if raw.get("data_guard") is not None:
             if raw["data_guard"] != f".pbrename-guard-{token}.data":
-                raise ValueError("garde de données incohérente")
+                raise ValueError("inconsistent data guard")
         if raw.get("meta_guard") is not None:
             if raw["meta_guard"] != f".pbrename-guard-{token}.json":
-                raise ValueError("garde de sidecar incohérente")
+                raise ValueError("inconsistent sidecar guard")
         if raw.get("meta_backup_guard") is not None:
             if raw["meta_backup_guard"] != f".pbrename-backup-{token}.guard.json":
-                raise ValueError("garde de sauvegarde de sidecar incohérente")
+                raise ValueError("inconsistent sidecar backup guard")
         raw.setdefault("data_guard", None)
         raw.setdefault("meta_guard", None)
         raw.setdefault("meta_backup_guard", None)
         if not _META_TEMP_RE.fullmatch(raw["meta_temp"]):
-            raise ValueError("temporaire de renommage invalide")
+            raise ValueError("invalid rename temporary file")
         for key in ("source_identity", "source_meta_identity", "new_meta_identity"):
             if LocalDestination._transaction_identity(raw, key) is None:
-                raise ValueError(f"identité de renommage absente : {key}")
+                raise ValueError(f"missing rename identity: {key}")
         return raw
 
     def _active_transaction_names(self, directory_fd: DirectoryHandle) -> set[str]:
@@ -694,7 +727,7 @@ class LocalDestination(Destination):
             entries = self._fs.entries(directory_fd)
         except OSError as exc:
             raise DestinationError(
-                f"lecture impossible de {self.directory} : {exc}"
+                f"cannot read {self.directory}: {exc}"
             ) from exc
         for entry in entries:
             try:
@@ -767,7 +800,7 @@ class LocalDestination(Destination):
         if info is None:
             return True
         if not info.is_regular:
-            raise DestinationError(f"fichier temporaire non régulier : {name!r}")
+            raise DestinationError(f"temporary file is not regular: {name!r}")
         if not self._fs.is_owned(info):
             return False
         actual = info.identity
@@ -830,17 +863,17 @@ class LocalDestination(Destination):
         expected: tuple[int, int],
     ) -> None:
         if self._entry_identity(directory_fd, source) != expected:
-            raise StorageConflictError(f"fichier modifié pendant l'opération : {source!r}")
+            raise StorageConflictError(f"file changed during operation: {source!r}")
         try:
             _rename_noreplace(directory_fd, source, target)
         except FileExistsError as exc:
-            raise StorageConflictError(f"cible apparue pendant l'opération : {target!r}") from exc
+            raise StorageConflictError(f"target appeared during operation: {target!r}") from exc
         actual = self._entry_identity_any(directory_fd, target)
         if actual == expected:
             return
         if actual is not None:
             self._restore_any(directory_fd, target, source, actual)
-        raise StorageConflictError(f"fichier étranger apparu pendant l'opération : {source!r}")
+        raise StorageConflictError(f"foreign file appeared during operation: {source!r}")
 
     def _link_expected(
         self,
@@ -849,17 +882,17 @@ class LocalDestination(Destination):
         target: str,
         expected: tuple[int, int],
     ) -> None:
-        """Crée un lien de sauvegarde sans remplacer une entrée concurrente."""
+        """Create a backup link without replacing a concurrent entry."""
         if self._entry_identity(directory_fd, source) != expected:
-            raise StorageConflictError(f"fichier modifié pendant l'opération : {source!r}")
+            raise StorageConflictError(f"file changed during operation: {source!r}")
         try:
             self._fs.link_expected(directory_fd, source, target, expected)
         except (EntryExistsError, FileExistsError) as exc:
-            raise StorageConflictError(f"cible apparue pendant l'opération : {target!r}") from exc
+            raise StorageConflictError(f"target appeared during operation: {target!r}") from exc
         except (EntryChangedError, UnsafeLinkError) as exc:
-            raise StorageConflictError(f"fichier modifié pendant l'opération : {source!r}") from exc
+            raise StorageConflictError(f"file changed during operation: {source!r}") from exc
         if self._entry_identity_any(directory_fd, target) != expected:
-            raise StorageConflictError(f"fichier étranger apparu pendant l'opération : {target!r}")
+            raise StorageConflictError(f"foreign file appeared during operation: {target!r}")
 
     def _restore_any(
         self,
@@ -882,7 +915,7 @@ class LocalDestination(Destination):
         name: str,
         expected: tuple[int, int] | None,
     ) -> bool:
-        """Retire une entrée en la déplaçant d'abord hors de son nom public."""
+        """Remove an entry by first moving it away from its public name."""
         try:
             actual = self._entry_identity(directory_fd, name)
         except DestinationError:
@@ -1049,7 +1082,7 @@ class LocalDestination(Destination):
         handles,
         candidates: tuple[tuple[str | None, tuple[int, int] | None], ...],
     ) -> set[str]:
-        """Rattache une copie privée au journal si une cible étrangère bloque la restauration."""
+        """Keep a private copy in the journal if a foreign target blocks recovery."""
         keep: set[str] = set()
         for candidate_name, expected in candidates:
             if candidate_name is None or expected is None:
@@ -1104,7 +1137,7 @@ class LocalDestination(Destination):
         directory_fd: int,
         *identities: tuple[int, int] | None,
     ) -> None:
-        """Retire les copies de récupération anonymes devenues inutiles."""
+        """Remove anonymous recovery copies that are no longer needed."""
         for identity in identities:
             if identity is None:
                 continue
@@ -1206,7 +1239,7 @@ class LocalDestination(Destination):
         transaction: dict,
         commit_name: str,
     ) -> None:
-        """Conserve un journal si la paire publique disparaît pendant cleanup."""
+        """Keep a journal if the public pair disappears during cleanup."""
         if self._entry_identity(directory_fd, commit_name) is not None:
             return
         committed = dict(transaction)
@@ -1219,7 +1252,7 @@ class LocalDestination(Destination):
         transaction: dict,
         marker_name: str,
     ) -> None:
-        """Conserve un journal préparé tant qu'une ancienne paire reste cachée."""
+        """Keep a prepared journal while an old pair remains hidden."""
         if self._entry_identity(directory_fd, marker_name) is not None:
             return
         for name, key in (
@@ -1240,7 +1273,7 @@ class LocalDestination(Destination):
         transaction: dict,
         marker_name: str,
     ) -> None:
-        """Conserve un tombstone si une paire publique est devenue étrangère."""
+        """Keep a tombstone if a public pair became foreign."""
         if self._entry_identity(directory_fd, marker_name) is not None:
             return
         for name, key in (
@@ -1261,7 +1294,7 @@ class LocalDestination(Destination):
         transaction: dict,
         marker_name: str,
     ) -> None:
-        """Conserve le journal d'annulation avec une copie de la source."""
+        """Keep the rollback journal with a copy of the source."""
         if self._entry_identity(directory_fd, marker_name) is not None:
             return
         source_identity = self._transaction_identity(transaction, "source_identity")
@@ -1418,7 +1451,7 @@ class LocalDestination(Destination):
             try:
                 self._preserve_delete_transaction(directory_fd, transaction, marker_name)
             except (DestinationError, OSError):
-                log.warning("tombstone de suppression impossible à conserver : %s", marker_name)
+                log.warning("cannot preserve deletion tombstone: %s", marker_name)
         closed = self._close_recovery_handles(
             directory_fd,
             recovery_handles,
@@ -1446,7 +1479,7 @@ class LocalDestination(Destination):
             try:
                 self._preserve_delete_transaction(directory_fd, transaction, marker_name)
             except (DestinationError, OSError):
-                log.warning("tombstone de suppression impossible à conserver : %s", marker_name)
+                log.warning("cannot preserve deletion tombstone: %s", marker_name)
         if complete:
             self._remove_anonymous_recovery(
                 directory_fd,
@@ -1526,7 +1559,7 @@ class LocalDestination(Destination):
                     self._read_meta(directory_fd, entry.name),
                 )
             except (DestinationError, ValueError, TypeError, KeyError):
-                log.warning("marqueur de suppression invalide, conservé : %s", entry.name)
+                log.warning("invalid deletion marker, preserved: %s", entry.name)
                 continue
             protected.update(
                 {
@@ -1538,9 +1571,9 @@ class LocalDestination(Destination):
             )
             try:
                 if not self._finish_delete_transaction(directory_fd, transaction, entry.name):
-                    log.warning("récupération de suppression différée : %s", entry.name)
+                    log.warning("deferred deletion recovery: %s", entry.name)
             except (DestinationError, OSError):
-                log.warning("récupération de suppression impossible : %s", entry.name)
+                log.warning("deletion recovery failed: %s", entry.name)
         return protected
 
     def _rollback_rename_transaction(
@@ -1549,7 +1582,7 @@ class LocalDestination(Destination):
         transaction: dict,
         marker_name: str,
     ) -> bool:
-        """Annule un renommage préparé sans écraser une entrée étrangère."""
+        """Roll back a prepared rename without overwriting a foreign entry."""
         source = transaction["source"]
         target = transaction["target"]
         source_meta = source + ".json"
@@ -1745,7 +1778,7 @@ class LocalDestination(Destination):
             try:
                 self._preserve_prepared_rename(directory_fd, transaction, marker_name)
             except (DestinationError, OSError):
-                log.warning("journal de renommage impossible à conserver : %s", marker_name)
+                log.warning("cannot preserve rename journal: %s", marker_name)
         if not self._rename_source_pair_is_intact(directory_fd, transaction):
             recovery_to_keep.update(
                 self._retain_recovery_candidates(
@@ -1782,7 +1815,7 @@ class LocalDestination(Destination):
             try:
                 self._preserve_prepared_rename(directory_fd, transaction, marker_name)
             except (DestinationError, OSError):
-                log.warning("journal de renommage impossible à conserver : %s", marker_name)
+                log.warning("cannot preserve rename journal: %s", marker_name)
         if complete:
             self._remove_anonymous_recovery(
                 directory_fd,
@@ -1861,7 +1894,7 @@ class LocalDestination(Destination):
                         commit_name,
                     )
                 except (DestinationError, OSError):
-                    log.warning("journal de renommage impossible à conserver : %s", commit_name)
+                    log.warning("cannot preserve rename journal: %s", commit_name)
             closed = self._close_recovery_handles(
                 directory_fd,
                 recovery_handles,
@@ -1884,7 +1917,7 @@ class LocalDestination(Destination):
                         commit_name,
                     )
                 except (DestinationError, OSError):
-                    log.warning("journal de renommage impossible à conserver : %s", commit_name)
+                    log.warning("cannot preserve rename journal: %s", commit_name)
         return result
 
     def _cleanup_committed_rename_body(
@@ -1894,7 +1927,7 @@ class LocalDestination(Destination):
         marker_name: str,
         commit_name: str,
     ) -> bool:
-        """Supprime les artefacts d'un renommage durablement publié."""
+        """Remove artifacts from a durably published rename."""
         target = transaction["target"]
         source = transaction["source"]
         data_backup = transaction.get("data_backup")
@@ -2049,7 +2082,7 @@ class LocalDestination(Destination):
                     self._read_meta(directory_fd, entry.name),
                 )
             except (DestinationError, ValueError, TypeError, KeyError):
-                log.warning("marqueur de renommage invalide, conservé : %s", entry.name)
+                log.warning("invalid rename marker, preserved: %s", entry.name)
                 continue
             protected.update(
                 {
@@ -2083,9 +2116,9 @@ class LocalDestination(Destination):
                     marker_name,
                     commit_name,
                 ):
-                    log.warning("nettoyage de renommage différé : %s", commit_name)
+                    log.warning("deferred rename cleanup: %s", commit_name)
             except (DestinationError, OSError):
-                log.warning("récupération de renommage validée impossible : %s", commit_name)
+                log.warning("committed rename recovery failed: %s", commit_name)
 
         for token, (marker_name, transaction) in markers.items():
             if token in commits:
@@ -2094,9 +2127,9 @@ class LocalDestination(Destination):
                 if not self._rollback_rename_transaction(
                     directory_fd, transaction, marker_name
                 ):
-                    log.warning("annulation de renommage différée : %s", marker_name)
+                    log.warning("deferred rename rollback: %s", marker_name)
             except (DestinationError, OSError):
-                log.warning("annulation de renommage impossible : %s", marker_name)
+                log.warning("rename rollback failed: %s", marker_name)
         return protected
 
     def _rollback_transaction(self, directory_fd: int, transaction: dict, marker_name: str) -> bool:
@@ -2246,7 +2279,7 @@ class LocalDestination(Destination):
             try:
                 self._preserve_prepared_transaction(directory_fd, transaction, marker_name)
             except (DestinationError, OSError):
-                log.warning("journal de transaction impossible à conserver : %s", marker_name)
+                log.warning("cannot preserve transaction journal: %s", marker_name)
         closed = self._close_recovery_handles(
             directory_fd,
             recovery_handles,
@@ -2268,7 +2301,7 @@ class LocalDestination(Destination):
             try:
                 self._preserve_prepared_transaction(directory_fd, transaction, marker_name)
             except (DestinationError, OSError):
-                log.warning("journal de transaction impossible à conserver : %s", marker_name)
+                log.warning("cannot preserve transaction journal: %s", marker_name)
         if complete:
             self._remove_anonymous_recovery(
                 directory_fd,
@@ -2347,7 +2380,7 @@ class LocalDestination(Destination):
                         commit_name,
                     )
                 except (DestinationError, OSError):
-                    log.warning("journal de transaction impossible à conserver : %s", commit_name)
+                    log.warning("cannot preserve transaction journal: %s", commit_name)
             closed = self._close_recovery_handles(
                 directory_fd,
                 recovery_handles,
@@ -2370,7 +2403,7 @@ class LocalDestination(Destination):
                         commit_name,
                     )
                 except (DestinationError, OSError):
-                    log.warning("journal de transaction impossible à conserver : %s", commit_name)
+                    log.warning("cannot preserve transaction journal: %s", commit_name)
         return result
 
     def _cleanup_committed_transaction_body(
@@ -2511,7 +2544,7 @@ class LocalDestination(Destination):
                 raw = self._read_meta(directory_fd, entry.name)
                 transaction = self._parse_transaction(entry.name, raw)
             except (DestinationError, ValueError, TypeError, KeyError):
-                log.warning("marqueur de transaction invalide, conservé : %s", entry.name)
+                log.warning("invalid transaction marker, preserved: %s", entry.name)
                 continue
             for key in (
                 "data_temp",
@@ -2540,7 +2573,7 @@ class LocalDestination(Destination):
                     commit_name,
                 )
             except (DestinationError, OSError):
-                log.warning("récupération de transaction validée impossible : %s", commit_name)
+                log.warning("committed transaction recovery failed: %s", commit_name)
 
         for token, (marker_name, transaction) in markers.items():
             if token in commits:
@@ -2548,20 +2581,20 @@ class LocalDestination(Destination):
             try:
                 self._rollback_transaction(directory_fd, transaction, marker_name)
             except (DestinationError, OSError):
-                log.warning("annulation de transaction impossible : %s", marker_name)
+                log.warning("transaction rollback failed: %s", marker_name)
         return protected
 
     def _fsync_directory(self, directory_fd: DirectoryHandle) -> None:
         try:
             self._fs.flush_directory(directory_fd)
         except (OSError, UnsupportedFilesystemError) as exc:
-            raise DestinationError(f"synchronisation du répertoire impossible : {exc}") from exc
+            raise DestinationError(f"cannot synchronize directory: {exc}") from exc
 
     def _meta_name(self, filename: str) -> str:
         return filename + ".json"
 
     def _read_meta(self, directory_fd: DirectoryHandle, name: str) -> dict:
-        """Lit un sidecar depuis un descripteur, avec une taille bornée."""
+        """Read a sidecar from a descriptor within a fixed size bound."""
         try:
             with self._open_file(directory_fd, name, "rb") as fh:
                 encoded = fh.read(_MAX_META_BYTES + 1)
@@ -2570,15 +2603,15 @@ class LocalDestination(Destination):
         except DestinationError:
             raise
         except OSError as exc:
-            raise DestinationError(f"lecture impossible du sidecar {name!r}") from exc
+            raise DestinationError(f"cannot read sidecar {name!r}") from exc
         if len(encoded) > _MAX_META_BYTES:
-            raise DestinationError(f"sidecar trop volumineux : {name!r}")
+            raise DestinationError(f"sidecar is too large: {name!r}")
         try:
             raw = json.loads(encoded.decode("utf-8"))
         except (UnicodeError, ValueError, RecursionError) as exc:
-            raise DestinationError(f"sidecar illisible : {name!r}") from exc
+            raise DestinationError(f"sidecar is unreadable: {name!r}") from exc
         if not isinstance(raw, dict):
-            raise DestinationError(f"sidecar invalide : {name!r}")
+            raise DestinationError(f"invalid sidecar: {name!r}")
         return raw
 
     @staticmethod
@@ -2587,12 +2620,12 @@ class LocalDestination(Destination):
         filename: str,
         actual_size: int | None = None,
     ) -> StoredImage:
-        """Valide un sidecar avant toute lecture, suppression ou remplacement."""
+        """Validate a sidecar before any read, deletion, or replacement."""
         if not _meta_keys_ok(raw) or raw.get("filename") != filename:
-            raise ValueError("sidecar incohérent")
+            raise ValueError("inconsistent sidecar")
         created_at = datetime.fromisoformat(raw["created_at"])
         if created_at.tzinfo is None or created_at.utcoffset() is None:
-            raise ValueError("date sans fuseau")
+            raise ValueError("date has no timezone")
         created_at = created_at.astimezone(timezone.utc)
         width = raw["width"]
         height = raw["height"]
@@ -2600,7 +2633,7 @@ class LocalDestination(Destination):
         fmt = raw["format"]
         kind = raw.get("kind", "image")
         if kind not in ("image", "text", "binary"):
-            raise ValueError("kind invalide")
+            raise ValueError("invalid kind")
         mime = raw.get("mime")
         if mime is None:
             mime = mime_for(fmt) if kind == "image" else "application/octet-stream"
@@ -2609,35 +2642,36 @@ class LocalDestination(Destination):
             or not _MIME_RE.fullmatch(mime)
             or len(mime) > MAX_MIME_LENGTH
         ):
-            raise ValueError("mime invalide")
+            raise ValueError("invalid MIME type")
         if isinstance(size, bool) or not isinstance(size, int):
-            raise ValueError("types numériques invalides")
+            raise ValueError("invalid numeric types")
         if kind == "image":
             if any(isinstance(v, bool) or not isinstance(v, int) for v in (width, height)):
-                raise ValueError("types numériques invalides")
+                raise ValueError("invalid numeric types")
             if not (1 <= width <= MAX_DIMENSION and 1 <= height <= MAX_DIMENSION):
-                raise ValueError("dimensions invalides")
+                raise ValueError("invalid dimensions")
             if width * height > HARD_MAX_PIXELS:
-                raise ValueError("métadonnées incohérentes")
+                raise ValueError("inconsistent metadata")
             if fmt not in FORMATS:
-                raise ValueError("format invalide")
+                raise ValueError("invalid format")
             if mime != mime_for(fmt):
-                raise ValueError("mime image incohérent")
+                raise ValueError("inconsistent image MIME type")
         elif kind == "text":
             if width is not None or height is not None or fmt is not None:
-                raise ValueError("dimensions ou format inattendus")
+                raise ValueError("unexpected dimensions or format")
             if not (mime.startswith("text/") or mime in _TEXT_MIMES):
-                raise ValueError("mime texte invalide")
+                raise ValueError("invalid text MIME type")
         else:
             if width is not None or height is not None:
-                raise ValueError("dimensions inattendues")
+                raise ValueError("unexpected dimensions")
             if fmt is not None:
-                raise ValueError("format inattendu")
+                raise ValueError("unexpected format")
             if mime != "application/octet-stream":
-                raise ValueError("mime binaire invalide")
+                raise ValueError("invalid binary MIME type")
         if size < 0 or (actual_size is not None and size != actual_size):
-            raise ValueError("métadonnées incohérentes")
-        return StoredImage(filename, created_at, width, height, size, fmt, kind, mime)
+            raise ValueError("inconsistent metadata")
+        comment = validate_comment(raw.get("comment", ""))
+        return StoredImage(filename, created_at, width, height, size, fmt, kind, mime, comment)
 
     def _require_owned(
         self,
@@ -2646,9 +2680,9 @@ class LocalDestination(Destination):
         *,
         allow_stale_sidecar: bool = False,
     ) -> tuple[FileHandle, tuple[int, int]]:
-        """N'opère que sur un fichier avec sidecar régulier présent."""
+        """Operate only on a file with a present regular sidecar."""
         if not valid_filename(filename):
-            raise DestinationError(f"nom de fichier invalide : {filename!r}")
+            raise DestinationError(f"invalid filename: {filename!r}")
         meta_name = self._meta_name(filename)
         file_handle = None
         try:
@@ -2658,22 +2692,22 @@ class LocalDestination(Destination):
             meta_identity = self._entry_identity(directory_fd, meta_name)
             raw = self._read_meta(directory_fd, meta_name)
             if self._entry_identity(directory_fd, meta_name) != meta_identity:
-                raise StorageConflictError(f"sidecar modifié pendant l'opération : {filename!r}")
+                raise StorageConflictError(f"sidecar changed during operation: {filename!r}")
             item = self._validated_item(raw, filename)
             if not allow_stale_sidecar and file_handle.size != item.size:
-                raise ValueError("taille incohérente")
+                raise ValueError("inconsistent size")
             file_handle.seek(0)
             if meta_identity is None:
-                raise UnknownImageError(f"fichier inconnu de Pasteberth : {filename!r}")
+                raise UnknownImageError(f"unknown Pasteberth file: {filename!r}")
             return file_handle, meta_identity
         except FileNotFoundError as exc:
             if file_handle is not None and not file_handle.closed:
                 file_handle.close()
-            raise UnknownImageError(f"fichier inconnu de Pasteberth : {filename!r}") from exc
+            raise UnknownImageError(f"unknown Pasteberth file: {filename!r}") from exc
         except (DestinationError, OSError, TypeError, ValueError, KeyError) as exc:
             if file_handle is not None and not file_handle.closed:
                 file_handle.close()
-            raise DestinationError(f"sidecar illisible pour {filename!r}") from exc
+            raise DestinationError(f"sidecar is unreadable for {filename!r}") from exc
 
     def _generate_name(self, ext: str) -> str:
         stamp = datetime.now().astimezone().strftime("%Y-%m-%d_%H-%M-%S")
@@ -2684,7 +2718,7 @@ class LocalDestination(Destination):
         temp_name = self._write_meta_temp(directory_fd, meta)
         temp_identity = self._entry_identity(directory_fd, temp_name)
         if temp_identity is None:
-            raise DestinationError(f"sidecar temporaire disparu : {target!r}")
+            raise DestinationError(f"temporary sidecar disappeared: {target!r}")
         try:
             self._move_expected(directory_fd, temp_name, target, temp_identity)
             self._fsync_directory(directory_fd)
@@ -2760,10 +2794,10 @@ class LocalDestination(Destination):
         temp_name: str,
         target_name: str,
     ) -> None:
-        """Installe un fichier temporaire sans remplacer une création concurrente."""
+        """Install a temporary file without replacing a concurrent creation."""
         expected = self._entry_identity(directory_fd, temp_name)
         if expected is None:
-            raise DestinationError(f"temporaire disparu pendant l'écriture : {target_name!r}")
+            raise DestinationError(f"temporary file disappeared during write: {target_name!r}")
         self._move_expected(directory_fd, temp_name, target_name, expected)
 
     @staticmethod
@@ -2773,7 +2807,7 @@ class LocalDestination(Destination):
         except FileNotFoundError:
             return False
         except (OSError, UnsupportedFilesystemError) as exc:
-            raise DestinationError(f"inspection impossible de {name!r} : {exc}") from exc
+            raise DestinationError(f"cannot inspect {name!r}: {exc}") from exc
         # Occupied symlinks and non-regular entries are foreign conflicts too;
         # callers must not try to open or replace them.
         return info is not None
@@ -2788,7 +2822,7 @@ class LocalDestination(Destination):
         except FileNotFoundError:
             return None
         except (OSError, UnsupportedFilesystemError) as exc:
-            raise DestinationError(f"inspection impossible de {name!r} : {exc}") from exc
+            raise DestinationError(f"cannot inspect {name!r}: {exc}") from exc
 
     @staticmethod
     def _stored_item_and_meta(
@@ -2816,6 +2850,7 @@ class LocalDestination(Destination):
             "format": stored.fmt,
             "kind": stored.kind,
             "mime": stored.mime,
+            "comment": stored.comment,
         }
 
     def _adopt_named(
@@ -2825,7 +2860,7 @@ class LocalDestination(Destination):
         info: ImageInfo,
         filename: str,
     ) -> StoredImage:
-        """Ajoute le sidecar d'un fichier existant sans réécrire ses données."""
+        """Add a sidecar for an existing file without rewriting its data."""
         meta_name = self._meta_name(filename)
         file_handle = None
         try:
@@ -2833,27 +2868,27 @@ class LocalDestination(Destination):
             target_identity = file_handle.identity
             if file_handle.size != len(data):
                 raise StorageConflictError(
-                    f"fichier modifié pendant l'adoption : {filename!r}"
+                    f"file changed during adoption: {filename!r}"
                 )
             file_handle.seek(0)
             offset = 0
             while chunk := file_handle.read(1024 * 1024):
                 if data[offset:offset + len(chunk)] != chunk:
                     raise StorageConflictError(
-                        f"fichier modifié pendant l'adoption : {filename!r}"
+                        f"file changed during adoption: {filename!r}"
                     )
                 offset += len(chunk)
             if offset != len(data):
                 raise StorageConflictError(
-                    f"fichier modifié pendant l'adoption : {filename!r}"
+                    f"file changed during adoption: {filename!r}"
                 )
             if self._entry_identity(directory_fd, filename) != target_identity:
                 raise StorageConflictError(
-                    f"fichier modifié pendant l'adoption : {filename!r}"
+                    f"file changed during adoption: {filename!r}"
                 )
             if self._entry_exists(directory_fd, meta_name):
                 raise StorageConflictError(
-                    f"sidecar apparu pendant l'adoption : {filename!r}"
+                    f"sidecar appeared during adoption: {filename!r}"
                 )
 
             stored, meta = self._stored_item_and_meta(data, info, filename)
@@ -2861,7 +2896,7 @@ class LocalDestination(Destination):
             meta_identity = self._entry_identity(directory_fd, meta_name)
             if meta_identity is None:
                 raise StorageConflictError(
-                    f"sidecar disparu pendant l'adoption : {filename!r}"
+                    f"sidecar disappeared during adoption: {filename!r}"
                 )
             try:
                 target_still_matches = (
@@ -2872,16 +2907,16 @@ class LocalDestination(Destination):
             if not target_still_matches:
                 self._remove_expected(directory_fd, meta_name, meta_identity)
                 raise StorageConflictError(
-                    f"fichier modifié pendant l'adoption : {filename!r}"
+                    f"file changed during adoption: {filename!r}"
                 )
             return stored
         except FileNotFoundError as exc:
             raise StorageConflictError(
-                f"fichier disparu pendant l'adoption : {filename!r}"
+                f"file disappeared during adoption: {filename!r}"
             ) from exc
         except UnsafeLinkError as exc:
             raise StorageConflictError(
-                f"fichier étranger non régulier : {filename!r}"
+                f"foreign file is not regular: {filename!r}"
             ) from exc
         finally:
             if file_handle is not None and not file_handle.closed:
@@ -2900,7 +2935,7 @@ class LocalDestination(Destination):
         meta_name = self._meta_name(filename)
         if filename in self._active_transaction_names(directory_fd):
             raise StorageConflictError(
-                f"transaction en cours pour le nom : {filename!r}"
+                f"transaction in progress for filename: {filename!r}"
             )
         target_exists = self._entry_exists(directory_fd, filename)
         meta_exists = self._entry_exists(directory_fd, meta_name)
@@ -2909,13 +2944,13 @@ class LocalDestination(Destination):
         if target_exists and not meta_exists:
             if adopt_existing:
                 return self._adopt_named(directory_fd, data, info, filename)
-            # Fichier étranger : jamais écrasé, conflit côté client (409).
+            # Foreign file: never overwrite it; expose a client conflict (409).
             raise StorageConflictError(
-                f"fichier etranger present sans sidecar : {filename!r}"
+                f"foreign file present without sidecar: {filename!r}"
             )
         if meta_exists and not target_exists:
-            # Sidecar orphelin : état interne incohérent, pas un conflit client.
-            raise DestinationError(f"sidecar orphelin sans fichier : {filename!r}")
+            # Orphan sidecar: inconsistent internal state, not a client conflict.
+            raise DestinationError(f"orphan sidecar without file: {filename!r}")
         if target_exists:
             try:
                 owned_file, meta_identity = self._require_owned(directory_fd, filename)
@@ -2923,7 +2958,7 @@ class LocalDestination(Destination):
                 # A target with a malformed or stale sidecar is not a managed
                 # replacement candidate. Keep it intact and expose a conflict.
                 raise StorageConflictError(
-                    f"fichier et sidecar incohérents : {filename!r}"
+                    f"inconsistent file and sidecar: {filename!r}"
                 ) from exc
             try:
                 target_identity = owned_file.identity
@@ -2931,7 +2966,7 @@ class LocalDestination(Destination):
                 owned_file.close()
             if not allow_replace:
                 raise ReplacementRequiredError(
-                    f"remplacement explicite requis pour {filename!r}"
+                    f"explicit replacement required for {filename!r}"
                 )
 
         stored, meta = self._stored_item_and_meta(data, info, filename)
@@ -2960,7 +2995,7 @@ class LocalDestination(Destination):
                         self._remove_expected(directory_fd, temp_name, expected)
                 except (DestinationError, OSError):
                     pass
-            raise StorageConflictError(f"fichier cible ou sidecar disparu : {filename!r}")
+            raise StorageConflictError(f"target file or sidecar disappeared: {filename!r}")
         new_data_identity = data_temp_identity
         new_meta_identity = meta_temp_identity
         if new_data_identity is None or new_meta_identity is None:
@@ -2971,7 +3006,7 @@ class LocalDestination(Destination):
                         self._remove_expected(directory_fd, temp_name, expected)
                 except (DestinationError, OSError):
                     pass
-            raise DestinationError(f"temporaires de remplacement disparus : {filename!r}")
+            raise DestinationError(f"replacement temporary files disappeared: {filename!r}")
         token = secrets.token_hex(12)
         marker_name = f".pbtxn-{token}.json"
         transaction = {
@@ -3089,25 +3124,25 @@ class LocalDestination(Destination):
                         transaction,
                     ):
                         raise DestinationError(
-                            "remplacement publié mais cible non vérifiée; "
-                            "nettoyage différé"
+                            "replacement published but target was not verified; "
+                            "cleanup deferred"
                         )
                 except (DestinationError, OSError) as exc:
                     if not self._transaction_public_pair_is_intact(directory_fd, transaction):
                         raise DestinationError(
-                            "remplacement publié mais nettoyage différé"
+                            "replacement published but cleanup deferred"
                         ) from exc
                     # The replacement is published; only private cleanup is
                     # deferred when the public pair remains intact.
-                    log.warning("nettoyage de transaction différé : %s", marker_name)
+                    log.warning("deferred transaction cleanup: %s", marker_name)
             return stored
         except BaseException:
             if transaction is not None and marker_name is not None and not commit_published:
                 try:
                     if not self._rollback_transaction(directory_fd, transaction, marker_name):
-                        log.warning("annulation de transaction différée : %s", marker_name)
+                        log.warning("deferred transaction rollback: %s", marker_name)
                 except (DestinationError, OSError):
-                    log.exception("annulation de transaction impossible : %s", marker_name)
+                    log.exception("transaction rollback failed: %s", marker_name)
             if not commit_published:
                 for temp_name in (data_temp, meta_temp):
                     try:
@@ -3135,9 +3170,9 @@ class LocalDestination(Destination):
                 total = native.total_bytes
                 available = native.available_bytes
         except (OSError, UnsupportedFilesystemError) as exc:
-            raise DestinationError(f"mesure de l'espace libre impossible : {exc}") from exc
+            raise DestinationError(f"cannot measure free space: {exc}") from exc
         if total <= 0:
-            raise DestinationError("filesystem sans capacité mesurable")
+            raise DestinationError("filesystem has no measurable capacity")
         return SpaceInfo(total, available)
 
     @property
@@ -3146,7 +3181,7 @@ class LocalDestination(Destination):
             with self._directory_fd() as directory_fd:
                 return self._fs.volume_identity(directory_fd)
         except (OSError, UnsupportedFilesystemError) as exc:
-            raise DestinationError(f"mesure du filesystem impossible : {exc}") from exc
+            raise DestinationError(f"cannot measure filesystem: {exc}") from exc
 
     def ensure_space(self, incoming_bytes: int, minimum_percent: float) -> None:
         info = self.space_info()
@@ -3156,16 +3191,16 @@ class LocalDestination(Destination):
         if info.available_bytes < required or remaining < minimum_bytes:
             raise StorageLowError(info, minimum_percent)
 
-    # -- réconciliation ----------------------------------------------------
+    # -- reconciliation ----------------------------------------------------
 
     def reconcile(self) -> None:
-        """Réconcilie les fichiers de travail anciens issus d'un crash."""
+        """Reconcile old work files left by a crash."""
         with self._directory_fd() as directory_fd:
             try:
                 entries = self._fs.entries(directory_fd)
             except (OSError, UnsupportedFilesystemError) as exc:
                 raise DestinationError(
-                    f"lecture impossible de {self.directory} : {exc}"
+                    f"cannot read {self.directory}: {exc}"
                 ) from exc
             protected = self._recover_transactions(directory_fd, entries)
             protected.update(self._recover_deletions(directory_fd, entries))
@@ -3190,7 +3225,7 @@ class LocalDestination(Destination):
                 ):
                     continue
                 log.warning(
-                    "fichier de travail interne sans transaction conservé : %s",
+                    "internal work file without transaction preserved: %s",
                     entry.name,
                 )
 
@@ -3208,7 +3243,7 @@ class LocalDestination(Destination):
         self._ensure_dir()
         if filename is not None:
             if not valid_filename(filename):
-                raise DestinationError(f"nom de fichier invalide : {filename!r}")
+                raise DestinationError(f"invalid filename: {filename!r}")
             with self._directory_fd() as directory_fd:
                 return self._save_named(
                     directory_fd,
@@ -3237,7 +3272,7 @@ class LocalDestination(Destination):
                     # report conflicts to their caller.
                     last_exc = exc
                     continue
-        raise DestinationError(f"génération de nom en collision répétée ({last_exc})")
+        raise DestinationError(f"repeated filename-generation collision ({last_exc})")
 
     def list(self) -> list[StoredImage]:
         self._ensure_dir()
@@ -3247,7 +3282,7 @@ class LocalDestination(Destination):
                 entries = sorted(self._fs.entries(directory_fd), key=lambda e: e.name)
             except (OSError, UnsupportedFilesystemError) as exc:
                 raise DestinationError(
-                    f"lecture impossible de {self.directory} : {exc}"
+                    f"cannot read {self.directory}: {exc}"
                 ) from exc
             blocked_targets: set[str] = set()
             committed_targets: set[str] = set()
@@ -3311,8 +3346,8 @@ class LocalDestination(Destination):
                     continue
             blocked_targets.difference_update(committed_targets)
             for entry in entries:
-                # Les noms à point des fichiers déposés sont légitimes ; les
-                # fichiers de travail internes ne sont pas des sidecars.
+                # Dotted names for dropped files are legitimate; internal work
+                # files are not sidecars.
                 if (
                     not entry.name.endswith(".json")
                     or entry.name == ".pasteberth.lock"
@@ -3325,25 +3360,25 @@ class LocalDestination(Destination):
                 try:
                     raw = self._read_meta(directory_fd, entry.name)
                 except (OSError, DestinationError):
-                    log.warning("sidecar illisible, ignoré : %s", entry.name)
+                    log.warning("sidecar unreadable, ignored: %s", entry.name)
                     continue
                 if not _meta_keys_ok(raw):
-                    log.warning("sidecar invalide, ignoré : %s", entry.name)
+                    log.warning("invalid sidecar, ignored: %s", entry.name)
                     continue
                 filename = raw.get("filename")
                 if not valid_filename(filename) or entry.name != filename + ".json":
-                    log.warning("sidecar incohérent, ignoré : %s", entry.name)
+                    log.warning("inconsistent sidecar, ignored: %s", entry.name)
                     continue
                 if filename in blocked_targets:
-                    log.warning("transaction active, élément ignoré : %s", filename)
+                    log.warning("transaction active, item ignored: %s", filename)
                     continue
                 try:
                     image_file = self._open_file(directory_fd, filename, "rb")
                 except FileNotFoundError:
-                    log.warning("sidecar orphelin conservé : %s", entry.name)
+                    log.warning("orphan sidecar preserved: %s", entry.name)
                     continue
                 except (OSError, DestinationError):
-                    log.warning("image liée au sidecar illisible, ignorée : %s", entry.name)
+                    log.warning("file linked to sidecar is unreadable, ignored: %s", entry.name)
                     continue
                 try:
                     actual_size = image_file.size
@@ -3352,7 +3387,7 @@ class LocalDestination(Destination):
                 try:
                     item = self._validated_item(raw, filename, actual_size)
                 except (TypeError, ValueError, KeyError):
-                    log.warning("métadonnées invalides, ignorées : %s", entry.name)
+                    log.warning("invalid metadata, ignored: %s", entry.name)
                     continue
                 items.append(item)
 
@@ -3360,16 +3395,16 @@ class LocalDestination(Destination):
         return items
 
     def rename(self, source: str, target: str) -> StoredImage:
-        """Renomme une paire gérée sans jamais remplacer une cible."""
+        """Rename a managed pair without ever replacing a target."""
         if not valid_filename(source) or not valid_filename(target):
-            raise DestinationError("nom de fichier invalide")
+            raise DestinationError("invalid filename")
         if source == target:
-            raise DestinationError("les noms source et cible sont identiques")
+            raise DestinationError("source and target names are identical")
 
         with self._directory_fd() as directory_fd:
             active_names = self._active_transaction_names(directory_fd)
             if source in active_names or target in active_names:
-                raise StorageConflictError("transaction en cours sur le renommage")
+                raise StorageConflictError("rename transaction in progress")
             owned_file, source_meta_identity = self._require_owned(directory_fd, source)
             try:
                 source_identity = owned_file.identity
@@ -3378,20 +3413,20 @@ class LocalDestination(Destination):
             finally:
                 owned_file.close()
             if source_meta_identity is None:
-                raise StorageConflictError(f"sidecar disparu : {source!r}")
+                raise StorageConflictError(f"sidecar disappeared: {source!r}")
 
             target_meta = self._meta_name(target)
             if self._entry_exists(directory_fd, target) or self._entry_exists(
                 directory_fd, target_meta
             ):
-                raise StorageConflictError(f"cible déjà existante : {target!r}")
+                raise StorageConflictError(f"target already exists: {target!r}")
 
             new_meta = dict(raw)
             new_meta["filename"] = target
             meta_temp = self._write_meta_temp(directory_fd, new_meta)
             new_meta_identity = self._entry_identity(directory_fd, meta_temp)
             if new_meta_identity is None:
-                raise DestinationError(f"sidecar temporaire disparu : {target_meta!r}")
+                raise DestinationError(f"temporary sidecar disappeared: {target_meta!r}")
 
             token = secrets.token_hex(12)
             marker_name = f".pbrename-{token}.json"
@@ -3482,14 +3517,14 @@ class LocalDestination(Destination):
                         transaction,
                     ):
                         raise DestinationError(
-                            "renommage publié mais cible non vérifiée; "
-                            "nettoyage différé"
+                            "rename published but target was not verified; "
+                            "cleanup deferred"
                         )
                 except (DestinationError, OSError) as exc:
-                    log.warning("nettoyage de renommage différé : %s", marker_name)
+                    log.warning("deferred rename cleanup: %s", marker_name)
                     if not self._rename_public_pair_is_intact(directory_fd, transaction):
                         raise DestinationError(
-                            "renommage publié mais nettoyage différé"
+                            "rename published but cleanup deferred"
                         ) from exc
                 return StoredImage(
                     target,
@@ -3500,6 +3535,7 @@ class LocalDestination(Destination):
                     item.fmt,
                     item.kind,
                     item.mime,
+                    item.comment,
                 )
             except BaseException:
                 if not commit_published:
@@ -3507,9 +3543,9 @@ class LocalDestination(Destination):
                         if not self._rollback_rename_transaction(
                             directory_fd, transaction, marker_name
                         ):
-                            log.warning("annulation de renommage différée : %s", marker_name)
+                            log.warning("deferred rename rollback: %s", marker_name)
                     except (DestinationError, OSError):
-                        log.exception("annulation de renommage impossible : %s", marker_name)
+                        log.exception("rename rollback failed: %s", marker_name)
                 try:
                     if self._entry_identity(directory_fd, meta_temp) == new_meta_identity:
                         self._remove_expected(directory_fd, meta_temp, new_meta_identity)
@@ -3517,11 +3553,77 @@ class LocalDestination(Destination):
                     pass
                 raise
 
+    def update_comment(self, filename: str, comment: str) -> StoredImage:
+        """Replace only a managed item's sidecar comment atomically."""
+        if not valid_filename(filename):
+            raise DestinationError(f"invalid filename: {filename!r}")
+        comment = validate_comment(comment)
+        with self._directory_fd() as directory_fd:
+            if filename in self._active_transaction_names(directory_fd):
+                raise StorageConflictError(
+                    f"transaction in progress for filename: {filename!r}"
+                )
+            owned_file, meta_identity = self._require_owned(directory_fd, filename)
+            try:
+                target_identity = owned_file.identity
+                meta_name = self._meta_name(filename)
+                raw = self._read_meta(directory_fd, meta_name)
+                if self._entry_identity(directory_fd, meta_name) != meta_identity:
+                    raise StorageConflictError(
+                        f"sidecar changed during operation: {filename!r}"
+                    )
+                item = self._validated_item(raw, filename, owned_file.size)
+            finally:
+                owned_file.close()
+            if target_identity is None or meta_identity is None:
+                raise StorageConflictError(f"file or sidecar disappeared: {filename!r}")
+            if self._entry_identity(directory_fd, filename) != target_identity:
+                raise StorageConflictError(f"file changed during operation: {filename!r}")
+
+            updated_meta = dict(raw)
+            updated_meta["comment"] = comment
+            temp_name = self._write_meta_temp(directory_fd, updated_meta)
+            temp_identity = self._entry_identity(directory_fd, temp_name)
+            if temp_identity is None:
+                raise DestinationError(f"temporary sidecar disappeared: {meta_name!r}")
+            published = False
+            try:
+                self._fs.replace(
+                    directory_fd,
+                    temp_name,
+                    meta_name,
+                    expected_source=temp_identity,
+                    expected_target=meta_identity,
+                )
+                published = True
+                self._fsync_directory(directory_fd)
+            except (EntryChangedError, UnsafeLinkError) as exc:
+                raise StorageConflictError(
+                    f"sidecar changed during operation: {filename!r}"
+                ) from exc
+            finally:
+                if not published:
+                    try:
+                        self._remove_expected(directory_fd, temp_name, temp_identity)
+                    except (DestinationError, OSError):
+                        pass
+            return StoredImage(
+                filename,
+                item.created_at,
+                item.width,
+                item.height,
+                item.size,
+                item.fmt,
+                item.kind,
+                item.mime,
+                comment,
+            )
+
     def delete(self, filename: str, *, allow_stale_sidecar: bool = False) -> None:
         with self._directory_fd() as directory_fd:
             if filename in self._active_transaction_names(directory_fd):
                 raise StorageConflictError(
-                    f"transaction en cours pour le nom : {filename!r}"
+                    f"transaction in progress for filename: {filename!r}"
                 )
             owned_file, meta_identity = self._require_owned(
                 directory_fd,
@@ -3534,7 +3636,7 @@ class LocalDestination(Destination):
             finally:
                 owned_file.close()
             if target_identity is None or meta_identity is None:
-                raise StorageConflictError(f"fichier ou sidecar disparu : {filename!r}")
+                raise StorageConflictError(f"file or sidecar disappeared: {filename!r}")
             token = secrets.token_hex(12)
             marker_name = f".pbdel-{token}.json"
             data_trash = f".pbtrash-{token}.data"
@@ -3558,15 +3660,15 @@ class LocalDestination(Destination):
             except BaseException:
                 try:
                     if not self._rollback_delete_transaction(directory_fd, transaction, marker_name):
-                        log.warning("annulation de suppression différée : %s", marker_name)
+                        log.warning("deferred deletion rollback: %s", marker_name)
                 except (DestinationError, OSError):
-                    log.exception("annulation de suppression impossible : %s", marker_name)
+                    log.exception("deletion rollback failed: %s", marker_name)
                 raise
             try:
                 if not self._finish_delete_transaction(directory_fd, transaction, marker_name):
-                    log.warning("nettoyage de suppression différé : %s", marker_name)
+                    log.warning("deferred deletion cleanup: %s", marker_name)
             except (DestinationError, OSError):
-                log.warning("nettoyage de suppression différé : %s", marker_name)
+                log.warning("deferred deletion cleanup: %s", marker_name)
 
     def read(self, filename: str) -> bytes:
         with self._directory_fd() as directory_fd:
@@ -3575,15 +3677,15 @@ class LocalDestination(Destination):
                 with file_handle as fh:
                     return fh.read()
             except FileNotFoundError as exc:
-                raise UnknownImageError(f"fichier inconnu de Pasteberth : {filename!r}") from exc
+                raise UnknownImageError(f"unknown Pasteberth file: {filename!r}") from exc
             except (OSError, DestinationError) as exc:
                 if isinstance(exc, DestinationError):
                     raise
-                raise DestinationError(f"lecture impossible ({exc})") from exc
+                raise DestinationError(f"cannot read ({exc})") from exc
 
     @contextmanager
     def open_read(self, filename: str):
-        """Ouvre un fichier géré sans relâcher le verrou de la destination."""
+        """Open a managed file without releasing the destination lock."""
         with self._directory_fd() as directory_fd:
             file_handle = None
             try:
@@ -3592,12 +3694,12 @@ class LocalDestination(Destination):
                     yield fh
             except FileNotFoundError as exc:
                 raise UnknownImageError(
-                    f"fichier inconnu de Pasteberth : {filename!r}"
+                    f"unknown Pasteberth file: {filename!r}"
                 ) from exc
             except (OSError, DestinationError) as exc:
                 if isinstance(exc, DestinationError):
                     raise
-                raise DestinationError(f"lecture impossible ({exc})") from exc
+                raise DestinationError(f"cannot read ({exc})") from exc
             finally:
                 if file_handle is not None and not file_handle.closed:
                     file_handle.close()
@@ -3606,10 +3708,10 @@ class LocalDestination(Destination):
         return str(self.directory / filename)
 
     def apply_retention(self, retain: int, protected_filename: str | None = None) -> list[str]:
-        """Supprime les plus anciennes images au-delà de ``retain``.
+        """Delete the oldest images beyond ``retain``.
 
-        L'image nouvellement créée peut être protégée contre une horloge
-        murale reculée ou des sidecars historiques dans le futur.
+        The newly created image can be protected against a clock moving
+        backwards or future historical sidecars.
         """
         items = self.list()
         if protected_filename and any(i.filename == protected_filename for i in items):
@@ -3623,10 +3725,10 @@ class LocalDestination(Destination):
             try:
                 self.delete(item.filename)
                 deleted.append(item.filename)
-                log.info("rétention : suppression de %s", item.filename)
+                log.info("retention: deleted %s", item.filename)
             except DestinationError as exc:
                 failures.append(item.filename)
-                log.error("rétention : échec sur %s : %s", item.filename, exc)
+                log.error("retention: deletion failed for %s: %s", item.filename, exc)
         if failures:
             raise RetentionError(failures)
         return deleted

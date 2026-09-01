@@ -1,7 +1,7 @@
 # Pasteberth Operator Guide
 
 This guide is the detailed reference for installing, configuring, operating,
-and integrating Pasteberth 1.7.0. The short project overview is in
+and integrating Pasteberth 1.8.0. The short project overview is in
 [`README.md`](README.md); user-visible release history is in
 [`CHANGELOG.md`](CHANGELOG.md).
 
@@ -74,14 +74,14 @@ contexts:
 
 ## 2. Requirements and Support
 
-The 1.7.0 implementation requires:
+The 1.8.0 implementation requires:
 
 - Python 3.11 or newer;
 - a local filesystem supported by the active platform backend;
 - a modern browser for the Web UI;
 - no third-party Python runtime dependency.
 
-Linux is the current official and tested server platform for v1.7.0. The
+Linux is the current official and tested server platform for v1.8.0. The
 Windows backend has broad Wine coverage, but native Windows/NTFS validation is
 still outstanding and macOS support is not implemented. Do not infer support
 for every network or exotic filesystem from the operating system name.
@@ -93,7 +93,7 @@ Firefox when the corresponding Playwright browser is installed.
 
 ### 3.1 Source checkout
 
-The supported v1.7.0 installation is a source checkout. It needs no root access
+The supported v1.8.0 installation is a source checkout. It needs no root access
 and no installation script:
 
 ```sh
@@ -121,7 +121,7 @@ do not provide a plugin mechanism through the current directory or
 `PYTHONPATH`.
 
 The Python project also declares the `pasteberth` console entry point in
-`pyproject.toml`. The repository wrapper remains the documented v1.7.0 operator
+`pyproject.toml`. The repository wrapper remains the documented v1.8.0 operator
 path because default storage and generated configuration are deliberately
 repository-oriented.
 
@@ -183,6 +183,7 @@ attempt, so changing it does not require a restart.
 | `max_upload_size` | `20MiB` | Maximum size of one upload; the hard maximum is `50MiB`. |
 | `max_image_pixels` | `25000000` | Structural image pixel budget; hard maximum is 50 MP. |
 | `url_prefix` | `""` | Public path prefix such as `/paste`; the proxy must preserve it. |
+| `show_full_path` | `true` | Display absolute file references in the Web UI; set `false` when paths are sensitive. |
 | `trusted_proxies` | `[]` | IP addresses or CIDR networks allowed to provide `X-Forwarded-*`. |
 | `allowed_hosts` | `[]` | Hostnames or IP addresses accepted by Host and Origin checks; empty means wildcard and triggers an audit warning. |
 | `allow_unauthenticated_local` | `false` | Explicit opt-in for anonymous loopback or proxy mode. |
@@ -241,7 +242,7 @@ Each `[[zones]]` table defines one independent project area:
 |---|---:|---|
 | `id` | required | Lowercase API/UI identifier, up to 64 characters. |
 | `label` | `id` | Human-readable UI label. |
-| `type` | `local` | Only `local` is implemented in v1.7.0. |
+| `type` | `local` | Only `local` is implemented in v1.8.0. |
 | `directory` | required | Absolute path as seen by the server and the harness. |
 | `retain` | `10` | Number of managed items retained in the zone. |
 | `reference_prefix` | `@` | Text prepended to one returned reference. |
@@ -367,8 +368,11 @@ thumbnail or history item to select it in the upper panel.
 - `Ctrl`-click or `Command`-click adds or removes an item;
 - a multiple selection can copy all references, download a ZIP, or delete all
   selected managed items;
-- the full filename is available as a native tooltip when the visible list
-  truncates it.
+- the selected item exposes a `Comment` button for a short Unicode note;
+- hovering the selected file or a history icon shows complete, untruncated item
+  details;
+- `show_full_path = false` hides absolute references in the UI while preserving
+  them in API responses and copy actions.
 
 Visible browsers poll for changes made by `drop` or another client
 every 10 seconds. A browser tab that was hidden refreshes when it becomes
@@ -783,6 +787,7 @@ and previews. The prefix is a configured public path, not part of the browser
 | `GET` | `/api/groups` | session | Group definitions and matching zone IDs. |
 | `GET` | `/api/zones/{id}/images` | session | Complete zone history, newest first. |
 | `POST` | `/api/zones/{id}/images` | session | Upload multipart content. |
+| `PATCH` | `/api/zones/{id}/images/{filename}/comment` | session | Replace the item's short Unicode comment. |
 | `DELETE` | `/api/zones/{id}/images/{filename}` | session | Delete one managed item. |
 | `POST` | `/api/zones/{id}/images/batch-delete` | session | Delete several managed items. |
 | `POST` | `/api/zones/{id}/images/archive` | session | Stream selected managed items as a ZIP. |
@@ -827,7 +832,7 @@ The main application error codes are:
 
 | Status | Codes | Meaning |
 |---:|---|---|
-| `400` | `invalid_request`, `empty_upload`, `invalid_filename`, `invalid_image` | The request or content is invalid. |
+| `400` | `invalid_request`, `empty_upload`, `invalid_filename`, `invalid_image`, `invalid_comment` | The request or content is invalid. |
 | `401` | `unauthorized` | A protected route has no valid session. |
 | `403` | `forbidden_host`, `forbidden_origin`, `zip_disabled` | The host/origin is not allowed or ZIP is disabled for the zone. |
 | `404` | `unknown_zone`, `unknown_image`, `not_found` | The requested resource does not exist. |
@@ -855,6 +860,7 @@ The response includes fields such as:
   "format": "png",
   "kind": "image",
   "mime": "image/png",
+  "comment": "Reference capture",
   "preview_url": "/previews/default/2026-08-25_01-22-31_a81c42.png",
   "reference": "@/path/to/repository/storage/default/2026-08-25_01-22-31_a81c42.png"
 }
@@ -876,7 +882,25 @@ Retry-After: 1
 
 Clients should refresh the zone and retry after the indicated delay.
 
-### 11.4 Login clients
+### 11.4 Comments
+
+Comments are stored in the item's JSON sidecar and accept valid UTF-8 Unicode,
+including emoji. They are limited to 280 Unicode characters and 1 KiB of UTF-8
+data; control, private-use, noncharacter, and invisible formatting code points
+are rejected. Send a JSON object containing only `comment`:
+
+```sh
+curl -b cookies.txt -X PATCH \
+  -H 'Content-Type: application/json' \
+  --data '{"comment":"Reference capture 🚀"}' \
+  https://pasteberth.example.internal/api/zones/default/images/example.png/comment
+```
+
+An empty string clears the comment. Existing sidecars without a `comment` field
+remain valid and are read as an empty comment. Unsafe requests must include the
+same-origin `Origin` or `Referer` header.
+
+### 11.5 Login clients
 
 The login endpoint accepts a `password` field in a normal URL-encoded form,
 multipart form, or JSON object. A successful login returns a session cookie and
@@ -1004,7 +1028,7 @@ restart the service.
 
 The next major platform goal is native Windows and macOS support with the same
 transaction and security guarantees. That work is intentionally separate from
-the v1.7.0 support matrix and must not be represented as already supported.
+the v1.8.0 support matrix and must not be represented as already supported.
 
 ## 16. License
 

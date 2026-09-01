@@ -123,20 +123,20 @@ class TestErreursDemarrage(unittest.TestCase):
     def test_config_inexistante(self):
         proc = run_cli(["serve", "--config", str(self.tmp / "absent.toml")])
         self.assertEqual(proc.returncode, 2)
-        self.assertIn("introuvable", proc.stderr)
+        self.assertIn("configuration file not found", proc.stderr)
 
     def test_config_invalide(self):
         cfg = write_config(self.tmp, extra="mauvaise_ligne_sans_guillemet\n")
         proc = run_cli(["serve", "--config", str(cfg)])
         self.assertEqual(proc.returncode, 2)
-        self.assertIn("erreur de configuration", proc.stderr.lower())
+        self.assertIn("configuration error", proc.stderr.lower())
 
     def test_non_loopback_sans_auth_refuse(self):
         cfg = write_config(self.tmp, listen_address="0.0.0.0",
                            allow_unauthenticated_remote=False)
         proc = run_cli(["serve", "--config", str(cfg)])
         self.assertEqual(proc.returncode, 2)
-        self.assertIn("refus de démarrer", proc.stderr)
+        self.assertIn("refusing to start", proc.stderr)
 
     def test_directory_relative_refusee(self):
         zones = [{"id": "x", "directory": "relatif"}]
@@ -149,7 +149,7 @@ class TestErreursDemarrage(unittest.TestCase):
         cfg = write_config(self.tmp, auth_enabled=True)
         proc = run_cli(["serve", "--config", str(cfg)])
         self.assertEqual(proc.returncode, 2)
-        self.assertIn("hash scrypt valide", proc.stderr)
+        self.assertIn("valid scrypt hash", proc.stderr)
 
     def test_fichier_passwd_non_utf8_refuse_sans_traceback(self):
         password_file = self.tmp / "passwd"
@@ -162,7 +162,7 @@ class TestErreursDemarrage(unittest.TestCase):
         )
         proc = run_cli(["serve", "--config", str(cfg)])
         self.assertEqual(proc.returncode, 2)
-        self.assertIn("erreur de configuration", proc.stderr)
+        self.assertIn("configuration error", proc.stderr)
         self.assertNotIn("Traceback", proc.stderr)
 
     def test_destination_inaccessible_retourne_une_erreur_propre(self):
@@ -205,7 +205,7 @@ class TestErreursDemarrage(unittest.TestCase):
             cfg = write_config(self.tmp, port=blocker.getsockname()[1])
             proc = run_cli(["--config", str(cfg)])
             self.assertEqual(proc.returncode, 1)
-            self.assertIn("impossible d'écouter", proc.stderr)
+            self.assertIn("cannot listen", proc.stderr)
             self.assertNotIn("Traceback", proc.stderr + proc.stdout)
         finally:
             blocker.close()
@@ -231,13 +231,13 @@ class TestPasswd(unittest.TestCase):
         self.stdin = "court\ncourt\n"
         proc = self._passwd_cmd(write_config(self.tmp))
         self.assertEqual(proc.returncode, 1)
-        self.assertIn("8 caractères", proc.stderr)
+        self.assertIn("at least 8 characters", proc.stderr)
 
     def test_confirmation_differe(self):
         self.stdin = "un-long-mot-de-passe-1\nautre-long-mot-de-passe\n"
         proc = self._passwd_cmd(write_config(self.tmp))
         self.assertEqual(proc.returncode, 1)
-        self.assertIn("diffèrent", proc.stderr)
+        self.assertIn("entries differ", proc.stderr)
 
     def test_ecriture_hash_et_changement(self):
         cfg_path = write_config(self.tmp)
@@ -299,8 +299,8 @@ class TestPasswd(unittest.TestCase):
         proc = self._passwd_cmd(cfg_path)
 
         self.assertEqual(proc.returncode, 2)
-        self.assertIn("configuration invalide", proc.stderr)
-        self.assertIn("aucun hash n'a été écrit", proc.stderr)
+        self.assertIn("invalid configuration", proc.stderr)
+        self.assertIn("no hash was written", proc.stderr)
         self.assertFalse((cfg_path.parent / "passwd").exists())
 
 
@@ -329,7 +329,8 @@ class TestConfigurationDepot(unittest.TestCase):
         self.assertIn("storage/default", content)
         self.assertIn("structural pixel budget", content)
         self.assertIn("Keep this listener on loopback", content)
-        self.assertIn("configuration générée", proc.stdout)
+        self.assertIn("show_full_path = true", content)
+        self.assertIn("configuration generated", proc.stdout)
 
     def test_generation_necrase_pas_par_defaut(self):
         target = self.tmp / "config.toml"
@@ -349,7 +350,7 @@ class TestConfigurationDepot(unittest.TestCase):
             },
         )
         self.assertEqual(proc.returncode, 1)
-        self.assertIn("stockage par défaut", proc.stdout)
+        self.assertIn("default storage", proc.stdout)
 
     def test_audit_allowed_hosts_vide_avertit_wildcard(self):
         with socket.socket() as probe:
@@ -364,7 +365,7 @@ class TestConfigurationDepot(unittest.TestCase):
         )
         proc = run_cli(["audit", "--config", str(cfg)])
         self.assertIn("wildcard", proc.stdout)
-        self.assertIn("AVERTISSEMENT", proc.stdout)
+        self.assertIn("WARNING", proc.stdout)
 
     def test_audit_accept_tous_faux_avertit(self):
         with socket.socket() as probe:
@@ -378,8 +379,19 @@ class TestConfigurationDepot(unittest.TestCase):
             accept_doc=False,
         )
         proc = run_cli(["audit", "--config", str(cfg)])
-        self.assertIn("refusera tout contenu", proc.stdout)
-        self.assertIn("AVERTISSEMENT", proc.stdout)
+        self.assertIn("server will reject all content", proc.stdout)
+        self.assertIn("WARNING", proc.stdout)
+
+    def test_audit_avertit_si_les_chemins_complets_sont_visibles(self):
+        cfg = write_config(self.tmp, show_full_path=True)
+        proc = run_cli(["audit", "--config", str(cfg)])
+        self.assertIn("show_full_path", proc.stdout)
+        self.assertIn("absolute paths", proc.stdout)
+
+    def test_audit_n_avertit_pas_si_les_chemins_sont_masques(self):
+        cfg = write_config(self.tmp, show_full_path=False)
+        proc = run_cli(["audit", "--config", str(cfg)])
+        self.assertNotIn("show_full_path", proc.stdout)
 
     def test_audit_selections_groupes_redondantes_avertit(self):
         with socket.socket() as probe:
@@ -398,11 +410,11 @@ class TestConfigurationDepot(unittest.TestCase):
         )
         proc = run_cli(["audit", "--config", str(cfg)])
         self.assertEqual(proc.returncode, 1)
-        self.assertIn("pattern' ignoré", proc.stdout)
-        self.assertIn("groupes selection='all' redondants", proc.stdout)
-        self.assertIn("selection='all' et selection='other'", proc.stdout)
-        self.assertIn("groupes selection='other' redondants", proc.stdout)
-        self.assertIn("groupes redondants : All (all) et AllPattern (pattern)", proc.stdout)
+        self.assertIn("pattern' ignored", proc.stdout)
+        self.assertIn("redundant selection='all' groups", proc.stdout)
+        self.assertIn("selection='all' and selection='other'", proc.stdout)
+        self.assertIn("redundant selection='other' groups", proc.stdout)
+        self.assertIn("redundant groups: All (all) and AllPattern (pattern)", proc.stdout)
 
     def test_audit_permissions_zone_avertit_sans_echouer(self):
         target = self.tmp / "open"
@@ -418,8 +430,8 @@ class TestConfigurationDepot(unittest.TestCase):
         )
         proc = run_cli(["audit", "--config", str(cfg)])
         self.assertEqual(proc.returncode, 1)
-        self.assertIn("permissions non privées", proc.stdout)
-        self.assertIn("Audit prêt avec", proc.stdout)
+        self.assertIn("permissions are not private", proc.stdout)
+        self.assertIn("Audit ready with", proc.stdout)
 
     def test_audit_permissions_group_writable_avertit_aussi(self):
         # Feature: un mode group-writable (0o775) avertit mais n'échoue pas,
@@ -437,14 +449,14 @@ class TestConfigurationDepot(unittest.TestCase):
         )
         proc = run_cli(["audit", "--config", str(cfg)])
         self.assertEqual(proc.returncode, 1)
-        self.assertIn("permissions non privées", proc.stdout)
-        self.assertIn("Audit prêt avec", proc.stdout)
+        self.assertIn("permissions are not private", proc.stdout)
+        self.assertIn("Audit ready with", proc.stdout)
 
     def test_audit_auth_sans_hash_echoue(self):
         cfg = write_config(self.tmp, auth_enabled=True)
         proc = run_cli(["audit", "--config", str(cfg)])
         self.assertEqual(proc.returncode, 2)
-        self.assertIn("hash scrypt absent ou invalide", proc.stdout)
+        self.assertIn("missing or invalid scrypt hash", proc.stdout)
 
     def test_audit_zones_partageant_un_repertoire_echoue(self):
         shared = self.tmp / "shared"
@@ -457,7 +469,7 @@ class TestConfigurationDepot(unittest.TestCase):
         )
         proc = run_cli(["audit", "--config", str(cfg)])
         self.assertEqual(proc.returncode, 2)
-        self.assertIn("même répertoire", proc.stdout)
+        self.assertIn("same directory", proc.stdout)
 
     def test_audit_verifie_le_bind(self):
         import socket
@@ -469,8 +481,8 @@ class TestConfigurationDepot(unittest.TestCase):
             cfg = write_config(self.tmp, port=port)
             proc = run_cli(["audit", "--config", str(cfg)])
         self.assertEqual(proc.returncode, 1)
-        self.assertIn("port déjà utilisé", proc.stdout)
-        self.assertIn("AVERTISSEMENT", proc.stdout)
+        self.assertIn("port already in use", proc.stdout)
+        self.assertIn("WARNING", proc.stdout)
 
     def test_audit_verifie_le_certificat_tls(self):
         cfg = write_config(
@@ -481,7 +493,7 @@ class TestConfigurationDepot(unittest.TestCase):
         )
         proc = run_cli(["audit", "--config", str(cfg)])
         self.assertEqual(proc.returncode, 2)
-        self.assertIn("configuration TLS invalide", proc.stdout)
+        self.assertIn("invalid TLS configuration", proc.stdout)
 
     def test_audit_refuse_configuration_inscriptible(self):
         if platform_fs().backend_name == "windows":
@@ -492,7 +504,7 @@ class TestConfigurationDepot(unittest.TestCase):
         proc = run_cli(["audit", "--config", str(cfg)])
 
         self.assertEqual(proc.returncode, 2)
-        self.assertIn("configuration : permissions inscriptibles", proc.stdout)
+        self.assertIn("configuration: writable by a third party", proc.stdout)
 
     def test_audit_accepte_configuration_symlinkee_avec_avertissement(self):
         if platform_fs().backend_name == "windows":
@@ -513,8 +525,8 @@ class TestConfigurationDepot(unittest.TestCase):
         proc = run_cli(["audit", "--config", str(linked_config)])
 
         self.assertEqual(proc.returncode, 1, proc.stdout + proc.stderr)
-        self.assertIn("configuration : lien symbolique accepté", proc.stdout)
-        self.assertNotIn("configuration : lien symbolique refusé", proc.stdout)
+        self.assertIn("configuration: symbolic link accepted", proc.stdout)
+        self.assertNotIn("configuration: symbolic link rejected", proc.stdout)
 
     def test_audit_refuse_proxy_global(self):
         cfg = write_config(self.tmp, trusted_proxies='["0.0.0.0/0", "::/0"]')
@@ -522,7 +534,7 @@ class TestConfigurationDepot(unittest.TestCase):
         proc = run_cli(["audit", "--config", str(cfg)])
 
         self.assertEqual(proc.returncode, 2)
-        self.assertIn("proxy global non autorisé", proc.stdout)
+        self.assertIn("global proxy is not allowed", proc.stdout)
 
     def _tls_config_with_files(self, *, certificate_name="cert.pem"):
         certificate = self.tmp / certificate_name
@@ -565,7 +577,7 @@ class TestConfigurationDepot(unittest.TestCase):
         with mock.patch("pasteberth.cli.ssl._ssl._test_decode_cert", return_value=decoded):
             with mock.patch("pasteberth.server.create_tls_context"):
                 errors = _audit_tls(cfg)
-        self.assertIn("certificat TLS : certificat expiré", errors)
+        self.assertIn("TLS certificate: certificate has expired", errors)
 
     def test_audit_refuse_certificat_pas_encore_valide(self):
         if platform_fs().backend_name == "windows":
@@ -578,7 +590,7 @@ class TestConfigurationDepot(unittest.TestCase):
         with mock.patch("pasteberth.cli.ssl._ssl._test_decode_cert", return_value=decoded):
             with mock.patch("pasteberth.server.create_tls_context"):
                 errors = _audit_tls(cfg)
-        self.assertIn("certificat TLS : certificat pas encore valide", errors)
+        self.assertIn("TLS certificate: certificate is not valid yet", errors)
 
     def test_audit_refuse_correspondance_cle_certificat(self):
         if platform_fs().backend_name == "windows":
@@ -594,7 +606,7 @@ class TestConfigurationDepot(unittest.TestCase):
                 side_effect=ValueError("clé et certificat différents"),
             ):
                 errors = _audit_tls(cfg)
-        self.assertTrue(any("configuration TLS invalide" in error for error in errors))
+        self.assertTrue(any("invalid TLS configuration" in error for error in errors))
 
     def test_audit_accepte_rotation_certificat_par_symlink_controle(self):
         if platform_fs().backend_name == "windows":
@@ -642,7 +654,7 @@ class TestConfigurationDepot(unittest.TestCase):
         with mock.patch("pasteberth.cli.ssl._ssl._test_decode_cert", return_value=decoded):
             with mock.patch("pasteberth.server.create_tls_context"):
                 errors = _audit_tls(cfg)
-        self.assertTrue(any("parent inscriptible par un tiers" in error for error in errors))
+        self.assertTrue(any("parent writable by a third party" in error for error in errors))
 
     def test_audit_refuse_cle_privee_trop_lisible(self):
         if platform_fs().backend_name == "windows":
@@ -652,7 +664,7 @@ class TestConfigurationDepot(unittest.TestCase):
 
         errors = _audit_tls(cfg)
 
-        self.assertTrue(any("clé privée TLS : permissions trop ouvertes" in error for error in errors))
+        self.assertTrue(any("TLS private key: permissions too open" in error for error in errors))
 
     def test_audit_tls_ne_demande_pas_de_reverse_proxy(self):
         cfg = load_config(
@@ -723,7 +735,7 @@ class TestFilesystemDrop(unittest.TestCase):
         proc = self._run_drop(source)
 
         self.assertEqual(proc.returncode, 1)
-        self.assertIn("invalide", proc.stderr)
+        self.assertIn("invalid", proc.stderr)
         self.assertFalse((self.zone / source.name).exists())
 
     def test_remplacement_exige_l_option_expresse(self):
@@ -735,7 +747,7 @@ class TestFilesystemDrop(unittest.TestCase):
         source.write_text("version 2\n", encoding="utf-8")
         refused = self._run_drop(source)
         self.assertEqual(refused.returncode, 1)
-        self.assertIn("remplacement explicite", refused.stderr)
+        self.assertIn("explicit replacement required", refused.stderr)
         self.assertEqual((self.zone / source.name).read_text(encoding="utf-8"), "version 1\n")
 
         replaced = self._run_drop(source, replace=True)
@@ -753,7 +765,7 @@ class TestFilesystemDrop(unittest.TestCase):
         proc = self._run_drop(source, replace=True)
 
         self.assertEqual(proc.returncode, 1)
-        self.assertIn("fichier etranger", proc.stderr)
+        self.assertIn("foreign file", proc.stderr)
         self.assertEqual(foreign.read_text(encoding="utf-8"), "foreign\n")
 
     def test_adopte_un_fichier_deja_dans_la_zone(self):
@@ -791,7 +803,7 @@ class TestFilesystemDrop(unittest.TestCase):
         fifo = self.tmp / "source.fifo"
         os.mkfifo(fifo)
 
-        with self.assertRaisesRegex(ValueError, "fichier régulier"):
+        with self.assertRaisesRegex(ValueError, "regular file"):
             _read_drop_source(fifo, 1024)
 
     def test_rename_deplace_le_sidecar(self):
@@ -849,7 +861,7 @@ class TestFilesystemDrop(unittest.TestCase):
         renamed = self._run_rename("report.txt", "target.txt")
 
         self.assertEqual(renamed.returncode, 1)
-        self.assertIn("cible", renamed.stderr)
+        self.assertIn("target already exists", renamed.stderr)
         self.assertTrue((self.zone / "report.txt").exists())
         self.assertEqual((self.zone / "target.txt").read_text(encoding="utf-8"), "foreign")
 

@@ -39,7 +39,7 @@ def platform_fs() -> PlatformFS:
         from pasteberth.platformfs.windows import WindowsPlatformFS
 
         return WindowsPlatformFS()
-    raise UnsupportedFilesystemError(f"système non supporté : {system}")
+    raise UnsupportedFilesystemError(f"unsupported operating system: {system}")
 
 
 __all__ = [

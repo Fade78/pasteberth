@@ -539,6 +539,13 @@ code, kbd {
 
 .meta { display: flex; flex-direction: column; gap: 5px; min-width: 0; }
 .meta-name { display: flex; align-items: center; gap: 0.45rem; min-width: 0; flex-wrap: wrap; }
+.comment-text {
+  margin: 0;
+  color: var(--fg);
+  opacity: 0.82;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
 
 .fname, .ref {
   word-break: break-all;
@@ -559,7 +566,8 @@ code, kbd {
 
 /* ------------------------------------------------------------ buttons */
 
-.copy-btn, .copy-image-btn, .download-btn, .clear-btn, .zoom-btn, .delete-btn {
+.copy-btn, .copy-image-btn, .download-btn, .clear-btn, .zoom-btn, .delete-btn,
+.comment-btn, .comment-save-btn {
   align-self: flex-start;
   background: rgba(127, 127, 127, 0.22);
   color: var(--fg, var(--text));
@@ -586,15 +594,39 @@ code, kbd {
 .raw-html-btn:hover { background: rgba(255, 123, 114, 0.28); }
 .raw-html-btn:active { transform: translateY(1px); }
 
-.copy-btn:hover, .copy-image-btn:hover, .download-btn:hover, .clear-btn:hover, .zoom-btn:hover, .delete-btn:hover {
+.copy-btn:hover, .copy-image-btn:hover, .download-btn:hover, .clear-btn:hover, .zoom-btn:hover,
+.delete-btn:hover, .comment-btn:hover, .comment-save-btn:hover {
   background: rgba(127, 127, 127, 0.34);
 }
-.copy-btn:active, .copy-image-btn:active, .download-btn:active, .clear-btn:active, .zoom-btn:active, .delete-btn:active {
+.copy-btn:active, .copy-image-btn:active, .download-btn:active, .clear-btn:active, .zoom-btn:active,
+.delete-btn:active, .comment-btn:active, .comment-save-btn:active {
   transform: translateY(1px);
 }
 
 .clear-btn { color: #ffd7d3; }
 .delete-btn { color: #ffb4ab; }
+
+.comment-control { min-width: 0; }
+
+.comment-editor {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  min-width: min(100%, 260px);
+}
+
+.comment-editor textarea {
+  flex: 1 1 100%;
+  min-width: 0;
+  resize: vertical;
+  padding: 0.45rem 0.55rem;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 7px;
+  background: rgba(0, 0, 0, 0.2);
+  color: var(--text);
+  font: inherit;
+  font-size: 0.8rem;
+}
 
 .bulk-actions {
   display: flex;
@@ -632,6 +664,8 @@ code, kbd {
 .clear-btn:focus-visible,
 .zoom-btn:focus-visible,
 .delete-btn:focus-visible,
+.comment-btn:focus-visible,
+.comment-save-btn:focus-visible,
 .replace-btn:focus-visible,
 .group-tab:focus-visible,
 .tab-zone-link:focus-visible,

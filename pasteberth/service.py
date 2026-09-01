@@ -1,9 +1,8 @@
-"""Logique métier : upload -> validation -> stockage -> rétention.
+"""Business logic: upload -> validation -> storage -> retention.
 
-Le service est le seul point de passage du web vers les destinations ;
-il sérialise les opérations par zone (verrou par zone) pour garantir une
-rétention cohérente sous concurrence, tout en laissant les zones
-indépendantes entre elles.
+The service is the only path from the web layer to destinations; it serializes
+operations per zone to keep retention coherent under concurrency while leaving
+zones independent from one another.
 """
 from __future__ import annotations
 
@@ -30,6 +29,7 @@ from pasteberth.storage import (
     StorageLowError,
     StoredImage,
     UnknownImageError,
+    validate_comment,
     valid_filename,
 )
 
@@ -37,7 +37,7 @@ log = logging.getLogger("pasteberth.service")
 
 
 class _DeviceSpaceLock:
-    """Verrou par filesystem partagé entre threads et processus locaux."""
+    """Lock shared by local threads and processes for one filesystem."""
 
     def __init__(self, device_id: int):
         self._fs = platform_fs()
@@ -63,7 +63,7 @@ class _DeviceSpaceLock:
 
 
 class ServiceError(Exception):
-    """Erreur métier avec code exploitable par la couche HTTP."""
+    """Business error with a code usable by the HTTP layer."""
 
     STATUS = {
         "unknown_zone": 404,
@@ -81,6 +81,7 @@ class ServiceError(Exception):
         "zone_busy": 423,
         "zip_disabled": 403,
         "invalid_request": 400,
+        "invalid_comment": 400,
         "destination_error": 500,
     }
 
@@ -106,9 +107,9 @@ class PasteService:
             device = self._destinations[zid].device_id
             self._space_locks.setdefault(device, _DeviceSpaceLock(device))
 
-        # La configuration est immuable pendant la durée du processus. Garder
-        # les memberships précalculés évite de rescanner les patterns à chaque
-        # requête et permet à /api/groups de rester indépendant des fichiers.
+        # Configuration is immutable for the process lifetime. Keeping
+        # precomputed memberships avoids rescanning patterns on every request
+        # and keeps /api/groups independent from files.
         self._group_zone_ids = resolve_group_zone_ids(cfg.groups, self._zone_cfg)
         zone_groups: dict[str, list[str]] = {zid: [] for zid in self._zone_cfg}
         for group in cfg.groups:
@@ -130,21 +131,21 @@ class PasteService:
         exclusive: bool,
         blocking: bool = True,
     ):
-        """Coordonne une opération de zone dans ce processus et sur disque."""
+        """Coordinate a zone operation in this process and on disk."""
         if zid not in self._zone_cfg:
-            raise ServiceError("unknown_zone", f"zone inconnue : {zid}")
+            raise ServiceError("unknown_zone", f"unknown zone: {zid}")
         with self._operation_state_lock:
             active = self._operation_state.get(zid)
         if active in {"delete_batch", "archive"}:
             raise ServiceError(
                 "zone_busy",
-                f"zone {zid!r} occupée par une opération {active}",
+                f"zone {zid!r} is busy with a {active} operation",
             )
 
         zone_lock = self._locks[zid]
         acquired = zone_lock.acquire(blocking=blocking)
         if not acquired:
-            raise ServiceError("zone_busy", f"zone {zid!r} occupée")
+            raise ServiceError("zone_busy", f"zone {zid!r} is busy")
         try:
             destination = self._destinations[zid]
             try:
@@ -170,31 +171,31 @@ class PasteService:
         preserve_filename: bool,
     ):
         if not data:
-            raise ServiceError("empty_upload", "aucune donnée reçue")
+            raise ServiceError("empty_upload", "no data received")
         if len(data) > self.cfg.max_upload_bytes:
             raise ServiceError(
                 "too_large",
-                f"contenu trop grand ({len(data)} > {self.cfg.max_upload_bytes} octets)",
+                f"content is too large ({len(data)} > {self.cfg.max_upload_bytes} bytes)",
             )
         target_filename = None
         if preserve_filename:
             if not filename_hint or not valid_filename(filename_hint):
                 raise ServiceError(
                     "invalid_filename",
-                    "le nom du fichier glissé est invalide",
+                    "the dropped filename is invalid",
                 )
             target_filename = filename_hint
         if not mime_syntax_allowed(declared_mime):
             raise ServiceError(
                 "unsupported_media_type",
-                f"Content-Type déclaré invalide : {declared_mime!r}",
+                f"declared Content-Type is invalid: {declared_mime!r}",
             )
         # A drag-and-drop carries a real file name, so its declared MIME may be
         # an arbitrary vendor type. Content classification remains authoritative.
         if not mime_allowed(declared_mime) and target_filename is None:
             raise ServiceError(
                 "unsupported_media_type",
-                f"Content-Type déclaré refusé : {declared_mime!r}",
+                f"declared Content-Type is not allowed: {declared_mime!r}",
             )
         try:
             info = classify(
@@ -213,7 +214,7 @@ class PasteService:
         if not accepted[info.kind]:
             raise ServiceError(
                 "unsupported_media_type",
-                f"contenu {info.kind} refusé par la configuration (accept_*)",
+                f"{info.kind} content is rejected by configuration (accept_*)",
             )
         return info, target_filename
 
@@ -257,7 +258,7 @@ class PasteService:
         except (DestinationError, OSError) as exc:
             raise ServiceError("destination_error", str(exc)) from exc
         log.info(
-            "upload zone=%s fichier=%s kind=%s %d octets",
+            "upload zone=%s file=%s kind=%s %d bytes",
             zid,
             stored.filename,
             stored.kind,
@@ -306,12 +307,13 @@ class PasteService:
             "auth_enabled": self.auth_enabled,
             "max_upload_bytes": self.cfg.max_upload_bytes,
             "max_image_pixels": self.cfg.max_image_pixels,
+            "show_full_path": self.cfg.show_full_path,
             "zones": zones,
             "groups": self.group_overview(),
         }
 
     def group_overview(self) -> list[dict]:
-        """Retourne les groupes sans lire les destinations de stockage."""
+        """Return groups without reading storage destinations."""
         groups = []
         for group in self.cfg.groups:
             zone_ids = self._group_zone_ids[group.name]
@@ -344,7 +346,7 @@ class PasteService:
         blocking: bool = True,
     ) -> dict:
         if zid not in self._zone_cfg:
-            raise ServiceError("unknown_zone", f"zone inconnue : {zid}")
+            raise ServiceError("unknown_zone", f"unknown zone: {zid}")
         info, target_filename = self._prepare_upload(
             data, declared_mime, filename_hint, preserve_filename
         )
@@ -387,11 +389,11 @@ class PasteService:
         allow_stale_sidecar: bool = False,
         blocking: bool = True,
     ) -> None:
-        """Supprime une image connue (fichier + sidecar) de la zone."""
+        """Delete a known image (file + sidecar) from a zone."""
         if zid not in self._zone_cfg:
-            raise ServiceError("unknown_zone", f"zone inconnue : {zid}")
+            raise ServiceError("unknown_zone", f"unknown zone: {zid}")
         if not valid_filename(filename):
-            raise ServiceError("unknown_image", "nom de fichier invalide")
+            raise ServiceError("unknown_image", "invalid filename")
         try:
             with self.zone_operation(
                 zid, kind="delete", exclusive=True, blocking=blocking
@@ -406,7 +408,7 @@ class PasteService:
             raise ServiceError("storage_conflict", str(exc)) from exc
         except (DestinationError, OSError) as exc:
             raise ServiceError("destination_error", str(exc)) from exc
-        log.info("suppression zone=%s fichier=%s", zid, filename)
+        log.info("delete zone=%s file=%s", zid, filename)
 
     def delete_many(
         self,
@@ -415,16 +417,16 @@ class PasteService:
         *,
         blocking: bool = True,
     ) -> dict:
-        """Supprime un lot sous un verrou exclusif de zone."""
+        """Delete a batch under an exclusive zone lock."""
         if zid not in self._zone_cfg:
-            raise ServiceError("unknown_zone", f"zone inconnue : {zid}")
+            raise ServiceError("unknown_zone", f"unknown zone: {zid}")
         if not filenames:
-            raise ServiceError("invalid_request", "aucun fichier à supprimer")
+            raise ServiceError("invalid_request", "no files to delete")
         if len(set(filenames)) != len(filenames):
-            raise ServiceError("invalid_request", "noms de fichiers dupliqués")
+            raise ServiceError("invalid_request", "duplicate filenames")
         for filename in filenames:
             if not isinstance(filename, str) or not valid_filename(filename):
-                raise ServiceError("invalid_filename", "nom de fichier invalide")
+                raise ServiceError("invalid_filename", "invalid filename")
         deleted: list[str] = []
         failed: list[dict] = []
         try:
@@ -456,17 +458,17 @@ class PasteService:
                         )
                     else:
                         deleted.append(filename)
-                        log.info("suppression zone=%s fichier=%s", zid, filename)
+                        log.info("delete zone=%s file=%s", zid, filename)
         except ServiceError:
             raise
         return {"deleted": deleted, "failed": failed}
 
     def rename(self, zid: str, source: str, target: str, *, blocking: bool = True) -> dict:
-        """Renomme une paire gérée (fichier + sidecar) dans une zone."""
+        """Rename a managed pair (file + sidecar) in a zone."""
         if zid not in self._zone_cfg:
-            raise ServiceError("unknown_zone", f"zone inconnue : {zid}")
+            raise ServiceError("unknown_zone", f"unknown zone: {zid}")
         if not valid_filename(source) or not valid_filename(target) or source == target:
-            raise ServiceError("invalid_filename", "nom source ou cible invalide")
+            raise ServiceError("invalid_filename", "invalid source or target filename")
         try:
             with self.zone_operation(
                 zid, kind="rename", exclusive=True, blocking=blocking
@@ -478,17 +480,41 @@ class PasteService:
             raise ServiceError("storage_conflict", str(exc)) from exc
         except (DestinationError, OSError) as exc:
             raise ServiceError("destination_error", str(exc)) from exc
-        log.info("renommage zone=%s source=%s cible=%s", zid, source, target)
+        log.info("rename zone=%s source=%s target=%s", zid, source, target)
+        return self.item_payload(zid, stored)
+
+    def update_comment(self, zid: str, filename: str, comment: object) -> dict:
+        """Update a managed item's short comment without changing its data."""
+        if zid not in self._zone_cfg:
+            raise ServiceError("unknown_zone", f"unknown zone: {zid}")
+        if not valid_filename(filename):
+            raise ServiceError("unknown_image", "invalid filename")
+        try:
+            comment = validate_comment(comment)
+        except ValueError as exc:
+            raise ServiceError("invalid_comment", str(exc)) from exc
+        try:
+            with self.zone_operation(
+                zid, kind="comment", exclusive=True, blocking=True
+            ) as (_zone, destination):
+                stored = destination.update_comment(filename, comment)
+        except UnknownImageError as exc:
+            raise ServiceError("unknown_image", str(exc)) from exc
+        except StorageConflictError as exc:
+            raise ServiceError("storage_conflict", str(exc)) from exc
+        except (DestinationError, OSError) as exc:
+            raise ServiceError("destination_error", str(exc)) from exc
+        log.info("comment updated zone=%s filename=%s", zid, filename)
         return self.item_payload(zid, stored)
 
     def preview(
         self, zid: str, filename: str, *, blocking: bool = True
     ) -> tuple[bytes, str]:
-        """Contenu binaire + MIME ; n'accepte que les fichiers connus."""
+        """Return binary content and MIME for known files only."""
         if zid not in self._zone_cfg:
-            raise ServiceError("unknown_zone", f"zone inconnue : {zid}")
+            raise ServiceError("unknown_zone", f"unknown zone: {zid}")
         if not valid_filename(filename):
-            raise ServiceError("unknown_image", "nom de fichier invalide")
+            raise ServiceError("unknown_image", "invalid filename")
         try:
             with self.zone_operation(
                 zid, kind="preview", exclusive=False, blocking=blocking
@@ -499,9 +525,9 @@ class PasteService:
                 }
                 item = known.get(filename)
                 if item is None:
-                    raise ServiceError("unknown_image", "fichier inconnu dans cette zone")
+                    raise ServiceError("unknown_image", "file is unknown in this zone")
                 if item.size > self.cfg.max_upload_bytes:
-                    raise ServiceError("too_large", "preview trop grande à servir")
+                    raise ServiceError("too_large", "preview is too large to serve")
                 data = destination.read(filename)
         except ServiceError:
             raise
@@ -519,23 +545,23 @@ class PasteService:
         *,
         blocking: bool = True,
     ):
-        """Expose les fichiers d'une archive pendant un verrou de zone."""
+        """Expose archive files while holding a zone lock."""
         if zid not in self._zone_cfg:
-            raise ServiceError("unknown_zone", f"zone inconnue : {zid}")
+            raise ServiceError("unknown_zone", f"unknown zone: {zid}")
         if not filenames:
-            raise ServiceError("invalid_request", "aucun fichier à archiver")
+            raise ServiceError("invalid_request", "no files to archive")
         if len(set(filenames)) != len(filenames):
-            raise ServiceError("invalid_request", "noms de fichiers dupliqués")
+            raise ServiceError("invalid_request", "duplicate filenames")
         for filename in filenames:
             if not isinstance(filename, str) or not valid_filename(filename):
-                raise ServiceError("invalid_filename", "nom de fichier invalide")
+                raise ServiceError("invalid_filename", "invalid filename")
         with self.zone_operation(
             zid, kind="archive", exclusive=True, blocking=blocking
         ) as (zone, destination):
             if not zone.allow_zip_download:
                 raise ServiceError(
                     "zip_disabled",
-                    "le téléchargement ZIP est désactivé pour cette zone",
+                    "ZIP downloads are disabled for this zone",
                 )
             known = {item.filename: item for item in destination.list()}
             selected = []
@@ -545,9 +571,9 @@ class PasteService:
                     if item is None:
                         raise ServiceError(
                             "unknown_image",
-                            f"fichier inconnu dans cette zone : {filename}",
+                            f"file is unknown in this zone: {filename}",
                         )
-                    # Vérifie chaque paire avant d'envoyer les en-têtes HTTP.
+                    # Verify every pair before sending HTTP headers.
                     with destination.open_read(filename):
                         pass
                     selected.append(item)
@@ -574,6 +600,7 @@ class PasteService:
             "format": item.fmt,
             "kind": item.kind,
             "mime": item.mime,
+            "comment": item.comment,
             "preview_url": public_path(
                 self.cfg.url_prefix,
                 f"/previews/{quote(zid, safe='')}/{quote(item.filename, safe='')}",

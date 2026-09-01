@@ -1,9 +1,9 @@
-"""Chargement et validation de la configuration TOML.
+"""TOML configuration loading and validation.
 
-Le dépôt peut fonctionner sans fichier utilisateur : une configuration locale
-minimale est alors construite avec ``storage/default``. Un fichier ``config.toml``
-au dépôt, ``$PASTEBERTH_CONFIG`` ou ``--config`` la remplacent ; l'ancien chemin
-XDG reste accepté en dernier recours.
+The repository can run without a user file: a minimal local configuration is
+then built with ``storage/default``. A repository ``config.toml``,
+``$PASTEBERTH_CONFIG``, or ``--config`` replaces it; the legacy XDG path remains
+accepted as a last resort.
 """
 from __future__ import annotations
 
@@ -27,11 +27,11 @@ log = logging.getLogger("pasteberth.config")
 try:
     import tomllib
 except ModuleNotFoundError as exc:  # Python < 3.11
-    raise SystemExit("Pasteberth nécessite Python 3.11+ (module tomllib)") from exc
+    raise SystemExit("Pasteberth requires Python 3.11+ (tomllib module)") from exc
 
 
 class ConfigError(Exception):
-    """Erreur fatale de configuration (message destiné à l'utilisateur)."""
+    """Fatal configuration error (message intended for the user)."""
 
 
 _ZONE_ID_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
@@ -54,46 +54,46 @@ _SIZE_UNITS = {
 
 
 def parse_size(value: object) -> int:
-    """Analyse une taille telle que ``20MB``, ``512KiB`` ou ``4096`` (octets)."""
+    """Parse a size such as ``20MB``, ``512KiB``, or ``4096`` (bytes)."""
     if isinstance(value, bool) or not isinstance(value, (int, float, str)):
-        raise ConfigError(f"taille invalide : {value!r}")
+        raise ConfigError(f"invalid size: {value!r}")
     if isinstance(value, (int, float)):
         if isinstance(value, float) and not math.isfinite(value):
-            raise ConfigError(f"taille invalide : {value!r}")
+            raise ConfigError(f"invalid size: {value!r}")
         try:
             n = int(value)
         except (ValueError, OverflowError) as exc:
-            raise ConfigError(f"taille invalide : {value!r}") from exc
+            raise ConfigError(f"invalid size: {value!r}") from exc
     else:
         m = re.fullmatch(r"\s*(\d+(?:\.\d+)?)\s*([A-Za-z]*)\s*", value)
         if not m:
-            raise ConfigError(f"taille invalide : {value!r} (exemples : 20MB, 512KiB, 4096)")
+            raise ConfigError(f"invalid size: {value!r} (examples: 20MB, 512KiB, 4096)")
         unit = m.group(2).upper()
         if unit not in _SIZE_UNITS:
-            raise ConfigError(f"unité de taille inconnue : {m.group(2)!r}")
+            raise ConfigError(f"unknown size unit: {m.group(2)!r}")
         try:
             n = int(float(m.group(1)) * _SIZE_UNITS[unit])
         except (ValueError, OverflowError) as exc:
-            raise ConfigError(f"taille invalide : {value!r}") from exc
+            raise ConfigError(f"invalid size: {value!r}") from exc
     if n <= 0:
-        raise ConfigError(f"la taille doit être positive : {value!r}")
+        raise ConfigError(f"size must be positive: {value!r}")
     return n
 
 
 def is_loopback_address(address: str) -> bool:
-    """True si l'adresse d'écoute n'expose le service qu'à la machine locale."""
+    """Return true when the listener exposes the service only locally."""
     address = address.strip()
     try:
         return ipaddress.ip_address(address).is_loopback
     except ValueError:
         pass
-    # Nom d'hôte : boucler uniquement si TOUTES les résolutions sont locales.
+    # A hostname is loopback-only only when ALL resolutions are local.
     try:
         infos = socket.getaddrinfo(address, None, proto=socket.IPPROTO_TCP)
     except socket.gaierror as exc:
-        raise ConfigError(f"adresse d'écoute non résoluble : {address!r} ({exc})") from exc
+        raise ConfigError(f"listener address cannot be resolved: {address!r} ({exc})") from exc
     if not infos:
-        raise ConfigError(f"adresse d'écoute non résoluble : {address!r}")
+        raise ConfigError(f"listener address cannot be resolved: {address!r}")
     return all(ipaddress.ip_address(info[4][0]).is_loopback for info in infos)
 
 
@@ -149,6 +149,7 @@ class Config:
     trusted_proxies: tuple[ipaddress.IPv4Network | ipaddress.IPv6Network, ...]
     allowed_hosts: tuple[str, ...]
     url_prefix: str
+    show_full_path: bool
     allow_unauthenticated_local: bool
     allow_unauthenticated_remote: bool
     allow_insecure_http_remote: bool
@@ -165,13 +166,13 @@ class Config:
     using_default_config: bool = False
 
     def password_file(self) -> Path:
-        """Emplacement du hash du mot de passe (0600, jamais un symlink)."""
+        """Return the password hash location (0600, never a symlink)."""
         return self.auth.password_file or self.config_path.parent / "passwd"
 
 
 def _expect_table(value: object, where: str) -> dict:
     if not isinstance(value, dict):
-        raise ConfigError(f"{where} doit être une table")
+        raise ConfigError(f"{where} must be a table")
     return value
 
 
@@ -179,11 +180,11 @@ def _get_str(table: dict, key: str, where: str, *, default: str | None = None,
              allow_empty: bool = False) -> str:
     if key not in table:
         if default is None:
-            raise ConfigError(f"{where}: clé manquante '{key}'")
+            raise ConfigError(f"{where}: missing key '{key}'")
         return default
     value = table[key]
     if not isinstance(value, str) or (not allow_empty and not value.strip()):
-        raise ConfigError(f"{where}: '{key}' doit être une chaîne non vide")
+        raise ConfigError(f"{where}: '{key}' must be a non-empty string")
     return value
 
 
@@ -192,7 +193,7 @@ def _get_bool(table: dict, key: str, where: str, default: bool) -> bool:
         return default
     value = table[key]
     if not isinstance(value, bool):
-        raise ConfigError(f"{where}: '{key}' doit être un booléen")
+        raise ConfigError(f"{where}: '{key}' must be a boolean")
     return value
 
 
@@ -201,10 +202,10 @@ def _get_percent(table: dict, key: str, where: str, default: float) -> float:
         return default
     value = table[key]
     if isinstance(value, bool) or not isinstance(value, (int, float)):
-        raise ConfigError(f"{where}: '{key}' doit être un nombre entre 0 et 99,99")
+        raise ConfigError(f"{where}: '{key}' must be a number between 0 and 99.99")
     value = float(value)
     if not (0.0 <= value < 100.0):
-        raise ConfigError(f"{where}: '{key}' doit être un nombre entre 0 et 99,99")
+        raise ConfigError(f"{where}: '{key}' must be a number between 0 and 99.99")
     return value
 
 
@@ -230,8 +231,8 @@ def _best_contrast(color: str) -> float:
 
 def _warn_unknown(table: dict, known: set[str], where: str, warnings: list[str]) -> None:
     for key in sorted(set(table) - known):
-        suggestion = " ; utilisez 'groups'" if where == "config" and key == "groupes" else ""
-        warnings.append(f"{where}: clé inconnue '{key}' ignorée{suggestion}")
+        suggestion = "; use 'groups'" if where == "config" and key == "groupes" else ""
+        warnings.append(f"{where}: unknown key '{key}' ignored {suggestion}".rstrip())
 
 
 def _parse_auth(raw: object, warnings: list[str]) -> AuthConfig:
@@ -247,7 +248,7 @@ def _parse_auth(raw: object, warnings: list[str]) -> AuthConfig:
     enabled = _get_bool(table, "enabled", "[auth]", default=True)
     ttl = table.get("session_ttl_hours", 72)
     if isinstance(ttl, bool) or not isinstance(ttl, int) or not (1 <= ttl <= 24 * 365):
-        raise ConfigError("[auth]: 'session_ttl_hours' doit être un entier entre 1 et 8760")
+        raise ConfigError("[auth]: 'session_ttl_hours' must be an integer between 1 and 8760")
     max_sessions = table.get("max_sessions", DEFAULT_MAX_SESSIONS)
     if (
         isinstance(max_sessions, bool)
@@ -255,22 +256,22 @@ def _parse_auth(raw: object, warnings: list[str]) -> AuthConfig:
         or not (1 <= max_sessions <= MAX_SESSIONS)
     ):
         raise ConfigError(
-            f"[auth]: 'max_sessions' doit être un entier entre 1 et {MAX_SESSIONS}"
+            f"[auth]: 'max_sessions' must be an integer between 1 and {MAX_SESSIONS}"
         )
     password_file_raw = table.get("password_file")
     password_file = None
     if password_file_raw is not None:
         if not isinstance(password_file_raw, str) or not password_file_raw.strip():
-            raise ConfigError("[auth]: 'password_file' doit être un chemin absolu")
+            raise ConfigError("[auth]: 'password_file' must be an absolute path")
         if "\x00" in password_file_raw:
-            raise ConfigError("[auth]: 'password_file' contient un caractère NUL")
+            raise ConfigError("[auth]: 'password_file' contains a NUL character")
         password_file = Path(os.path.expanduser(password_file_raw))
         if not password_file.is_absolute():
-            raise ConfigError("[auth]: 'password_file' doit être un chemin absolu")
+            raise ConfigError("[auth]: 'password_file' must be an absolute path")
     if enabled and "password_hash" in table:
         warnings.append(
-            "[auth]: 'password_hash' dans config.toml est ignoré ; "
-            "`pasteberth passwd` écrit le hash dans le fichier 'passwd' configuré"
+            "[auth]: 'password_hash' in config.toml is ignored; "
+            "`pasteberth passwd` writes the hash to the configured 'passwd' file"
         )
     return AuthConfig(
         enabled=enabled,
@@ -291,15 +292,15 @@ def _parse_tls(raw: object, warnings: list[str]) -> TLSConfig:
     if not enabled:
         return TLSConfig(enabled=False)
     if not isinstance(certificate_raw, str) or not certificate_raw.strip():
-        raise ConfigError("[tls]: 'certificate' doit être un chemin absolu")
+        raise ConfigError("[tls]: 'certificate' must be an absolute path")
     if not isinstance(private_key_raw, str) or not private_key_raw.strip():
-        raise ConfigError("[tls]: 'private_key' doit être un chemin absolu")
+        raise ConfigError("[tls]: 'private_key' must be an absolute path")
     if "\x00" in certificate_raw or "\x00" in private_key_raw:
-        raise ConfigError("[tls]: les chemins ne peuvent pas contenir de caractère NUL")
+        raise ConfigError("[tls]: paths cannot contain a NUL character")
     certificate = Path(os.path.expanduser(certificate_raw))
     private_key = Path(os.path.expanduser(private_key_raw))
     if not certificate.is_absolute() or not private_key.is_absolute():
-        raise ConfigError("[tls]: 'certificate' et 'private_key' doivent être absolus")
+        raise ConfigError("[tls]: 'certificate' and 'private_key' must be absolute")
     return TLSConfig(enabled=True, certificate=certificate, private_key=private_key)
 
 
@@ -317,63 +318,63 @@ def _parse_zone(raw_zone: object, index: int, warnings: list[str]) -> ZoneConfig
     ztype = _get_str(table, "type", where, default="local").lower()
     if ztype != "local":
         raise ConfigError(
-            f"{where}: type de destination '{ztype}' non supporté en V1 "
-            "(seul 'local' est implémenté)"
+            f"{where}: destination type '{ztype}' is not supported in V1 "
+            "(only 'local' is implemented)"
         )
     zid = _get_str(table, "id", where)
     if not _ZONE_ID_RE.fullmatch(zid):
         raise ConfigError(
-            f"{where}: id de zone invalide : {zid!r} "
-            "(caractères autorisés : a-z, chiffres, '-', '_')"
+            f"{where}: invalid zone ID: {zid!r} "
+            "(allowed characters: a-z, digits, '-', '_')"
         )
     label = _get_str(table, "label", where, default=zid)
     directory_raw = _get_str(table, "directory", where)
     directory = Path(os.path.expanduser(directory_raw))
     if not directory.is_absolute():
         raise ConfigError(
-            f"{where}: 'directory' doit être un chemin absolu "
-            f"(relatif au serveur Pasteberth, pas au navigateur) : {directory_raw!r}"
+            f"{where}: 'directory' must be an absolute path "
+            f"(relative to the Pasteberth server, not the browser): {directory_raw!r}"
         )
     if "\x00" in directory_raw:
-        raise ConfigError(f"{where}: 'directory' contient un caractère NUL")
+        raise ConfigError(f"{where}: 'directory' contains a NUL character")
     retain = table.get("retain", 10)
     if isinstance(retain, bool) or not isinstance(retain, int) or not (1 <= retain <= 10_000):
-        raise ConfigError(f"{where}: 'retain' doit être un entier entre 1 et 10000")
+        raise ConfigError(f"{where}: 'retain' must be an integer between 1 and 10000")
     prefix = _get_str(table, "reference_prefix", where, default="@", allow_empty=True)
     if len(prefix) > 16:
-        raise ConfigError(f"{where}: 'reference_prefix' trop long (16 caractères max)")
+        raise ConfigError(f"{where}: 'reference_prefix' is too long (maximum 16 characters)")
     suffix = _get_str(table, "reference_suffix", where, default="", allow_empty=True)
     if len(suffix) > 16:
-        raise ConfigError(f"{where}: 'reference_suffix' trop long (16 caractères max)")
+        raise ConfigError(f"{where}: 'reference_suffix' is too long (maximum 16 characters)")
     list_prefix = _get_str(
         table, "reference_list_prefix", where, default="", allow_empty=True
     )
     if len(list_prefix) > 16:
         raise ConfigError(
-            f"{where}: 'reference_list_prefix' trop long (16 caractères max)"
+            f"{where}: 'reference_list_prefix' is too long (maximum 16 characters)"
         )
     list_suffix = _get_str(
         table, "reference_list_suffix", where, default="", allow_empty=True
     )
     if len(list_suffix) > 16:
         raise ConfigError(
-            f"{where}: 'reference_list_suffix' trop long (16 caractères max)"
+            f"{where}: 'reference_list_suffix' is too long (maximum 16 characters)"
         )
     separator = _get_str(
         table, "reference_separator", where, default=",", allow_empty=True
     )
     if len(separator) > 16:
         raise ConfigError(
-            f"{where}: 'reference_separator' trop long (16 caractères max)"
+            f"{where}: 'reference_separator' is too long (maximum 16 characters)"
         )
     allow_zip_download = _get_bool(table, "allow_zip_download", where, default=True)
     color = _get_str(table, "color", where, default="#243447")
     if not _COLOR_RE.fullmatch(color):
-        raise ConfigError(f"{where}: 'color' doit être au format #RRGGBB : {color!r}")
+        raise ConfigError(f"{where}: 'color' must use #RRGGBB format: {color!r}")
     color = color.lower()
     if _best_contrast(color) < 4.5:
         raise ConfigError(
-            f"{where}: 'color' ne permet pas un contraste texte suffisant : {color!r}"
+            f"{where}: 'color' does not provide sufficient text contrast: {color!r}"
         )
     create_dir = _get_bool(table, "create_directory", where, default=True)
     min_free_percent = _get_percent(
@@ -400,13 +401,13 @@ def _parse_groups(raw: object, warnings: list[str]) -> tuple[GroupConfig, ...]:
     if raw is None:
         return ()
     if not isinstance(raw, list):
-        raise ConfigError("'groups' doit être une liste de tables")
+        raise ConfigError("'groups' must be a list of tables")
     groups = []
     seen_names = set()
     for index, item in enumerate(raw):
         where = f"[[groups]] #{index + 1}"
         if not isinstance(item, dict):
-            raise ConfigError(f"{where}: doit être une table")
+            raise ConfigError(f"{where}: must be a table")
         _warn_unknown(
             item,
             {"name", "selection", "pattern", "layout", "hide_empty", "show_count"},
@@ -415,12 +416,12 @@ def _parse_groups(raw: object, warnings: list[str]) -> tuple[GroupConfig, ...]:
         )
         name = _get_str(item, "name", where)
         if name in seen_names:
-            raise ConfigError(f"{where}: nom de groupe dupliqué : {name!r}")
+            raise ConfigError(f"{where}: duplicate group name: {name!r}")
         seen_names.add(name)
         selection = _get_str(item, "selection", where, default="pattern").lower()
         if selection not in _GROUP_SELECTIONS:
             raise ConfigError(
-                f"{where}: 'selection' doit être parmi {sorted(_GROUP_SELECTIONS)}"
+                f"{where}: 'selection' must be one of {sorted(_GROUP_SELECTIONS)}"
             )
         raw_pattern = item.get("pattern")
         pattern_defined = "pattern" in item
@@ -428,23 +429,23 @@ def _parse_groups(raw: object, warnings: list[str]) -> tuple[GroupConfig, ...]:
             not isinstance(raw_pattern, list)
             or not all(isinstance(pattern, str) for pattern in raw_pattern)
         ):
-            raise ConfigError(f"{where}: 'pattern' doit être une liste de chaînes")
+            raise ConfigError(f"{where}: 'pattern' must be a list of strings")
         pattern = tuple(raw_pattern or ())
         if selection == "pattern" and not pattern:
-            raise ConfigError(f"{where}: 'pattern' ne peut pas être vide")
+            raise ConfigError(f"{where}: 'pattern' cannot be empty")
         if selection == "pattern":
             for expression in pattern:
                 try:
                     re.compile(expression)
                 except re.error as exc:
                     raise ConfigError(
-                        f"{where}: expression régulière invalide dans 'pattern' "
+                        f"{where}: invalid regular expression in 'pattern' "
                         f"{expression!r} ({exc})"
                     ) from exc
         layout = _get_str(item, "layout", where, default="area").lower()
         if layout not in _GROUP_LAYOUTS:
             raise ConfigError(
-                f"{where}: 'layout' doit être parmi {sorted(_GROUP_LAYOUTS)}"
+                f"{where}: 'layout' must be one of {sorted(_GROUP_LAYOUTS)}"
             )
         hide_empty = _get_bool(item, "hide_empty", where, default=False)
         show_count = _get_bool(item, "show_count", where, default=True)
@@ -463,7 +464,7 @@ def _parse_groups(raw: object, warnings: list[str]) -> tuple[GroupConfig, ...]:
 def resolve_group_zone_ids(
     groups: tuple[GroupConfig, ...], zone_ids: Iterable[str],
 ) -> dict[str, tuple[str, ...]]:
-    """Calcule les zones effectives de chaque groupe sans accéder au stockage."""
+    """Compute effective group zones without accessing storage."""
     ordered_zone_ids = tuple(zone_ids)
     pattern_zone_ids: set[str] = set()
     resolved: dict[str, tuple[str, ...]] = {}
@@ -492,13 +493,13 @@ def _parse_trusted_proxies(raw: object, warnings: list[str]) -> tuple:
     if raw is None:
         return ()
     if not isinstance(raw, list) or not all(isinstance(v, str) for v in raw):
-        raise ConfigError("'trusted_proxies' doit être une liste de chaînes (IP ou CIDR)")
+        raise ConfigError("'trusted_proxies' must be a list of strings (IP or CIDR)")
     networks = []
     for item in raw:
         try:
             networks.append(ipaddress.ip_network(item, strict=False))
         except ValueError as exc:
-            raise ConfigError(f"'trusted_proxies': entrée invalide {item!r} ({exc})") from exc
+            raise ConfigError(f"'trusted_proxies': invalid entry {item!r} ({exc})") from exc
     return tuple(networks)
 
 
@@ -506,12 +507,12 @@ def _parse_allowed_hosts(raw: object) -> tuple[str, ...]:
     if raw is None:
         return ()
     if not isinstance(raw, list) or not all(isinstance(v, str) for v in raw):
-        raise ConfigError("'allowed_hosts' doit être une liste de noms d'hôte")
+        raise ConfigError("'allowed_hosts' must be a list of hostnames")
     hosts: list[str] = []
     for item in raw:
         host = item.strip().lower().rstrip(".")
         if not host:
-            raise ConfigError("'allowed_hosts' ne peut pas contenir de valeur vide")
+            raise ConfigError("'allowed_hosts' cannot contain an empty value")
         if host.startswith("[") and host.endswith("]"):
             host = host[1:-1]
         try:
@@ -522,30 +523,30 @@ def _parse_allowed_hosts(raw: object) -> tuple[str, ...]:
                 or not re.fullmatch(r"[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?", host)
                 or ".." in host
             ):
-                raise ConfigError(f"'allowed_hosts': nom d'hôte invalide {item!r}")
+                raise ConfigError(f"'allowed_hosts': invalid hostname {item!r}")
         if host not in hosts:
             hosts.append(host)
     return tuple(hosts)
 
 
 def _parse_url_prefix(raw: object) -> str:
-    """Valide un préfixe de publication sans ambiguïté de chemin."""
+    """Validate a publication prefix without ambiguous path syntax."""
     if raw is None or raw == "":
         return ""
     if not isinstance(raw, str) or not _URL_PREFIX_RE.fullmatch(raw):
         raise ConfigError(
-            "'url_prefix' doit être vide ou un chemin comme '/paste' "
-            "sans slash final, query ou fragment"
+            "'url_prefix' must be empty or a path such as '/paste' "
+            "without a trailing slash, query, or fragment"
         )
     if any(segment in {".", ".."} for segment in raw.split("/")[1:]):
-        raise ConfigError("'url_prefix' ne peut pas contenir de segment '.' ou '..'")
+        raise ConfigError("'url_prefix' cannot contain a '.' or '..' segment")
     return raw
 
 
 def public_path(prefix: str, path: str) -> str:
-    """Construit un chemin public à partir d'un chemin applicatif absolu."""
+    """Build a public path from an absolute application path."""
     if not path.startswith("/"):
-        raise ValueError("un chemin public doit commencer par '/'")
+        raise ValueError("a public path must start with '/'")
     if not prefix:
         return path
     if path == prefix or path.startswith(prefix + "/"):
@@ -554,20 +555,20 @@ def public_path(prefix: str, path: str) -> str:
 
 
 def load_config(path: Path) -> Config:
-    """Charge, valide et retourne la configuration."""
+    """Load, validate, and return the configuration."""
     path = Path(path)
     try:
         raw_bytes = path.read_bytes()
     except FileNotFoundError as exc:
-        raise ConfigError(f"fichier de configuration introuvable : {path}") from exc
+        raise ConfigError(f"configuration file not found: {path}") from exc
     except ValueError as exc:
-        raise ConfigError(f"chemin de configuration invalide : {path}") from exc
+        raise ConfigError(f"invalid configuration path: {path}") from exc
     except OSError as exc:
-        raise ConfigError(f"fichier de configuration illisible : {path} ({exc})") from exc
+        raise ConfigError(f"configuration file cannot be read: {path} ({exc})") from exc
     try:
         data = tomllib.loads(raw_bytes.decode("utf-8"))
     except (tomllib.TOMLDecodeError, UnicodeDecodeError) as exc:
-        raise ConfigError(f"TOML invalide dans {path} : {exc}") from exc
+        raise ConfigError(f"invalid TOML in {path}: {exc}") from exc
 
     warnings: list[str] = []
     _warn_unknown(
@@ -575,7 +576,7 @@ def load_config(path: Path) -> Config:
         {"listen_address", "port", "max_upload_size", "trusted_proxies",
           "max_image_pixels",
           "allowed_hosts", "url_prefix",
-         "allow_unauthenticated_local", "allow_unauthenticated_remote",
+          "show_full_path", "allow_unauthenticated_local", "allow_unauthenticated_remote",
          "allow_insecure_http_remote", "accept_bin", "accept_img", "accept_doc",
          "auth", "tls",
          "zones", "groups", "log_level"},
@@ -586,15 +587,15 @@ def load_config(path: Path) -> Config:
     listen = _get_str(data, "listen_address", "config", default="127.0.0.1")
     port = data.get("port", 8765)
     if isinstance(port, bool) or not isinstance(port, int) or not (1 <= port <= 65535):
-        raise ConfigError("'port' doit être un entier entre 1 et 65535")
+        raise ConfigError("'port' must be an integer between 1 and 65535")
 
     max_upload_bytes = parse_size(
         data.get("max_upload_size", DEFAULT_MAX_UPLOAD_BYTES)
     )
     if max_upload_bytes < 1024:
-        raise ConfigError("'max_upload_size' est trop petit (minimum 1KB)")
+        raise ConfigError("'max_upload_size' is too small (minimum 1KB)")
     if max_upload_bytes > MAX_UPLOAD_BYTES:
-        raise ConfigError("'max_upload_size' est trop grand (maximum 50MiB)")
+        raise ConfigError("'max_upload_size' is too large (maximum 50MiB)")
 
     max_image_pixels = data.get("max_image_pixels", MAX_PIXELS)
     if (
@@ -603,7 +604,7 @@ def load_config(path: Path) -> Config:
         or not (1 <= max_image_pixels <= HARD_MAX_PIXELS)
     ):
         raise ConfigError(
-            f"'max_image_pixels' doit être un entier entre 1 et {HARD_MAX_PIXELS}"
+            f"'max_image_pixels' must be an integer between 1 and {HARD_MAX_PIXELS}"
         )
 
     trusted_proxies = _parse_trusted_proxies(data.get("trusted_proxies"), warnings)
@@ -611,6 +612,7 @@ def load_config(path: Path) -> Config:
     # multi-station wildcard compatibility, while a non-empty list is strict.
     allowed_hosts = _parse_allowed_hosts(data.get("allowed_hosts"))
     url_prefix = _parse_url_prefix(data.get("url_prefix"))
+    show_full_path = _get_bool(data, "show_full_path", "config", default=True)
     allow_unauth_local = _get_bool(
         data, "allow_unauthenticated_local", "config", default=False
     )
@@ -628,16 +630,16 @@ def load_config(path: Path) -> Config:
 
     log_level = _get_str(data, "log_level", "config", default="INFO").upper()
     if log_level not in _LOG_LEVELS:
-        raise ConfigError(f"'log_level' doit être parmi {sorted(_LOG_LEVELS)}")
+        raise ConfigError(f"'log_level' must be one of {sorted(_LOG_LEVELS)}")
 
     raw_zones = data.get("zones")
     if not isinstance(raw_zones, list) or not raw_zones:
-        raise ConfigError("'zones' doit être une liste non vide ([[zones]])")
+        raise ConfigError("'zones' must be a non-empty list ([[zones]])")
     zones: dict[str, ZoneConfig] = {}
     for i, raw_zone in enumerate(raw_zones):
         zone = _parse_zone(raw_zone, i, warnings)
         if zone.id in zones:
-            raise ConfigError(f"id de zone dupliqué : {zone.id!r}")
+            raise ConfigError(f"duplicate zone ID: {zone.id!r}")
         zones[zone.id] = zone
 
     groups = _parse_groups(data.get("groups"), warnings)
@@ -650,6 +652,7 @@ def load_config(path: Path) -> Config:
         trusted_proxies=trusted_proxies,
         allowed_hosts=allowed_hosts,
         url_prefix=url_prefix,
+        show_full_path=show_full_path,
         allow_unauthenticated_local=allow_unauth_local,
         allow_unauthenticated_remote=allow_unauth_remote,
         allow_insecure_http_remote=allow_insecure_http_remote,
@@ -669,22 +672,22 @@ def load_config(path: Path) -> Config:
 
 
 def check_startup_policy(cfg: Config) -> bool:
-    """Refuse les expositions distantes non chiffrées ou anonymes."""
+    """Reject unencrypted or anonymous remote exposure."""
     loopback_only = is_loopback_address(cfg.listen_address)
     if not loopback_only and not cfg.tls.enabled and not cfg.allow_insecure_http_remote:
         raise ConfigError(
-            f"refus de démarrer : écoute HTTP non chiffrée sur '{cfg.listen_address}' "
-            "(non-loopback) ; activez [tls] pour cette adresse ou liez Pasteberth "
-            "à loopback derrière un reverse proxy HTTPS.\n"
-            "Pour forcer une écoute HTTP sur un réseau privé, ajoutez explicitement :\n"
+            f"refusing to start: unencrypted HTTP listener on '{cfg.listen_address}' "
+            "(non-loopback); enable [tls] for this address or bind Pasteberth "
+            "to loopback behind an HTTPS reverse proxy.\n"
+            "To force an HTTP listener on a private network, explicitly add:\n"
             "  allow_insecure_http_remote = true"
         )
     if cfg.auth.enabled:
         return loopback_only
     if not cfg.allowed_hosts:
         raise ConfigError(
-            "refus de démarrer : authentification désactivée avec 'allowed_hosts' vide. "
-            "Renseignez les hosts autorisés ou activez [auth]."
+            "refusing to start: authentication is disabled with empty 'allowed_hosts'. "
+            "List allowed hosts or enable [auth]."
         )
     if loopback_only and cfg.allow_unauthenticated_local:
         return loopback_only
@@ -692,32 +695,33 @@ def check_startup_policy(cfg: Config) -> bool:
         return loopback_only
     if loopback_only:
         raise ConfigError(
-            "refus de démarrer : authentification désactivée sur une écoute locale "
-            "sans opt-in explicite.\n"
-            "Un backend loopback peut être exposé par un reverse proxy.\n"
-            "Solutions :\n"
-            "  - activer l'authentification ([auth] enabled = true + `pasteberth passwd`) ;\n"
-            "  - en connaissance de cause : allow_unauthenticated_local = true."
+            "refusing to start: authentication is disabled on a local listener "
+            "without explicit opt-in.\n"
+            "A loopback backend can be exposed through a reverse proxy.\n"
+            "Options:\n"
+            "  - enable authentication ([auth] enabled = true + `pasteberth passwd`);\n"
+            "  - knowingly set allow_unauthenticated_local = true."
         )
     if not cfg.auth.enabled and not cfg.allow_unauthenticated_remote:
         raise ConfigError(
-            f"refus de démarrer : écoute sur '{cfg.listen_address}' (non-loopback) "
-            "avec authentification désactivée.\n"
-            "Un service sans mot de passe ne doit pas être exposé au réseau.\n"
-            "Solutions :\n"
-            "  - activer l'authentification ([auth] enabled = true + `pasteberth passwd`) ;\n"
-            "  - en connaissance de cause : allow_unauthenticated_remote = true."
+            f"refusing to start: listener on '{cfg.listen_address}' (non-loopback) "
+            "with authentication disabled.\n"
+            "A passwordless service must not be exposed to the network.\n"
+            "Options:\n"
+            "  - enable authentication ([auth] enabled = true + `pasteberth passwd`);\n"
+            "  - knowingly set allow_unauthenticated_remote = true."
         )
+    return loopback_only
 
 
 def default_config_path() -> Path:
-    """Chemin XDG par défaut : $XDG_CONFIG_HOME/pasteberth/config.toml."""
+    """Return the default XDG path: $XDG_CONFIG_HOME/pasteberth/config.toml."""
     xdg = os.environ.get("XDG_CONFIG_HOME") or os.path.expanduser("~/.config")
     return Path(xdg) / "pasteberth" / "config.toml"
 
 
 def repository_root() -> Path:
-    """Racine du dépôt qui contient le code Pasteberth."""
+    """Return the repository root containing the Pasteberth code."""
     configured = os.environ.get("PASTEBERTH_REPO_ROOT")
     if configured:
         return Path(configured).expanduser()
@@ -733,7 +737,7 @@ def default_storage_path() -> Path:
 
 
 def build_default_config() -> Config:
-    """Configuration minimale, locale et sans fichier utilisateur."""
+    """Build a minimal local configuration without a user file."""
     return Config(
         listen_address="127.0.0.1",
         port=8765,
@@ -742,6 +746,7 @@ def build_default_config() -> Config:
         trusted_proxies=(),
         allowed_hosts=("localhost", "127.0.0.1", "::1"),
         url_prefix="",
+        show_full_path=True,
         allow_unauthenticated_local=True,
         allow_unauthenticated_remote=False,
         allow_insecure_http_remote=False,
@@ -773,7 +778,7 @@ def build_default_config() -> Config:
 
 
 def find_config_path(explicit: str | None = None) -> Path | None:
-    """Trouve une configuration existante sans créer de fichier."""
+    """Find an existing configuration without creating a file."""
     if explicit:
         return Path(explicit)
     env = os.environ.get("PASTEBERTH_CONFIG")
@@ -789,7 +794,7 @@ def find_config_path(explicit: str | None = None) -> Path | None:
 
 
 def config_path_for_generation(explicit: str | None = None) -> Path:
-    """Chemin cible de ``--generate-config`` (dépôt par défaut)."""
+    """Return the ``--generate-config`` target (repository by default)."""
     if explicit:
         return Path(explicit)
     env = os.environ.get("PASTEBERTH_CONFIG")
@@ -808,7 +813,7 @@ def resolve_config_path(explicit: str | None = None) -> Path:
 
 
 def prepare_directories(cfg: Config) -> None:
-    """Crée/vérifie les répertoires des zones au démarrage (échec rapide)."""
+    """Create/check zone directories at startup (fail fast)."""
     fs = platform_fs()
     seen: dict[tuple[int, int], str] = {}
     for zone in cfg.zones.values():
@@ -816,11 +821,11 @@ def prepare_directories(cfg: Config) -> None:
             symlink = fs.first_symlink_component(zone.directory)
         except (OSError, ValueError) as exc:
             raise ConfigError(
-                f"zone '{zone.id}': impossible d'inspecter {zone.directory} ({exc})"
+                f"zone '{zone.id}': cannot inspect {zone.directory} ({exc})"
             ) from exc
         if symlink is not None:
             raise ConfigError(
-                f"zone '{zone.id}': le chemin contient un lien symbolique : {symlink}"
+                f"zone '{zone.id}': path contains a symbolic link: {symlink}"
             )
         try:
             directory = fs.open_directory(
@@ -831,33 +836,33 @@ def prepare_directories(cfg: Config) -> None:
         except FileNotFoundError as exc:
             if not zone.create_directory:
                 raise ConfigError(
-                    f"zone '{zone.id}': répertoire inexistant et create_directory = false : "
+                    f"zone '{zone.id}': directory is missing and create_directory = false: "
                     f"{zone.directory}"
                 ) from exc
             raise ConfigError(
-                f"zone '{zone.id}': impossible de créer {zone.directory} ({exc})"
+                f"zone '{zone.id}': cannot create {zone.directory} ({exc})"
             ) from exc
         except NotADirectoryError as exc:
             raise ConfigError(
-                f"zone '{zone.id}': '{zone.directory}' existe mais n'est pas un répertoire"
+                f"zone '{zone.id}': '{zone.directory}' exists but is not a directory"
             ) from exc
         except (OSError, ValueError, UnsupportedFilesystemError) as exc:
             raise ConfigError(
-                f"zone '{zone.id}': impossible d'inspecter {zone.directory} ({exc})"
+                f"zone '{zone.id}': cannot inspect {zone.directory} ({exc})"
             ) from exc
         try:
             with directory:
                 audit = fs.audit_permissions(zone.directory, directory=True)
                 mode = audit.mode
-            # Feature: les répertoires partagés (group/other read ou write) sont
-            # acceptés avec un avertissement, pas refusés. Refuser pousserait les
-            # opérateurs à contourner la protection (chmod 777, désactivation du
-            # service, stockage hors zone). Le 0700 reste recommandé.
+            # Shared directories (group/other read or write) are accepted with a
+            # warning, not rejected. Rejection would push operators to bypass
+            # the protection (chmod 777, disabling the service, or off-zone
+            # storage). 0700 remains recommended.
             if (mode is not None and mode & 0o077) or (mode is None and not audit.private):
                 permission_detail = oct(mode) if mode is not None else (audit.detail or "ACL")
                 log.warning(
-                    "zone '%s': permissions non privées sur %s (%s) ; "
-                    "0700 est recommandé",
+                    "zone '%s': permissions are not private on %s (%s); "
+                    "0700 is recommended",
                     zone.id,
                     zone.directory,
                     permission_detail,
@@ -865,23 +870,23 @@ def prepare_directories(cfg: Config) -> None:
             identity = directory.identity
         except (OSError, UnsupportedFilesystemError) as exc:
             raise ConfigError(
-                f"zone '{zone.id}': impossible d'inspecter {zone.directory} ({exc})"
+                f"zone '{zone.id}': cannot inspect {zone.directory} ({exc})"
             ) from exc
         if not fs.check_access(zone.directory, write=True, execute=True):
             raise ConfigError(
-                f"zone '{zone.id}': répertoire non accessible en écriture : {zone.directory}"
+                f"zone '{zone.id}': directory is not writable: {zone.directory}"
             )
         previous = seen.get(identity)
         if previous is not None:
             raise ConfigError(
-                f"zones '{previous}' et '{zone.id}' ciblent le même répertoire "
+                f"zones '{previous}' and '{zone.id}' target the same directory "
                 f"({zone.directory})"
             )
         seen[identity] = zone.id
 
 
 def validate_directory_identities(cfg: Config) -> None:
-    """Vérifie les collisions de répertoires sans créer les destinations."""
+    """Check directory collisions without creating destinations."""
     fs = platform_fs()
     seen: dict[tuple[int, int], str] = {}
     configured: dict[Path, str] = {}
@@ -890,7 +895,7 @@ def validate_directory_identities(cfg: Config) -> None:
         previous_path = configured.get(normalized)
         if previous_path is not None:
             raise ConfigError(
-                f"zones '{previous_path}' et '{zone.id}' ciblent le même répertoire "
+                f"zones '{previous_path}' and '{zone.id}' target the same directory "
                 f"({zone.directory})"
             )
         configured[normalized] = zone.id
@@ -901,12 +906,12 @@ def validate_directory_identities(cfg: Config) -> None:
             continue
         except (NotADirectoryError, OSError, UnsupportedFilesystemError) as exc:
             raise ConfigError(
-                f"zone '{zone.id}': impossible d'inspecter {zone.directory} ({exc})"
+                f"zone '{zone.id}': cannot inspect {zone.directory} ({exc})"
             ) from exc
         previous = seen.get(identity)
         if previous is not None:
             raise ConfigError(
-                f"zones '{previous}' et '{zone.id}' ciblent le même répertoire "
+                f"zones '{previous}' and '{zone.id}' target the same directory "
                 f"({zone.directory})"
             )
         seen[identity] = zone.id

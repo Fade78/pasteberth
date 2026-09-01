@@ -19,6 +19,7 @@ from pasteberth.storage import (
     RetentionError,
     StorageConflictError,
     StorageLowError,
+    validate_comment,
     valid_filename,
 )
 from pasteberth.platformfs import VolumeSpace, platform_fs
@@ -98,6 +99,28 @@ class TestSauvegarde(Base):
         self.assertEqual(items[0].kind, "image")
         self.assertEqual(items[0].mime, "image/png")
         self.assertEqual(len(self.dest.read(stored.filename)), len(make_png(2, 2)))
+
+    def test_commentaire_unicode_est_persistant_sans_recrire_les_donnees(self):
+        data = make_png(3, 2)
+        stored = self.dest.save(data, INFO(3, 2))
+        updated = self.dest.update_comment(stored.filename, "Projet 🚀 — prêt")
+
+        self.assertEqual(updated.comment, "Projet 🚀 — prêt")
+        self.assertEqual(self.dest.read(stored.filename), data)
+        self.assertEqual(self.dest.list()[0].comment, "Projet 🚀 — prêt")
+        sidecar = (self.dir / (stored.filename + ".json")).read_text(encoding="utf-8")
+        self.assertIn("🚀", sidecar)
+        self.assertEqual(json.loads(sidecar)["comment"], "Projet 🚀 — prêt")
+
+    def test_commentaire_refuse_les_caracteres_non_surs(self):
+        for value in ("line\nfeed", "zero\u200bwidth", "right\u202eleft", "\ufffe", "\ud800", "\ue000"):
+            with self.subTest(value=repr(value)):
+                with self.assertRaises(ValueError):
+                    validate_comment(value)
+        with self.assertRaises(ValueError):
+            validate_comment("x" * 281)
+        with self.assertRaises(ValueError):
+            validate_comment("🚀" * 300)
 
     def test_collision_forcee_resolue(self):
         saved = []
@@ -1040,7 +1063,7 @@ class TestSauvegarde(Base):
     def test_sidecar_orphelin_refuse_en_remplacement(self):
         stored = self.save()[0]
         (self.dir / stored.filename).unlink()
-        with self.assertRaisesRegex(DestinationError, "orphelin"):
+        with self.assertRaisesRegex(DestinationError, "orphan sidecar"):
             self.dest.save(b"new", INFO(), filename=stored.filename)
 
     def test_renommage_deplace_le_fichier_et_le_sidecar(self):
@@ -2312,14 +2335,14 @@ class TestDirectoryHandleBinding(Base):
             self.assertTrue((original / stored.filename).is_file())
             self.assertFalse((self.dir / stored.filename).exists())
 
-        with self.assertRaisesRegex(DestinationError, "remplac"):
+        with self.assertRaisesRegex(DestinationError, "zone directory was replaced"):
             self.dest.list()
 
     def test_repertoire_remplace_hors_operation_n_est_pas_recree(self):
         original = self.dir.parent / "images-original"
         self.dir.rename(original)
 
-        with self.assertRaisesRegex(DestinationError, "remplac"):
+        with self.assertRaisesRegex(DestinationError, "zone directory was replaced"):
             self.dest.list()
 
         self.assertFalse(self.dir.exists())
@@ -2457,7 +2480,7 @@ class TestRepertoires(unittest.TestCase):
         outside.mkdir(mode=0o700)
         link = self.tmp / "link"
         link.symlink_to(outside, target_is_directory=True)
-        with self.assertRaisesRegex(DestinationError, "symbolique"):
+        with self.assertRaisesRegex(DestinationError, "path contains a rejected symbolic link"):
             LocalDestination(link / "images")
 
     def test_reference_path_absolu(self):

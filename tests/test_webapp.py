@@ -70,6 +70,7 @@ class Base(unittest.TestCase):
             accept_bin=self.config_kwargs.get("accept_bin"),
             accept_img=self.config_kwargs.get("accept_img"),
             accept_doc=self.config_kwargs.get("accept_doc"),
+            show_full_path=self.config_kwargs.get("show_full_path"),
             groups=self.config_kwargs.get("groups"),
         )
         self.tmp = tmp
@@ -180,6 +181,90 @@ class TestPublic(Base):
             self.assertTrue(headers["content-type"].startswith(ctype), path)
             if path != "/static/favicon.svg":
                 self.assertEqual(headers["cache-control"], "no-store", path)
+
+    def test_overview_expose_le_reglage_des_chemins_complets(self):
+        status, _, response = self.req("GET", "/api/zones")
+        self.assertEqual(status, 200)
+        self.assertTrue(json_of(response)["show_full_path"])
+
+
+class TestComments(Base):
+    def _upload(self):
+        body, ctype = build_multipart(data=make_png(5, 4))
+        status, _, response = self.req(
+            "POST",
+            "/api/zones/default/images",
+            body=body,
+            headers={"Content-Type": ctype},
+        )
+        self.assertEqual(status, 201)
+        return json_of(response)
+
+    def _patch_comment(self, filename, comment, origin=None):
+        headers = {"Content-Type": "application/json"}
+        if origin is not None:
+            headers["Origin"] = origin
+        return self.req(
+            "PATCH",
+            f"/api/zones/default/images/{urllib.parse.quote(filename, safe='')}/comment",
+            body=json.dumps({"comment": comment}, ensure_ascii=False).encode("utf-8"),
+            headers=headers,
+        )
+
+    def test_commentaire_unicode_est_retourne_et_restaure(self):
+        item = self._upload()
+        status, _, response = self._patch_comment(item["filename"], "Desk 🚀 — prêt")
+        self.assertEqual(status, 200)
+        self.assertEqual(json_of(response)["comment"], "Desk 🚀 — prêt")
+
+        status, _, response = self.req("GET", "/api/zones/default/images")
+        self.assertEqual(status, 200)
+        self.assertEqual(json_of(response)["images"][0]["comment"], "Desk 🚀 — prêt")
+        self.server.restart()
+        status, _, response = self.req("GET", "/api/zones/default/images")
+        self.assertEqual(status, 200)
+        self.assertEqual(json_of(response)["images"][0]["comment"], "Desk 🚀 — prêt")
+
+    def test_commentaire_invalide_et_origine_etrangere_sont_refuses(self):
+        item = self._upload()
+        status, _, response = self._patch_comment(item["filename"], "line\nfeed")
+        self.assertEqual(status, 400)
+        self.assertEqual(json_of(response)["error"]["code"], "invalid_comment")
+
+        status, _, response = self.req(
+            "PATCH",
+            f"/api/zones/default/images/{urllib.parse.quote(item['filename'], safe='')}/comment",
+            body=b'{"comment":"first","comment":"second"}',
+            headers={"Content-Type": "application/json"},
+        )
+        self.assertEqual(status, 400)
+        self.assertEqual(json_of(response)["error"]["code"], "invalid_request")
+
+        status, _, response = self._patch_comment(
+            item["filename"], "valid", origin="https://evil.example.com"
+        )
+        self.assertEqual(status, 403)
+        self.assertEqual(json_of(response)["error"]["code"], "forbidden_origin")
+
+
+class TestHiddenFullPath(Base):
+    config_kwargs = {"show_full_path": False}
+
+    def test_chemin_cache_dans_l_interface_mais_conserve_dans_api(self):
+        status, _, response = self.req("GET", "/api/zones")
+        self.assertEqual(status, 200)
+        overview = json_of(response)
+        self.assertFalse(overview["show_full_path"])
+
+        body, ctype = build_multipart(data=make_png())
+        status, _, response = self.req(
+            "POST",
+            "/api/zones/default/images",
+            body=body,
+            headers={"Content-Type": ctype},
+        )
+        self.assertEqual(status, 201)
+        self.assertTrue(json_of(response)["reference"])
 
 
 class TestConfigurationProxyParDefaut(Base):

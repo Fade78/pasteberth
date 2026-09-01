@@ -118,6 +118,21 @@ class TestContratsFrontend(unittest.TestCase):
         self.assertIn('className = "new-badge"', self.app_js)
         self.assertIn(".new-badge", self.style_css)
 
+    def test_commentaires_et_infobulles_detaillees(self):
+        self.assertIn('method: "PATCH"', self.app_js)
+        self.assertIn("/comment`", self.app_js)
+        self.assertIn("function renderCommentControl", self.app_js)
+        self.assertIn('button.textContent = item.comment ? "Edit comment" : "Comment";', self.app_js)
+        self.assertIn("comment-text", self.app_js)
+        self.assertIn("function itemDetails", self.app_js)
+        self.assertIn("wrap.title = itemDetails", self.app_js)
+        self.assertIn("img.title = itemDetails", self.app_js)
+
+    def test_option_chemin_complet(self):
+        self.assertIn("showFullPath", self.app_js)
+        self.assertIn("show_full_path", self.app_js)
+        self.assertIn("pvRef.hidden = !state.showFullPath", self.app_js)
+
     def test_index_selection_et_zoom(self):
         self.assertIn("selectedByZone", self.app_js)
         self.assertIn("history-index", self.app_js)
