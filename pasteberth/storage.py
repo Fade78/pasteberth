@@ -300,6 +300,7 @@ class Destination(ABC):
         filename: str | None = None,
         *,
         allow_replace: bool = False,
+        adopt_existing: bool = False,
     ) -> StoredImage: ...
 
     @abstractmethod
@@ -2789,6 +2790,103 @@ class LocalDestination(Destination):
         except (OSError, UnsupportedFilesystemError) as exc:
             raise DestinationError(f"inspection impossible de {name!r} : {exc}") from exc
 
+    @staticmethod
+    def _stored_item_and_meta(
+        data: bytes,
+        info: ImageInfo,
+        filename: str,
+    ) -> tuple[StoredImage, dict]:
+        created_at = datetime.now(timezone.utc)
+        stored = StoredImage(
+            filename=filename,
+            created_at=created_at,
+            width=info.width,
+            height=info.height,
+            size=len(data),
+            fmt=info.fmt,
+            kind=info.kind,
+            mime=info.mime,
+        )
+        return stored, {
+            "filename": filename,
+            "created_at": created_at.isoformat(timespec="microseconds"),
+            "width": stored.width,
+            "height": stored.height,
+            "size": stored.size,
+            "format": stored.fmt,
+            "kind": stored.kind,
+            "mime": stored.mime,
+        }
+
+    def _adopt_named(
+        self,
+        directory_fd: DirectoryHandle,
+        data: bytes,
+        info: ImageInfo,
+        filename: str,
+    ) -> StoredImage:
+        """Ajoute le sidecar d'un fichier existant sans réécrire ses données."""
+        meta_name = self._meta_name(filename)
+        file_handle = None
+        try:
+            file_handle = self._open_file(directory_fd, filename, "rb")
+            target_identity = file_handle.identity
+            if file_handle.size != len(data):
+                raise StorageConflictError(
+                    f"fichier modifié pendant l'adoption : {filename!r}"
+                )
+            file_handle.seek(0)
+            offset = 0
+            while chunk := file_handle.read(1024 * 1024):
+                if data[offset:offset + len(chunk)] != chunk:
+                    raise StorageConflictError(
+                        f"fichier modifié pendant l'adoption : {filename!r}"
+                    )
+                offset += len(chunk)
+            if offset != len(data):
+                raise StorageConflictError(
+                    f"fichier modifié pendant l'adoption : {filename!r}"
+                )
+            if self._entry_identity(directory_fd, filename) != target_identity:
+                raise StorageConflictError(
+                    f"fichier modifié pendant l'adoption : {filename!r}"
+                )
+            if self._entry_exists(directory_fd, meta_name):
+                raise StorageConflictError(
+                    f"sidecar apparu pendant l'adoption : {filename!r}"
+                )
+
+            stored, meta = self._stored_item_and_meta(data, info, filename)
+            self._write_meta_atomic(directory_fd, meta)
+            meta_identity = self._entry_identity(directory_fd, meta_name)
+            if meta_identity is None:
+                raise StorageConflictError(
+                    f"sidecar disparu pendant l'adoption : {filename!r}"
+                )
+            try:
+                target_still_matches = (
+                    self._entry_identity(directory_fd, filename) == target_identity
+                )
+            except (DestinationError, OSError):
+                target_still_matches = False
+            if not target_still_matches:
+                self._remove_expected(directory_fd, meta_name, meta_identity)
+                raise StorageConflictError(
+                    f"fichier modifié pendant l'adoption : {filename!r}"
+                )
+            return stored
+        except FileNotFoundError as exc:
+            raise StorageConflictError(
+                f"fichier disparu pendant l'adoption : {filename!r}"
+            ) from exc
+        except UnsafeLinkError as exc:
+            raise StorageConflictError(
+                f"fichier étranger non régulier : {filename!r}"
+            ) from exc
+        finally:
+            if file_handle is not None and not file_handle.closed:
+                file_handle.close()
+
     def _save_named(
         self,
         directory_fd: DirectoryHandle,
@@ -2797,6 +2895,7 @@ class LocalDestination(Destination):
         filename: str,
         *,
         allow_replace: bool = False,
+        adopt_existing: bool = False,
     ) -> StoredImage:
         meta_name = self._meta_name(filename)
         if filename in self._active_transaction_names(directory_fd):
@@ -2808,6 +2907,8 @@ class LocalDestination(Destination):
         target_identity: tuple[int, int] | None = None
         meta_identity: tuple[int, int] | None = None
         if target_exists and not meta_exists:
+            if adopt_existing:
+                return self._adopt_named(directory_fd, data, info, filename)
             # Fichier étranger : jamais écrasé, conflit côté client (409).
             raise StorageConflictError(
                 f"fichier etranger present sans sidecar : {filename!r}"
@@ -2833,27 +2934,7 @@ class LocalDestination(Destination):
                     f"remplacement explicite requis pour {filename!r}"
                 )
 
-        created_at = datetime.now(timezone.utc)
-        stored = StoredImage(
-            filename=filename,
-            created_at=created_at,
-            width=info.width,
-            height=info.height,
-            size=len(data),
-            fmt=info.fmt,
-            kind=info.kind,
-            mime=info.mime,
-        )
-        meta = {
-            "filename": filename,
-            "created_at": created_at.isoformat(timespec="microseconds"),
-            "width": stored.width,
-            "height": stored.height,
-            "size": stored.size,
-            "format": stored.fmt,
-            "kind": stored.kind,
-            "mime": stored.mime,
-        }
+        stored, meta = self._stored_item_and_meta(data, info, filename)
         data_temp = self._write_data_temp(directory_fd, data)
         data_temp_identity = self._entry_identity(directory_fd, data_temp)
         try:
@@ -3122,6 +3203,7 @@ class LocalDestination(Destination):
         filename: str | None = None,
         *,
         allow_replace: bool = False,
+        adopt_existing: bool = False,
     ) -> StoredImage:
         self._ensure_dir()
         if filename is not None:
@@ -3134,6 +3216,7 @@ class LocalDestination(Destination):
                     info,
                     filename,
                     allow_replace=allow_replace,
+                    adopt_existing=adopt_existing,
                 )
         ext = info.ext
         last_exc: Exception | None = None

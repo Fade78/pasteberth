@@ -1,5 +1,6 @@
 """Tests CLI (sous-processus) : --version, erreurs de config, politique de
 démarrage, commande passwd."""
+import json
 import os
 import stat
 import socket
@@ -717,6 +718,23 @@ class TestFilesystemDrop(unittest.TestCase):
         self.assertEqual(proc.returncode, 1)
         self.assertIn("fichier etranger", proc.stderr)
         self.assertEqual(foreign.read_text(encoding="utf-8"), "foreign\n")
+
+    def test_adopte_un_fichier_deja_dans_la_zone(self):
+        target = self.zone / "already.txt"
+        self.zone.mkdir(parents=True)
+        target.write_text("already here\n", encoding="utf-8")
+
+        proc = self._run_drop(target)
+
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertIn("@", proc.stdout)
+        self.assertEqual(target.read_text(encoding="utf-8"), "already here\n")
+        metadata = json.loads(
+            (self.zone / (target.name + ".json")).read_text(encoding="utf-8")
+        )
+        self.assertEqual(metadata["filename"], target.name)
+        self.assertEqual(metadata["size"], len(b"already here\n"))
+        self.assertEqual(metadata["kind"], "text")
 
     def test_plusieurs_sources_sont_traitees_individuellement(self):
         first = self.tmp / "first.txt"

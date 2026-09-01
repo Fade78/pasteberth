@@ -296,6 +296,9 @@ def _cmd_filesystem_drop(args: argparse.Namespace) -> int:
             source = _command_path(raw_source)
             data = _read_drop_source(source, cfg.max_upload_bytes)
             declared_mime = mimetypes.guess_type(source.name)[0] or "application/octet-stream"
+            source_directory = os.path.normcase(os.path.normpath(str(source.parent)))
+            zone_directory = os.path.normcase(os.path.normpath(str(zone.directory)))
+            source_is_target = source_directory == zone_directory
             item = service.upload(
                 zone.id,
                 data,
@@ -303,6 +306,7 @@ def _cmd_filesystem_drop(args: argparse.Namespace) -> int:
                 source.name,
                 preserve_filename=True,
                 allow_replace=args.replace,
+                adopt_existing=source_is_target,
             )
         except (OSError, ValueError, ServiceError) as exc:
             failures += 1
@@ -929,7 +933,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_drop = sub.add_parser(
         "filesystem-drop",
-        help="dépose des fichiers dans une zone filesystem et crée leurs sidecars",
+        help="dépose ou adopte des fichiers dans une zone et crée leurs sidecars",
     )
     p_drop.add_argument("directory", help="répertoire exact de la zone configurée")
     p_drop.add_argument("files", nargs="+", help="fichiers sources à copier")

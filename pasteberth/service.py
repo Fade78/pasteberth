@@ -226,6 +226,7 @@ class PasteService:
         info,
         target_filename: str | None,
         allow_replace: bool,
+        adopt_existing: bool,
     ) -> StoredImage:
         try:
             device = destination.device_id
@@ -233,12 +234,16 @@ class PasteService:
             raise ServiceError("destination_error", str(exc)) from exc
         try:
             with self._space_locks[device].locked():
-                destination.ensure_space(len(data), zone.min_free_percent)
+                # Adoption only allocates the bounded JSON sidecar; the data
+                # file is already present in the zone.
+                incoming_bytes = 0 if adopt_existing else len(data)
+                destination.ensure_space(incoming_bytes, zone.min_free_percent)
                 stored = destination.save(
                     data,
                     info,
                     filename=target_filename,
                     allow_replace=allow_replace,
+                    adopt_existing=adopt_existing,
                 )
                 destination.apply_retention(zone.retain, stored.filename)
         except StorageLowError as exc:
@@ -335,6 +340,7 @@ class PasteService:
         preserve_filename: bool = False,
         *,
         allow_replace: bool = False,
+        adopt_existing: bool = False,
         blocking: bool = True,
     ) -> dict:
         if zid not in self._zone_cfg:
@@ -353,6 +359,7 @@ class PasteService:
                 info,
                 target_filename,
                 allow_replace,
+                adopt_existing,
             )
         return self.item_payload(zid, stored)
 

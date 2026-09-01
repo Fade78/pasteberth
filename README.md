@@ -123,7 +123,9 @@ pasteberth filesystem-drop --config config.toml \
 The source files remain unchanged. Pasteberth creates managed data/sidecar
 pairs and prints one reference for each successful source. Use
 `filesystem-rename` and `filesystem-delete` for managed operations; foreign
-files are never overwritten or removed.
+files are never overwritten or removed. When a source is already the exact
+file in the destination zone, `filesystem-drop` validates it and creates its
+missing sidecar without rewriting the data file.
 
 ## Documentation
 

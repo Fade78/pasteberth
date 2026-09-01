@@ -155,6 +155,58 @@ class TestSauvegarde(Base):
             self.dest.save(b"replacement", info, filename=foreign.name)
         self.assertEqual(foreign.read_bytes(), b"foreign")
 
+    def test_adoption_d_un_fichier_existant_cree_seulement_le_sidecar(self):
+        data = b"already here"
+        target = self.dir / "already.txt"
+        target.write_bytes(data)
+        info = ImageInfo(
+            fmt=None,
+            width=None,
+            height=None,
+            kind="text",
+            mime="text/plain",
+            ext=".txt",
+        )
+
+        with mock.patch.object(self.dest, "_write_data_temp", side_effect=AssertionError):
+            stored = self.dest.save(
+                data,
+                info,
+                filename=target.name,
+                adopt_existing=True,
+            )
+
+        self.assertEqual(stored.filename, target.name)
+        self.assertEqual(target.read_bytes(), data)
+        self.assertEqual(self.dest.read(target.name), data)
+        self.assertEqual([item.filename for item in self.dest.list()], [target.name])
+        metadata = json.loads((self.dir / (target.name + ".json")).read_text())
+        self.assertEqual(metadata["kind"], "text")
+        self.assertEqual(metadata["size"], len(data))
+
+    def test_adoption_refuse_un_contenu_deja_modifie(self):
+        target = self.dir / "already.txt"
+        target.write_bytes(b"original")
+        info = ImageInfo(
+            fmt=None,
+            width=None,
+            height=None,
+            kind="text",
+            mime="text/plain",
+            ext=".txt",
+        )
+
+        with self.assertRaises(StorageConflictError):
+            self.dest.save(
+                b"different",
+                info,
+                filename=target.name,
+                adopt_existing=True,
+            )
+
+        self.assertEqual(target.read_bytes(), b"original")
+        self.assertFalse((self.dir / (target.name + ".json")).exists())
+
     def test_nom_explicit_abandonne_si_cible_etrangere_apparait(self):
         info = ImageInfo(
             fmt=None,

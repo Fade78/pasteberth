@@ -466,6 +466,10 @@ zone. It is not the zone ID or UI label. One or more regular source files are
 accepted. Sources remain unchanged and the command prints one returned
 reference per successful source. The initial implementation is flat: each
 source basename is stored directly in the zone, never in a source subdirectory.
+If a source is already the exact file in the destination zone and has no
+sidecar, Pasteberth adopts it by validating the content and creating only its
+sidecar; the existing data file is not rewritten. A source outside the zone
+with the same basename still cannot overwrite a foreign file.
 
 Without `--replace`, an existing managed filename is refused. With
 `--replace`, only a coherent Pasteberth-managed pair may be replaced. A foreign
@@ -550,7 +554,9 @@ zone/
 The sidecar records metadata such as `filename`, `created_at`, `size`,
 `width`, `height`, `format`, `kind`, and `mime`. Older valid sidecar schemas
 remain readable. Pasteberth recognizes an item only when the data file and
-sidecar are coherent.
+sidecar are coherent. The `filesystem-drop` command may make the exact source
+file in its destination zone managed by creating that missing sidecar after
+validation. Other foreign files remain outside managed operations.
 
 Generated names use the form:
 
