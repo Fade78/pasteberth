@@ -479,6 +479,28 @@ class TestConfigurationDepot(unittest.TestCase):
         self.assertEqual(proc.returncode, 2)
         self.assertIn("configuration : permissions inscriptibles", proc.stdout)
 
+    def test_audit_accepte_configuration_symlinkee_avec_avertissement(self):
+        if platform_fs().backend_name == "windows":
+            self.skipTest("symlink et ACL Windows native non couverts ici")
+        with socket.socket() as probe:
+            probe.bind(("127.0.0.1", 0))
+            port = probe.getsockname()[1]
+        zone = self.tmp / "default-images"
+        zone.mkdir(mode=0o700)
+        real_config = write_config(
+            self.tmp,
+            port=port,
+            zones=[{"id": "default", "directory": str(zone)}],
+        )
+        linked_config = self.tmp / "config-link.toml"
+        linked_config.symlink_to(real_config)
+
+        proc = run_cli(["audit", "--config", str(linked_config)])
+
+        self.assertEqual(proc.returncode, 1, proc.stdout + proc.stderr)
+        self.assertIn("configuration : lien symbolique accepté", proc.stdout)
+        self.assertNotIn("configuration : lien symbolique refusé", proc.stdout)
+
     def test_audit_refuse_proxy_global(self):
         cfg = write_config(self.tmp, trusted_proxies='["0.0.0.0/0", "::/0"]')
 

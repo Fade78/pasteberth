@@ -551,6 +551,7 @@ def _audit_regular_file(
     require_owner: bool = False,
     require_private: bool = False,
     allow_symlink: bool = False,
+    symlink_warnings: list[str] | None = None,
 ) -> tuple[list[str], Path | None]:
     """Audite un fichier et retourne la cible résolue utilisable par OpenSSL."""
     fs = platform_fs()
@@ -570,6 +571,10 @@ def _audit_regular_file(
             target = path.resolve(strict=True)
         except (OSError, RuntimeError) as exc:
             return [f"{label} : cible du lien illisible ({exc})"], None
+        if symlink_warnings is not None:
+            symlink_warnings.append(
+                f"{label} : lien symbolique accepté après contrôle de la cible : {symlink}"
+            )
 
     for parent in dict.fromkeys((path.parent, target.parent)):
         parent_error = _audit_controlled_parents(fs, parent)
@@ -766,6 +771,8 @@ def _cmd_audit(args: argparse.Namespace) -> int:
             cfg.config_path,
             "configuration",
             require_owner=True,
+            allow_symlink=True,
+            symlink_warnings=warnings,
         )
         errors.extend(config_errors)
 
