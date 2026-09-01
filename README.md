@@ -108,7 +108,9 @@ visible zones and `U` to close them.
 
 The upper panel shows the current item and its copy, download, clear, and
 preview actions. With multiple selected items it shows their names, sizes, and
-stored dates, then provides group actions instead.
+stored dates, then provides group actions instead. In a tab-layout group,
+`Shift`-click selects a contiguous range of zones and `Ctrl`/`Command`-click
+adds or removes zones; Group options can show or hide the left zone column.
 
 ## Filesystem Handoff
 

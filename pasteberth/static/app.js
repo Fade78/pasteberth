@@ -29,7 +29,9 @@
     groups: [],              // [{name, selection, pattern, layout, zone_ids, ...}]
     activeGroupId: null,     // null = implicit All when no group is selected
     openZoneIds: [],
+    tabSelectionAnchorId: null,
     groupLayouts: Object.create(null),
+    tabSidebarVisibility: Object.create(null),
     selectedItemsByZone: Object.create(null),
     selectionAnchorByZone: Object.create(null),
     batchBusyZoneIds: new Set(),
@@ -1114,6 +1116,26 @@
     } catch (_) {}
   }
 
+  function tabSidebarVisible(group) {
+    return Boolean(group && state.tabSidebarVisibility[group.name] !== false);
+  }
+
+  function loadTabSidebarVisibility() {
+    try {
+      const stored = JSON.parse(localStorage.getItem("pb.tabSidebarVisibility") || "{}");
+      if (!stored || typeof stored !== "object" || Array.isArray(stored)) return;
+      for (const [name, visible] of Object.entries(stored)) {
+        if (typeof visible === "boolean") state.tabSidebarVisibility[name] = visible;
+      }
+    } catch (_) {}
+  }
+
+  function saveTabSidebarVisibility() {
+    try {
+      localStorage.setItem("pb.tabSidebarVisibility", JSON.stringify(state.tabSidebarVisibility));
+    } catch (_) {}
+  }
+
   function groupZoneCount(group) {
     return group.zone_count ?? group.zone_ids?.length ?? 0;
   }
@@ -1137,6 +1159,7 @@
     }
     if (state.activeGroupId === previous) return false;
     state.openZoneIds = [];
+    state.tabSelectionAnchorId = null;
     try {
       if (state.activeGroupId) localStorage.setItem("pb.activeGroup", state.activeGroupId);
       else localStorage.removeItem("pb.activeGroup");
@@ -1150,8 +1173,15 @@
     const visibleIds = new Set(visibleZones.map(zone => zone.id));
     state.openZoneIds = state.openZoneIds.filter(zoneId => visibleIds.has(zoneId));
     const group = state.groups.find(item => item.name === state.activeGroupId);
-    grid.classList.toggle("tab-layout", groupLayout(group) === "tab");
-    if (!group || groupLayout(group) !== "tab") {
+    const tabLayout = groupLayout(group) === "tab";
+    const showTabSidebar = tabLayout && tabSidebarVisible(group);
+    if (state.tabSelectionAnchorId && !visibleIds.has(state.tabSelectionAnchorId)) {
+      state.tabSelectionAnchorId = null;
+    }
+    grid.classList.toggle("tab-layout", tabLayout);
+    grid.classList.toggle("tab-sidebar-hidden", tabLayout && !showTabSidebar);
+    if (!group || !tabLayout) {
+      state.tabSelectionAnchorId = null;
       for (const zone of visibleZones) grid.appendChild(renderZone(zone));
       return;
     }
@@ -1167,10 +1197,11 @@
       link.textContent = zone.label;
       link.setAttribute("aria-current", String(zone.id === state.activeId));
       link.setAttribute("aria-expanded", String(state.openZoneIds.includes(zone.id)));
+      link.setAttribute("aria-pressed", String(state.openZoneIds.includes(zone.id)));
       link.setAttribute("aria-controls", "tab-zone-main");
       link.addEventListener("mouseenter", () => setActive(zone.id));
       link.addEventListener("focus", () => setActive(zone.id));
-      link.addEventListener("click", event => toggleOpenZone(zone.id, event.shiftKey));
+      link.addEventListener("click", event => toggleOpenZone(zone.id, event));
       if (zone.id === state.activeId) link.classList.add("active");
       if (state.openZoneIds.includes(zone.id)) link.classList.add("open");
       list.appendChild(link);
@@ -1182,21 +1213,48 @@
     main.setAttribute("aria-label", "Open zones");
     const openZones = visibleZones.filter(zone => state.openZoneIds.includes(zone.id));
     for (const zone of openZones) main.appendChild(renderZone(zone));
-    grid.append(list, main);
+    if (showTabSidebar) grid.append(list, main);
+    else grid.append(main);
   }
 
-  function toggleOpenZone(zoneId, shiftKey) {
-    if (!getVisibleZones().some(zone => zone.id === zoneId)) return;
+  function toggleOpenZone(zoneId, event = {}) {
+    const visibleZones = getVisibleZones();
+    const visibleIds = visibleZones.map(zone => zone.id);
+    const clickedIndex = visibleIds.indexOf(zoneId);
+    if (clickedIndex < 0) return;
     const restoreFocus = document.activeElement?.classList.contains("tab-zone-link");
-    const index = state.openZoneIds.indexOf(zoneId);
+    const shiftKey = Boolean(event.shiftKey);
+    const toggle = Boolean(event.ctrlKey || event.metaKey);
+    const selected = new Set(state.openZoneIds.filter(id => visibleIds.includes(id)));
+    let next = new Set(selected);
     if (shiftKey) {
-      if (index === -1) state.openZoneIds.push(zoneId);
-      else state.openZoneIds.splice(index, 1);
-    } else if (index !== -1 && state.openZoneIds.length === 1) {
-      state.openZoneIds = [];
+      let anchor = state.tabSelectionAnchorId;
+      if (!anchor || !visibleIds.includes(anchor)) {
+        anchor = zoneId;
+        state.tabSelectionAnchorId = zoneId;
+      }
+      const anchorIndex = visibleIds.indexOf(anchor);
+      const start = Math.min(anchorIndex, clickedIndex);
+      const end = Math.max(anchorIndex, clickedIndex);
+      const range = visibleIds.slice(start, end + 1);
+      if (!toggle) {
+        next = new Set(range);
+      } else {
+        const remove = range.every(id => next.has(id));
+        for (const id of range) {
+          if (remove) next.delete(id);
+          else next.add(id);
+        }
+      }
+    } else if (toggle) {
+      if (next.has(zoneId)) next.delete(zoneId);
+      else next.add(zoneId);
+      state.tabSelectionAnchorId = zoneId;
     } else {
-      state.openZoneIds = [zoneId];
+      next = new Set([zoneId]);
+      state.tabSelectionAnchorId = zoneId;
     }
+    state.openZoneIds = visibleIds.filter(id => next.has(id));
     setActive(zoneId);
     renderAll();
     if (restoreFocus) {
@@ -1264,7 +1322,14 @@
     const focusedZoneId = document.activeElement?.classList.contains("tab-zone-link")
       ? document.activeElement.dataset.zone
       : null;
-    state.openZoneIds = selectAll ? getVisibleZones().map(zone => zone.id) : [];
+    const visibleZones = getVisibleZones();
+    state.openZoneIds = selectAll ? visibleZones.map(zone => zone.id) : [];
+    if (selectAll) {
+      const activeVisible = visibleZones.some(zone => zone.id === state.activeId);
+      state.tabSelectionAnchorId = activeVisible ? state.activeId : visibleZones[0]?.id || null;
+    } else {
+      state.tabSelectionAnchorId = null;
+    }
     renderAll();
     if (focusedZoneId) {
       grid.querySelector(`.tab-zone-link[data-zone="${CSS.escape(focusedZoneId)}"]`)?.focus();
@@ -1409,6 +1474,7 @@
     const showCount = addToggle("opt-show-count", "Show zone counts", state.showZoneCounts);
     const activeGroup = state.groups.find(group => group.name === state.activeGroupId);
     let layoutSelect = null;
+    let sidebarToggle = null;
     if (activeGroup) {
       const layoutLabel = document.createElement("label");
       const layoutText = document.createElement("span");
@@ -1424,6 +1490,13 @@
       layoutSelect.value = groupLayout(activeGroup);
       layoutLabel.append(layoutText, layoutSelect);
       dropdown.appendChild(layoutLabel);
+      if (groupLayout(activeGroup) === "tab") {
+        sidebarToggle = addToggle(
+          "opt-tab-sidebar",
+          "Show zone column",
+          tabSidebarVisible(activeGroup),
+        );
+      }
     }
     document.body.appendChild(dropdown);
 
@@ -1488,6 +1561,15 @@
         groupTabs.querySelector(".group-options-btn")?.focus();
       });
     }
+    if (sidebarToggle && activeGroup) {
+      sidebarToggle.addEventListener("change", (e) => {
+        state.tabSidebarVisibility[activeGroup.name] = e.target.checked;
+        saveTabSidebarVisibility();
+        close();
+        renderAll();
+        groupTabs.querySelector(".group-options-btn")?.focus();
+      });
+    }
   }
 
   function setActiveGroup(groupName) {
@@ -1501,6 +1583,7 @@
     } catch (_) {}
     if (groupChanged) {
       state.openZoneIds = [];
+      state.tabSelectionAnchorId = null;
       setActive(null);
     }
     renderGroups();
@@ -1588,6 +1671,7 @@
         state.showZoneCounts = localStorage.getItem("pb.showZoneCounts") !== "false";
       } catch (_) {}
       loadGroupLayouts();
+      loadTabSidebarVisibility();
 
       reconcileActiveGroup();
       renderGroups();

@@ -307,6 +307,8 @@ that calculation.
 
 Groups are loaded at startup. `pasteberth audit` reports redundant groups,
 ignored patterns on `all`/`other`, and equivalent effective selections.
+The Group options menu can show or hide the left zone column for a `tab` group;
+that preference is kept separately for each group in the browser.
 
 ## 5. Web UI
 
@@ -371,9 +373,12 @@ thumbnail or history item to select it in the upper panel.
 ![Pasteberth multiple-selection panel with grouped copy, ZIP, and delete actions](docs/images/pasteberth-multiselect.png)
 
 The `C` shortcut copies the selected item's link. In tab layout, `A` opens all
-visible zones and `U` closes them without changing the paste target. Number keys
-`1` through `9` select a visible zone. Keyboard focus and selection do not
-silently redirect paste operations.
+visible zones and `U` closes them without changing the paste target. `Shift`-
+click selects the contiguous range from the last non-range zone selection;
+`Ctrl`-click or `Command`-click adds or removes one zone, and the same
+modifiers with `Shift` add or remove a range. Number keys `1` through `9`
+select a visible zone. Keyboard focus and selection do not silently redirect
+paste operations.
 
 The selected-content panel provides the reference and applicable content actions
 for one item. For several selected items it instead lists filenames, sizes, and

@@ -16,6 +16,37 @@ async function openApp(page) {
   await expect(page.locator("#status-text")).toHaveText("online");
 }
 
+async function addTertiaryTabZone(page) {
+  await page.route("**/api/zones/tertiary/images", async (route) => {
+    if (route.request().method() !== "GET") {
+      await route.continue();
+      return;
+    }
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ images: [] }),
+    });
+  });
+  await page.route("**/api/zones", async (route) => {
+    if (route.request().method() !== "GET") {
+      await route.continue();
+      return;
+    }
+    const response = await route.fetch();
+    const overview = await response.json();
+    const template = overview.zones.find((zone) => zone.id === "secondary");
+    overview.zones.push({ ...template, id: "tertiary", label: "Tertiary", busy: false });
+    for (const groupName of ["All", "Tabbed"]) {
+      const group = overview.groups.find((item) => item.name === groupName);
+      group.zone_ids = [...group.zone_ids, "tertiary"];
+      group.zone_count = group.zone_ids.length;
+    }
+    overview.groups.find((group) => group.name === "Secondary").layout = "tab";
+    await route.fulfill({ response, json: overview });
+  });
+}
+
 async function dispatchPaste(page) {
   await page.evaluate((base64) => {
     const bytes = Uint8Array.from(atob(base64), (char) => char.charCodeAt(0));
@@ -359,7 +390,7 @@ test("le layout tab ouvre une zone et permet une sélection multiple au Shift-cl
   await zoneSelect.focus();
   await page.keyboard.press("u");
   await expect(page.locator(".tab-zone-main .zone")).toHaveCount(1);
-  await defaultLink.click();
+  await defaultLink.click({ modifiers: ["Control"] });
   await expect(page.locator(".tab-zone-main .zone")).toHaveCount(0);
   await secondaryLink.hover();
   await expect(secondaryLink).toHaveAttribute("aria-current", "true");
@@ -369,7 +400,7 @@ test("le layout tab ouvre une zone et permet une sélection multiple au Shift-cl
   await dispatchPaste(page);
   await pasteRequest;
   await expect(page.locator('.tab-zone-main .zone[data-zone="secondary"]')).toHaveCount(1);
-  await secondaryLink.click();
+  await secondaryLink.click({ modifiers: ["Control"] });
   await expect(page.locator(".tab-zone-main .zone")).toHaveCount(0);
   const dropRequest = page.waitForRequest(request => (
     request.method() === "POST" && request.url().includes("/api/zones/secondary/images")
@@ -391,15 +422,12 @@ test("le layout tab ouvre une zone et permet une sélection multiple au Shift-cl
   await expect(page.locator(".tab-zone-main .zone")).toHaveCount(2);
   await secondaryLink.click();
   await expect(page.locator('.tab-zone-main .zone[data-zone="secondary"]')).toHaveCount(1);
-  await secondaryLink.click();
+  await secondaryLink.click({ modifiers: ["Control"] });
   await expect(page.locator(".tab-zone-main .zone")).toHaveCount(0);
-  await defaultLink.click({ modifiers: ["Shift"] });
-  await secondaryLink.click({ modifiers: ["Shift"] });
-  await expect(page.locator(".tab-zone-main .zone")).toHaveCount(2);
-  await secondaryLink.click({ modifiers: ["Shift"] });
-  await expect(page.locator('.tab-zone-main .zone[data-zone="default"]')).toHaveCount(1);
-  await expect(page.locator('.tab-zone-main .zone[data-zone="secondary"]')).toHaveCount(0);
   await defaultLink.click();
+  await secondaryLink.click({ modifiers: ["Control", "Shift"] });
+  await expect(page.locator(".tab-zone-main .zone")).toHaveCount(2);
+  await secondaryLink.click({ modifiers: ["Control", "Shift"] });
   await expect(page.locator(".tab-zone-main .zone")).toHaveCount(0);
 
   await page.getByRole("button", { name: "Group options" }).click();
@@ -413,6 +441,65 @@ test("le layout tab ouvre une zone et permet une sélection multiple au Shift-cl
   await expect(page.locator("#status-text")).toHaveText("online");
   await expect(page.locator(".tab-zone-list")).toBeVisible();
   await expect(page.locator(".tab-zone-main .zone")).toHaveCount(0);
+});
+
+test("sélectionne des plages de zones TAB avec les modificateurs et masque la colonne", async ({ page }) => {
+  await addTertiaryTabZone(page);
+  await page.goto("/", { waitUntil: "domcontentloaded" });
+  await expect(page.locator("#status-text")).toHaveText("online");
+  await expect(page.locator(".zone")).toHaveCount(3);
+  await page.locator('.group-tab[data-group="Tabbed"]').click();
+  await expect(page.locator(".tab-zone-link")).toHaveCount(3);
+
+  const defaultLink = page.locator('.tab-zone-link[data-zone="default"]');
+  const secondaryLink = page.locator('.tab-zone-link[data-zone="secondary"]');
+  const tertiaryLink = page.locator('.tab-zone-link[data-zone="tertiary"]');
+
+  await defaultLink.click();
+  await expect(page.locator(".tab-zone-main .zone")).toHaveCount(1);
+  await tertiaryLink.click({ modifiers: ["Shift"] });
+  await expect(page.locator(".tab-zone-main .zone")).toHaveCount(3);
+  await expect(tertiaryLink).toHaveAttribute("aria-current", "true");
+  await expect(page.locator('.tab-zone-link[aria-pressed="true"]')).toHaveCount(3);
+
+  await secondaryLink.click({ modifiers: ["Control"] });
+  await expect(page.locator(".tab-zone-main .zone")).toHaveCount(2);
+  await expect(secondaryLink).toHaveAttribute("aria-pressed", "false");
+  await secondaryLink.click({ modifiers: ["Meta"] });
+  await expect(page.locator(".tab-zone-main .zone")).toHaveCount(3);
+  await secondaryLink.click({ modifiers: ["Meta"] });
+  await expect(page.locator(".tab-zone-main .zone")).toHaveCount(2);
+
+  await defaultLink.click();
+  await tertiaryLink.click({ modifiers: ["Control", "Shift"] });
+  await expect(page.locator(".tab-zone-main .zone")).toHaveCount(3);
+  await tertiaryLink.click({ modifiers: ["Control", "Shift"] });
+  await expect(page.locator(".tab-zone-main .zone")).toHaveCount(0);
+
+  const options = page.getByRole("button", { name: "Group options" });
+  await options.click();
+  const sidebarToggle = page.getByRole("checkbox", { name: "Show zone column" });
+  await expect(sidebarToggle).toBeChecked();
+  await sidebarToggle.click();
+  await expect(page.locator(".grid")).toHaveClass(/tab-sidebar-hidden/);
+  await expect(page.locator(".tab-zone-list")).toHaveCount(0);
+
+  await page.locator('.group-tab[data-group="Secondary"]').click();
+  await expect(page.locator(".grid")).toHaveClass(/tab-layout/);
+  await expect(page.locator(".tab-zone-list")).toBeVisible();
+  await page.locator('.group-tab[data-group="Tabbed"]').click();
+  await expect(page.locator(".tab-zone-list")).toHaveCount(0);
+
+  await options.click();
+  await expect(page.getByRole("checkbox", { name: "Show zone column" })).not.toBeChecked();
+  await page.getByRole("checkbox", { name: "Show zone column" }).click();
+  await expect(page.locator(".tab-zone-list")).toBeVisible();
+  await page.locator('.group-tab[data-group="All"]').click();
+  await page.locator('.group-tab[data-group="Tabbed"]').click();
+  await expect(page.locator(".tab-zone-list")).toBeVisible();
+  await page.reload({ waitUntil: "domcontentloaded" });
+  await expect(page.locator("#status-text")).toHaveText("online");
+  await expect(page.locator(".tab-zone-list")).toBeVisible();
 });
 
 test("les options filtrent les groupes vides et les compteurs", async ({ page }) => {
