@@ -5,7 +5,7 @@ import unittest
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
-from pasteberth.auth import SessionStore
+from PasteBerth.runtime.auth import SessionStore
 
 from tests.helpers import (
     build_multipart,

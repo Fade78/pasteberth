@@ -7,6 +7,7 @@
     pasteberth delete [--config PATH] [--force] DIRECTORY FILE...
     pasteberth passwd  [--config PATH]
     pasteberth audit   [--config PATH]
+    pasteberth completion [--shell bash]
     pasteberth [--config PATH] --generate-config [--force]
 """
 from __future__ import annotations
@@ -25,8 +26,8 @@ import time
 from pathlib import Path
 import socket
 
-from pasteberth import __version__
-from pasteberth.auth import (
+from . import __version__
+from .auth import (
     LoginRateLimiter,
     SessionStore,
     hash_password,
@@ -34,7 +35,7 @@ from pasteberth.auth import (
     save_password_hash,
     valid_password_hash,
 )
-from pasteberth.config import (
+from .config import (
     ConfigError,
     check_startup_policy,
     build_default_config,
@@ -46,11 +47,11 @@ from pasteberth.config import (
     prepare_directories,
     resolve_group_zone_ids,
     validate_directory_identities,
-    repository_root,
+    ensure_external_path,
 )
-from pasteberth.platformfs import UnsafeLinkError, UnsupportedFilesystemError, platform_fs
-from pasteberth.service import PasteService, ServiceError
-from pasteberth.storage import DestinationError
+from .platformfs import UnsafeLinkError, UnsupportedFilesystemError, platform_fs
+from .service import PasteService, ServiceError
+from .storage import DestinationError
 
 
 def _setup_logging(level: str) -> None:
@@ -71,7 +72,10 @@ def _cmd_serve(args: argparse.Namespace) -> int:
         return 2
     if cfg.auth.enabled:
         try:
-            stored_hash = load_password_hash(cfg.password_file())
+            stored_hash = load_password_hash(
+                cfg.password_file(),
+                max_bytes=cfg.limits.max_password_file_bytes,
+            )
         except RuntimeError as exc:
             print(f"pasteberth: configuration error\n  {exc}", file=sys.stderr)
             return 2
@@ -85,7 +89,7 @@ def _cmd_serve(args: argparse.Namespace) -> int:
             return 2
     tls_context = None
     if cfg.tls.enabled:
-        from pasteberth.server import create_tls_context
+        from .server import create_tls_context
 
         try:
             tls_context = create_tls_context(cfg.tls.certificate, cfg.tls.private_key)
@@ -108,7 +112,7 @@ def _cmd_serve(args: argparse.Namespace) -> int:
         )
     elif uses_default_storage:
         logging.getLogger("pasteberth.config").warning(
-            "using default storage %s; edit config.toml to move it",
+            "using default storage %s; edit the selected configuration to move it",
             default_storage_path(),
         )
     for warning in cfg.warnings:
@@ -133,10 +137,15 @@ def _cmd_serve(args: argparse.Namespace) -> int:
         password_file=cfg.password_file() if cfg.auth.enabled else None,
         max_sessions=cfg.auth.max_sessions,
     )
-    limiter = LoginRateLimiter()
+    limiter = LoginRateLimiter(
+        max_concurrent_checks=cfg.limits.max_login_concurrent_checks,
+        max_tracked_ips=cfg.limits.max_login_tracked_ips,
+        max_delay=cfg.limits.max_login_delay_seconds,
+        forget_after=cfg.limits.login_forget_after_seconds,
+    )
     handler = _build_handler(cfg, service, sessions, limiter)
 
-    from pasteberth.server import serve_forever
+    from .server import serve_forever
 
     try:
         expected_loopback = check_startup_policy(cfg)
@@ -164,6 +173,7 @@ def _cmd_serve(args: argparse.Namespace) -> int:
             cfg.port,
             tls_context=tls_context,
             expected_loopback=expected_loopback,
+            limits=cfg.limits,
         )
     except OSError as exc:
         log.error("cannot listen on %s:%d: %s", cfg.listen_address, cfg.port, exc)
@@ -195,39 +205,35 @@ def _load_command_service(args: argparse.Namespace):
 def _command_path(raw: str) -> Path:
     if "\x00" in raw:
         raise ValueError("path contains a NUL character")
-    return Path(os.path.abspath(os.path.expanduser(raw)))
+    return Path(os.path.abspath(os.path.expanduser(raw))).resolve()
 
 
 def _zone_for_directory(cfg, raw_directory: str):
     try:
         directory = _command_path(raw_directory)
-        symlink = platform_fs().first_symlink_component(directory)
     except (OSError, ValueError) as exc:
         raise ConfigError(f"invalid zone directory: {raw_directory!r} ({exc})") from exc
-    if symlink is not None:
-        raise ConfigError(f"target directory contains a symbolic link: {symlink}")
     normalized = Path(os.path.normpath(str(directory)))
     for zone in cfg.zones.values():
-        if normalized == Path(os.path.normpath(str(zone.directory))):
+        if normalized == Path(os.path.normpath(str(zone.directory.resolve()))):
             return zone
     raise ConfigError(
         f"target directory does not match any configured zone: {directory}"
     )
 
 
-def _read_drop_source(path: Path, max_bytes: int) -> bytes:
+def _read_drop_source(path: Path, max_bytes: int | None) -> bytes:
+    path = Path(path).expanduser().resolve()
     fs = platform_fs()
     try:
         with fs.open_directory(path.parent) as parent:
             with fs.open_existing(parent, path.name, mode="rb") as stream:
-                # The backend opens a regular file without following a link;
-                # bounded reads keep the CLI from loading an oversized source.
-                data = stream.read(max_bytes + 1)
+                data = stream.read(max_bytes + 1) if max_bytes is not None else stream.read()
     except UnsafeLinkError as exc:
         raise ValueError("source is not a regular file") from exc
     except (OSError, ValueError, UnsupportedFilesystemError) as exc:
         raise ValueError(f"cannot read source: {exc}") from exc
-    if len(data) > max_bytes:
+    if max_bytes is not None and len(data) > max_bytes:
         raise ValueError(
             f"file is too large ({len(data)} > {max_bytes} bytes)"
         )
@@ -297,7 +303,9 @@ def _cmd_drop(args: argparse.Namespace) -> int:
             data = _read_drop_source(source, cfg.max_upload_bytes)
             declared_mime = mimetypes.guess_type(source.name)[0] or "application/octet-stream"
             source_directory = os.path.normcase(os.path.normpath(str(source.parent)))
-            zone_directory = os.path.normcase(os.path.normpath(str(zone.directory)))
+            zone_directory = os.path.normcase(
+                os.path.normpath(str(zone.directory.resolve()))
+            )
             source_is_target = source_directory == zone_directory
             item = service.upload(
                 zone.id,
@@ -316,16 +324,16 @@ def _cmd_drop(args: argparse.Namespace) -> int:
     return 1 if failures else 0
 
 
-def _generated_config_text(root: Path) -> str:
-    storage = (root / "storage" / "default").as_posix()
+def _generated_config_text(storage_path: Path) -> str:
+    storage = storage_path.as_posix()
     return f'''# Pasteberth local configuration.
-# The default repository-root config.toml is ignored by Git. Custom config paths
-# are not automatically ignored; keep this file and its password out of Git.
+# Keep this file, its password, and any TLS private key outside the read-only
+# PasteBerth deployment bundle.
 
 listen_address = "127.0.0.1"
 port = 8765
-max_upload_size = "20MiB"
-max_image_pixels = 25000000        # structural pixel budget; maximum 50 MP
+max_upload_size = "20MiB"           # set to "unlimited" for no application cap
+max_image_pixels = 25000000        # structural pixel budget; "unlimited" disables it
 # Public path prefix: empty for root, or e.g. "/paste" behind a reverse proxy.
 url_prefix = ""
 # Display absolute file paths in the web UI. Set false when paths are sensitive.
@@ -347,6 +355,43 @@ accept_img = true
 accept_doc = true
 log_level = "INFO"
 
+# Most values below accept "unlimited"; request_queue_size is always positive
+# because it configures the OS listen backlog. These are operational budgets,
+# not additional upload ceilings.
+[limits]
+max_image_dimension = 16384
+max_image_raw_size = "256MiB"
+max_filename_length = 200
+max_filename_size = 240
+max_png_chunks = 100000
+max_jpeg_segments = 100000
+max_webp_chunks = 100000
+max_mime_length = 120
+max_multipart_boundary_length = 70
+max_multipart_parts = 32
+max_multipart_header_size = "8KiB"
+max_multipart_field_name_length = 256
+max_batch_names = 10000
+max_batch_body_size = "2MiB"
+max_comment_body_size = "8KiB"
+max_http_header_size = "64KiB"
+max_login_body_size = "4KiB"
+max_login_fields = 8
+max_login_delay_seconds = 900
+max_login_concurrent_checks = 4
+max_login_tracked_ips = 4096
+login_forget_after_seconds = 3600
+max_scrypt_memory_size = "64MiB"
+max_password_file_size = "16KiB"
+max_metadata_size = "64KiB"
+max_comment_length = 280
+max_comment_bytes = 1024
+request_queue_size = 32
+max_active_requests = 64
+max_pending_requests = 8
+http_header_timeout_seconds = 5
+http_request_timeout_seconds = 60
+
 [tls]
 enabled = false
 # certificate = "/absolute/path/to/cert.pem"
@@ -355,7 +400,7 @@ enabled = false
 [auth]
 enabled = true
 session_ttl_hours = 72
-max_sessions = 4096
+max_sessions = 4096  # use "unlimited" to disable FIFO eviction
 # password_file = "/absolute/path/to/passwd"
 
 [[zones]]
@@ -397,6 +442,16 @@ def _cmd_generate_config(args: argparse.Namespace) -> int:
     if "\x00" in str(target):
         print(f"invalid configuration path: {target}", file=sys.stderr)
         return 2
+    try:
+        ensure_external_path(target, "configuration")
+    except ConfigError as exc:
+        print(f"invalid configuration path: {exc}", file=sys.stderr)
+        return 2
+    try:
+        storage_path = ensure_external_path(default_storage_path(), "default storage")
+    except ConfigError as exc:
+        print(f"invalid storage path: {exc}", file=sys.stderr)
+        return 2
     if target.exists() and not args.force:
         print(
             f"configuration already exists: {target}\n"
@@ -417,7 +472,7 @@ def _cmd_generate_config(args: argparse.Namespace) -> int:
             temporary_identity = temporary.identity
             try:
                 with temporary as stream:
-                    stream.write(_generated_config_text(repository_root()))
+                    stream.write(_generated_config_text(storage_path))
                     stream.sync()
                 fs.replace(
                     parent,
@@ -442,19 +497,32 @@ def _cmd_generate_config(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_completion(args: argparse.Namespace) -> int:
+    if args.shell != "bash":
+        print(f"pasteberth: unsupported completion shell: {args.shell}", file=sys.stderr)
+        return 2
+    completion = (
+        Path(__file__).resolve().parents[1]
+        / "support"
+        / "completions"
+        / "pasteberth.bash"
+    )
+    try:
+        sys.stdout.write(completion.read_text(encoding="utf-8"))
+    except OSError as exc:
+        print(f"pasteberth: cannot read completion script: {exc}", file=sys.stderr)
+        return 1
+    return 0
+
+
 def _audit_zone(cfg, zone) -> tuple[list[str], list[str]]:
     errors: list[str] = []
     warnings: list[str] = []
-    path = zone.directory
+    configured_path = zone.directory
+    path = configured_path.resolve()
     fs = platform_fs()
-    try:
-        symlink = fs.first_symlink_component(path)
-    except (OSError, ValueError, UnsupportedFilesystemError) as exc:
-        errors.append(f"zone {zone.id}: inspection failed ({exc})")
-        return errors, warnings
-    if symlink is not None:
-        errors.append(f"zone {zone.id}: symbolic link rejected: {symlink}")
-        return errors, warnings
+    if path != configured_path:
+        warnings.append(f"zone {zone.id}: symbolic link accepted: {configured_path}")
     if not path.exists():
         if zone.create_directory:
             warnings.append(f"zone {zone.id}: will be created at startup: {path}")
@@ -561,21 +629,13 @@ def _audit_regular_file(
         path = Path.cwd() / path
     errors: list[str] = []
     try:
-        symlink = fs.first_symlink_component(path)
-    except (OSError, ValueError, UnsupportedFilesystemError) as exc:
+        target = path.resolve(strict=True)
+    except (OSError, RuntimeError, ValueError) as exc:
         return [f"{label}: inspection failed ({exc})"], None
-    target = path
-    if symlink is not None:
-        if not allow_symlink:
-            return [f"{label}: symbolic link rejected: {symlink}"], None
-        try:
-            target = path.resolve(strict=True)
-        except (OSError, RuntimeError) as exc:
-            return [f"{label}: symbolic-link target unreadable ({exc})"], None
-        if symlink_warnings is not None:
-            symlink_warnings.append(
-                f"{label}: symbolic link accepted after target checks: {symlink}"
-            )
+    if target != path and symlink_warnings is not None:
+        symlink_warnings.append(
+            f"{label}: symbolic link accepted after target checks: {path}"
+        )
 
     for parent in dict.fromkeys((path.parent, target.parent)):
         parent_error = _audit_controlled_parents(fs, parent)
@@ -644,7 +704,7 @@ def _audit_listener(cfg) -> tuple[str | None, str | None]:
 def _audit_tls(cfg) -> list[str]:
     if not cfg.tls.enabled:
         return []
-    from pasteberth.server import create_tls_context
+    from .server import create_tls_context
 
     errors: list[str] = []
     certificate_errors, certificate = _audit_regular_file(
@@ -755,7 +815,11 @@ def _cmd_audit(args: argparse.Namespace) -> int:
     errors: list[str] = []
     warnings: list[str] = []
     if config_path is None:
-        cfg = build_default_config()
+        try:
+            cfg = build_default_config()
+        except ConfigError as exc:
+            print(f"ERROR configuration: {exc}", file=sys.stderr)
+            return 2
         warnings.append(
             f"no config.toml found: default storage {default_storage_path()}"
         )
@@ -788,7 +852,10 @@ def _cmd_audit(args: argparse.Namespace) -> int:
         warnings.append("authentication disabled in configuration")
     elif cfg.auth.enabled:
         try:
-            stored_hash = load_password_hash(cfg.password_file())
+            stored_hash = load_password_hash(
+                cfg.password_file(),
+                max_bytes=cfg.limits.max_password_file_bytes,
+            )
         except RuntimeError as exc:
             errors.append(str(exc))
         else:
@@ -857,7 +924,7 @@ def _cmd_audit(args: argparse.Namespace) -> int:
 
 def _build_handler(cfg, service: PasteService, sessions: SessionStore,
                    limiter: LoginRateLimiter):
-    from pasteberth.webapp import make_handler
+    from .webapp import make_handler
 
     return make_handler(cfg, service, sessions, limiter)
 
@@ -896,7 +963,10 @@ def _cmd_passwd(args: argparse.Namespace) -> int:
         print("rejected: the two entries differ", file=sys.stderr)
         return 1
     try:
-        save_password_hash(password_file, hash_password(pw1))
+            save_password_hash(
+                password_file,
+                hash_password(pw1, maxmem=cfg.limits.max_scrypt_memory_bytes),
+            )
     except OSError as exc:
         print(f"error: cannot write {password_file}: {exc}", file=sys.stderr)
         return 1
@@ -988,6 +1058,18 @@ def build_parser() -> argparse.ArgumentParser:
     p_audit = sub.add_parser("audit", help="check the environment without modifying it")
     p_audit.add_argument("--config", default=argparse.SUPPRESS, help="path to config.toml")
     p_audit.set_defaults(func=_cmd_audit)
+
+    p_completion = sub.add_parser(
+        "completion",
+        help="print shell completion code",
+    )
+    p_completion.add_argument(
+        "--shell",
+        choices=["bash"],
+        default="bash",
+        help="completion shell (default: bash)",
+    )
+    p_completion.set_defaults(func=_cmd_completion)
     return parser
 
 

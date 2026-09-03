@@ -8,7 +8,7 @@ import stat
 from contextlib import contextmanager
 from pathlib import Path
 
-from pasteberth.platformfs.base import (
+from .base import (
     BusyError,
     DirectoryHandle,
     EntryChangedError,

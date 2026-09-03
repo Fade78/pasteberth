@@ -1,19 +1,15 @@
-"""Minimal bounded ``multipart/form-data`` parser (standard library).
+"""Minimal ``multipart/form-data`` parser (standard library).
 
-The body is already capped upstream (content size plus bounded multipart
-overhead); this parser additionally caps the number of parts and header size.
-The filename is returned as a hint; the storage layer validates it before use.
+The caller supplies any operational budgets. The filename is returned as a
+hint; the storage layer validates it before use.
 """
 from __future__ import annotations
 
 import re
 
-MAX_PARTS = 32
-MAX_HEADER_BLOCK = 8 * 1024
-# Allow normal multipart framing and auxiliary fields without enlarging the
-# configured per-file upload limit without bound.
-MAX_MULTIPART_OVERHEAD = 1 * 1024 * 1024
-_MAX_TOKEN = 256
+from .config import LimitsConfig
+
+_DEFAULT_LIMITS = LimitsConfig()
 
 _PARAM_RE = {
     "name": re.compile(r'\bname="((?:[^"\\]|\\.)*)"'),
@@ -25,13 +21,17 @@ class MultipartError(Exception):
     """Malformed multipart body."""
 
 
-def extract_boundary(content_type: str) -> str | None:
+def extract_boundary(
+    content_type: str,
+    *,
+    max_length: int | None = _DEFAULT_LIMITS.max_multipart_boundary_length,
+) -> str | None:
     match = re.search(r'boundary\s*=\s*(?:"([^"]+)"|([^;\s]+))', content_type or "", re.I)
     if not match:
         return None
     boundary = match.group(1) or match.group(2)
     boundary = boundary.rstrip()
-    if not boundary or len(boundary) > 70 or '"' in boundary:
+    if not boundary or (max_length is not None and len(boundary) > max_length) or '"' in boundary:
         return None
     return boundary
 
@@ -54,7 +54,14 @@ def _boundary_at(body: bytes, delimiter: bytes, start: int) -> int:
         cursor = position + len(delimiter)
 
 
-def parse_multipart(body: bytes, boundary: str) -> dict[str, tuple[str | None, str | None, bytes]]:
+def parse_multipart(
+    body: bytes,
+    boundary: str,
+    *,
+    max_parts: int | None = _DEFAULT_LIMITS.max_multipart_parts,
+    max_header_bytes: int | None = _DEFAULT_LIMITS.max_multipart_header_bytes,
+    max_field_name_length: int | None = _DEFAULT_LIMITS.max_multipart_field_name_length,
+) -> dict[str, tuple[str | None, str | None, bytes]]:
     """Return {field name: (client filename|None, content type|None, content)}."""
     delimiter = b"--" + boundary.encode("utf-8")
     fields: dict[str, tuple[str | None, str | None, bytes]] = {}
@@ -75,7 +82,7 @@ def parse_multipart(body: bytes, boundary: str) -> dict[str, tuple[str | None, s
             raise MultipartError("multipart delimiter is improperly terminated")
 
         part_count += 1
-        if part_count > MAX_PARTS:
+        if max_parts is not None and part_count > max_parts:
             raise MultipartError("too many parts in multipart body")
 
         header_end = body.find(b"\r\n\r\n", headers_start)
@@ -85,7 +92,7 @@ def parse_multipart(body: bytes, boundary: str) -> dict[str, tuple[str | None, s
             sep_len = 2
         if header_end < headers_start:
             raise MultipartError("header/content separator not found")
-        if header_end - headers_start > MAX_HEADER_BLOCK:
+        if max_header_bytes is not None and header_end - headers_start > max_header_bytes:
             raise MultipartError("header block is too large")
 
         content_start = header_end + sep_len
@@ -111,7 +118,9 @@ def parse_multipart(body: bytes, boundary: str) -> dict[str, tuple[str | None, s
         name_match = _PARAM_RE["name"].search(disposition)
         if name_match:
             name = _unescape(name_match.group(1))
-            if not name or len(name) > _MAX_TOKEN:
+            if not name or (
+                max_field_name_length is not None and len(name) > max_field_name_length
+            ):
                 raise MultipartError("invalid field name")
             file_match = _PARAM_RE["filename"].search(disposition)
             filename = _unescape(file_match.group(1)) if file_match else None

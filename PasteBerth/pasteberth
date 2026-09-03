@@ -1,0 +1,34 @@
+#!/bin/sh
+# PasteBerth's only public entry point.
+set -eu
+
+die() {
+    printf '%s\n' "pasteberth: $*" >&2
+    exit 2
+}
+
+if [ "${PASTEBERTH_HOME+x}" = x ]; then
+    [ -n "$PASTEBERTH_HOME" ] || die "PASTEBERTH_HOME must not be empty"
+    DEPLOYMENT_ROOT="$(CDPATH= cd -P -- "$PASTEBERTH_HOME" 2>/dev/null && pwd -P)" \
+        || die "cannot access PASTEBERTH_HOME: $PASTEBERTH_HOME"
+else
+    SCRIPT_PATH="$(readlink -f "$0" 2>/dev/null)" \
+        || die "cannot resolve the executable path; set PASTEBERTH_HOME explicitly"
+    [ -n "$SCRIPT_PATH" ] || die "cannot resolve the executable path"
+    DEPLOYMENT_ROOT="$(CDPATH= cd -P -- "$(dirname -- "$SCRIPT_PATH")" 2>/dev/null && pwd -P)" \
+        || die "cannot access the deployment directory"
+fi
+
+[ -f "$DEPLOYMENT_ROOT/runtime/__init__.py" ] \
+    || die "invalid deployment root (runtime package is missing): $DEPLOYMENT_ROOT"
+[ -f "$DEPLOYMENT_ROOT/runtime/__main__.py" ] \
+    || die "invalid deployment root (runtime entry point is missing): $DEPLOYMENT_ROOT"
+[ -d "$DEPLOYMENT_ROOT/runtime/static" ] \
+    || die "invalid deployment root (static assets are missing): $DEPLOYMENT_ROOT"
+[ -d "$DEPLOYMENT_ROOT/runtime/templates" ] \
+    || die "invalid deployment root (templates are missing): $DEPLOYMENT_ROOT"
+
+export PASTEBERTH_HOME="$DEPLOYMENT_ROOT"
+export PYTHONPATH="$(dirname -- "$DEPLOYMENT_ROOT")"
+export PYTHONDONTWRITEBYTECODE=1
+exec python3 -P -m PasteBerth.runtime "$@"

@@ -1,9 +1,7 @@
 """TOML configuration loading and validation.
 
-The repository can run without a user file: a minimal local configuration is
-then built with ``storage/default``. A repository ``config.toml``,
-``$PASTEBERTH_CONFIG``, or ``--config`` replaces it; the legacy XDG path remains
-accepted as a last resort.
+The deployment bundle is read-only. Configuration and default storage live in
+the user's XDG locations unless an explicit path is supplied.
 """
 from __future__ import annotations
 
@@ -17,9 +15,8 @@ from collections.abc import Iterable
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from pasteberth.auth import DEFAULT_MAX_SESSIONS, MAX_SESSIONS
-from pasteberth.images import HARD_MAX_PIXELS, MAX_PIXELS
-from pasteberth.platformfs import UnsupportedFilesystemError, platform_fs
+from .auth import DEFAULT_MAX_SESSIONS
+from .platformfs import UnsupportedFilesystemError, platform_fs
 
 
 log = logging.getLogger("pasteberth.config")
@@ -42,7 +39,7 @@ _GROUP_LAYOUTS = {"area", "tab"}
 _URL_PREFIX_RE = re.compile(r"/(?:[A-Za-z0-9._~-]+)(?:/[A-Za-z0-9._~-]+)*")
 
 DEFAULT_MAX_UPLOAD_BYTES = 20 * 1024**2
-MAX_UPLOAD_BYTES = 50 * 1024**2
+DEFAULT_MAX_IMAGE_PIXELS = 25_000_000
 DEFAULT_MIN_FREE_PERCENT = 2.0
 _SIZE_UNITS = {
     "": 1,
@@ -80,6 +77,21 @@ def parse_size(value: object) -> int:
     return n
 
 
+def _parse_limit(value: object, label: str, *, size: bool = False) -> int | None:
+    """Parse a positive configured limit; ``unlimited`` disables it."""
+    if value is None or (
+        isinstance(value, str) and value.strip().lower() in {"none", "unlimited"}
+    ):
+        return None
+    try:
+        parsed = parse_size(value) if size else value
+    except ConfigError as exc:
+        raise ConfigError(f"'{label}' must be a positive integer or 'unlimited'") from exc
+    if isinstance(parsed, bool) or not isinstance(parsed, int) or parsed <= 0:
+        raise ConfigError(f"'{label}' must be a positive integer or 'unlimited'")
+    return parsed
+
+
 def is_loopback_address(address: str) -> bool:
     """Return true when the listener exposes the service only locally."""
     address = address.strip()
@@ -101,7 +113,7 @@ def is_loopback_address(address: str) -> bool:
 class AuthConfig:
     enabled: bool = True
     session_ttl_hours: int = 72
-    max_sessions: int = DEFAULT_MAX_SESSIONS
+    max_sessions: int | None = DEFAULT_MAX_SESSIONS
     password_file: Path | None = None
 
 
@@ -141,11 +153,50 @@ class GroupConfig:
 
 
 @dataclass(frozen=True)
+class LimitsConfig:
+    """Resource budgets that are intentionally controlled by the operator."""
+
+    max_image_dimension: int | None = 16_384
+    max_image_raw_bytes: int | None = 256 * 1024**2
+    max_filename_length: int | None = 200
+    max_filename_bytes: int | None = 240
+    max_png_chunks: int | None = 100_000
+    max_jpeg_segments: int | None = 100_000
+    max_webp_chunks: int | None = 100_000
+    max_mime_length: int | None = 120
+    max_multipart_boundary_length: int | None = 70
+    max_multipart_parts: int | None = 32
+    max_multipart_header_bytes: int | None = 8 * 1024
+    max_multipart_field_name_length: int | None = 256
+    max_batch_names: int | None = 10_000
+    max_batch_body_bytes: int | None = 2 * 1024**2
+    max_comment_body_bytes: int | None = 8 * 1024
+    max_http_header_bytes: int | None = 64 * 1024
+    max_login_body_bytes: int | None = 4 * 1024
+    max_login_fields: int | None = 8
+    max_login_delay_seconds: float | None = 900.0
+    max_login_concurrent_checks: int | None = 4
+    max_login_tracked_ips: int | None = 4096
+    login_forget_after_seconds: float | None = 3600.0
+    max_scrypt_memory_bytes: int | None = 64 * 1024**2
+    max_password_file_bytes: int | None = 16 * 1024
+    max_metadata_bytes: int | None = 64 * 1024
+    max_comment_length: int | None = 280
+    max_comment_bytes: int | None = 1024
+    request_queue_size: int = 32
+    max_active_requests: int | None = 64
+    max_pending_requests: int | None = 8
+    http_header_timeout_seconds: float | None = 5.0
+    http_request_timeout_seconds: float | None = 60.0
+
+
+@dataclass(frozen=True)
 class Config:
     listen_address: str
     port: int
-    max_upload_bytes: int
-    max_image_pixels: int
+    max_upload_bytes: int | None
+    max_image_pixels: int | None
+    limits: LimitsConfig
     trusted_proxies: tuple[ipaddress.IPv4Network | ipaddress.IPv6Network, ...]
     allowed_hosts: tuple[str, ...]
     url_prefix: str
@@ -235,6 +286,105 @@ def _warn_unknown(table: dict, known: set[str], where: str, warnings: list[str])
         warnings.append(f"{where}: unknown key '{key}' ignored {suggestion}".rstrip())
 
 
+def _parse_limits(raw: object, warnings: list[str]) -> LimitsConfig:
+    if raw is None:
+        return LimitsConfig()
+    table = _expect_table(raw, "[limits]")
+    keys = {
+        "max_image_dimension",
+        "max_image_raw_size",
+        "max_filename_length",
+        "max_filename_size",
+        "max_png_chunks",
+        "max_jpeg_segments",
+        "max_webp_chunks",
+        "max_mime_length",
+        "max_multipart_boundary_length",
+        "max_multipart_parts",
+        "max_multipart_header_size",
+        "max_multipart_field_name_length",
+        "max_batch_names",
+        "max_batch_body_size",
+        "max_comment_body_size",
+        "max_http_header_size",
+        "max_login_body_size",
+        "max_login_fields",
+        "max_login_delay_seconds",
+        "max_login_concurrent_checks",
+        "max_login_tracked_ips",
+        "login_forget_after_seconds",
+        "max_scrypt_memory_size",
+        "max_password_file_size",
+        "max_metadata_size",
+        "max_comment_length",
+        "max_comment_bytes",
+        "request_queue_size",
+        "max_active_requests",
+        "max_pending_requests",
+        "http_header_timeout_seconds",
+        "http_request_timeout_seconds",
+    }
+    _warn_unknown(table, keys, "[limits]", warnings)
+
+    def integer(key: str, default: int | None) -> int | None:
+        return _parse_limit(table.get(key, default), f"[limits] '{key}'")
+
+    def size(key: str, default: int | None) -> int | None:
+        return _parse_limit(table.get(key, default), f"[limits] '{key}'", size=True)
+
+    def seconds(key: str, default: float | None) -> float | None:
+        value = table.get(key, default)
+        if value is None or (
+            isinstance(value, str) and value.strip().lower() in {"none", "unlimited"}
+        ):
+            return None
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            raise ConfigError(f"[limits] '{key}' must be a positive number or 'unlimited'")
+        value = float(value)
+        if value <= 0 or not math.isfinite(value):
+            raise ConfigError(f"[limits] '{key}' must be a positive number or 'unlimited'")
+        return value
+
+    request_queue_size = integer("request_queue_size", 32)
+    if request_queue_size is None:
+        raise ConfigError("[limits] 'request_queue_size' cannot be unlimited")
+
+    return LimitsConfig(
+        max_image_dimension=integer("max_image_dimension", 16_384),
+        max_image_raw_bytes=size("max_image_raw_size", 256 * 1024**2),
+        max_filename_length=integer("max_filename_length", 200),
+        max_filename_bytes=size("max_filename_size", 240),
+        max_png_chunks=integer("max_png_chunks", 100_000),
+        max_jpeg_segments=integer("max_jpeg_segments", 100_000),
+        max_webp_chunks=integer("max_webp_chunks", 100_000),
+        max_mime_length=integer("max_mime_length", 120),
+        max_multipart_boundary_length=integer("max_multipart_boundary_length", 70),
+        max_multipart_parts=integer("max_multipart_parts", 32),
+        max_multipart_header_bytes=size("max_multipart_header_size", 8 * 1024),
+        max_multipart_field_name_length=integer("max_multipart_field_name_length", 256),
+        max_batch_names=integer("max_batch_names", 10_000),
+        max_batch_body_bytes=size("max_batch_body_size", 2 * 1024**2),
+        max_comment_body_bytes=size("max_comment_body_size", 8 * 1024),
+        max_http_header_bytes=size("max_http_header_size", 64 * 1024),
+        max_login_body_bytes=size("max_login_body_size", 4 * 1024),
+        max_login_fields=integer("max_login_fields", 8),
+        max_login_delay_seconds=seconds("max_login_delay_seconds", 900.0),
+        max_login_concurrent_checks=integer("max_login_concurrent_checks", 4),
+        max_login_tracked_ips=integer("max_login_tracked_ips", 4096),
+        login_forget_after_seconds=seconds("login_forget_after_seconds", 3600.0),
+        max_scrypt_memory_bytes=size("max_scrypt_memory_size", 64 * 1024**2),
+        max_password_file_bytes=size("max_password_file_size", 16 * 1024),
+        max_metadata_bytes=size("max_metadata_size", 64 * 1024),
+        max_comment_length=integer("max_comment_length", 280),
+        max_comment_bytes=size("max_comment_bytes", 1024),
+        request_queue_size=request_queue_size,
+        max_active_requests=integer("max_active_requests", 64),
+        max_pending_requests=integer("max_pending_requests", 8),
+        http_header_timeout_seconds=seconds("http_header_timeout_seconds", 5.0),
+        http_request_timeout_seconds=seconds("http_request_timeout_seconds", 60.0),
+    )
+
+
 def _parse_auth(raw: object, warnings: list[str]) -> AuthConfig:
     if raw is None:
         return AuthConfig()
@@ -247,17 +397,12 @@ def _parse_auth(raw: object, warnings: list[str]) -> AuthConfig:
     )
     enabled = _get_bool(table, "enabled", "[auth]", default=True)
     ttl = table.get("session_ttl_hours", 72)
-    if isinstance(ttl, bool) or not isinstance(ttl, int) or not (1 <= ttl <= 24 * 365):
-        raise ConfigError("[auth]: 'session_ttl_hours' must be an integer between 1 and 8760")
-    max_sessions = table.get("max_sessions", DEFAULT_MAX_SESSIONS)
-    if (
-        isinstance(max_sessions, bool)
-        or not isinstance(max_sessions, int)
-        or not (1 <= max_sessions <= MAX_SESSIONS)
-    ):
-        raise ConfigError(
-            f"[auth]: 'max_sessions' must be an integer between 1 and {MAX_SESSIONS}"
-        )
+    if isinstance(ttl, bool) or not isinstance(ttl, int) or ttl < 1:
+        raise ConfigError("[auth]: 'session_ttl_hours' must be a positive integer")
+    max_sessions = _parse_limit(
+        table.get("max_sessions", DEFAULT_MAX_SESSIONS),
+        "[auth] 'max_sessions'",
+    )
     password_file_raw = table.get("password_file")
     password_file = None
     if password_file_raw is not None:
@@ -268,6 +413,7 @@ def _parse_auth(raw: object, warnings: list[str]) -> AuthConfig:
         password_file = Path(os.path.expanduser(password_file_raw))
         if not password_file.is_absolute():
             raise ConfigError("[auth]: 'password_file' must be an absolute path")
+        password_file = ensure_external_path(password_file, "[auth] 'password_file'")
     if enabled and "password_hash" in table:
         warnings.append(
             "[auth]: 'password_hash' in config.toml is ignored; "
@@ -301,6 +447,8 @@ def _parse_tls(raw: object, warnings: list[str]) -> TLSConfig:
     private_key = Path(os.path.expanduser(private_key_raw))
     if not certificate.is_absolute() or not private_key.is_absolute():
         raise ConfigError("[tls]: 'certificate' and 'private_key' must be absolute")
+    certificate = ensure_external_path(certificate, "[tls] 'certificate'")
+    private_key = ensure_external_path(private_key, "[tls] 'private_key'")
     return TLSConfig(enabled=True, certificate=certificate, private_key=private_key)
 
 
@@ -337,36 +485,21 @@ def _parse_zone(raw_zone: object, index: int, warnings: list[str]) -> ZoneConfig
         )
     if "\x00" in directory_raw:
         raise ConfigError(f"{where}: 'directory' contains a NUL character")
+    directory = ensure_external_path(directory, f"{where} 'directory'")
     retain = table.get("retain", 10)
-    if isinstance(retain, bool) or not isinstance(retain, int) or not (1 <= retain <= 10_000):
-        raise ConfigError(f"{where}: 'retain' must be an integer between 1 and 10000")
+    if isinstance(retain, bool) or not isinstance(retain, int) or retain < 1:
+        raise ConfigError(f"{where}: 'retain' must be a positive integer")
     prefix = _get_str(table, "reference_prefix", where, default="@", allow_empty=True)
-    if len(prefix) > 16:
-        raise ConfigError(f"{where}: 'reference_prefix' is too long (maximum 16 characters)")
     suffix = _get_str(table, "reference_suffix", where, default="", allow_empty=True)
-    if len(suffix) > 16:
-        raise ConfigError(f"{where}: 'reference_suffix' is too long (maximum 16 characters)")
     list_prefix = _get_str(
         table, "reference_list_prefix", where, default="", allow_empty=True
     )
-    if len(list_prefix) > 16:
-        raise ConfigError(
-            f"{where}: 'reference_list_prefix' is too long (maximum 16 characters)"
-        )
     list_suffix = _get_str(
         table, "reference_list_suffix", where, default="", allow_empty=True
     )
-    if len(list_suffix) > 16:
-        raise ConfigError(
-            f"{where}: 'reference_list_suffix' is too long (maximum 16 characters)"
-        )
     separator = _get_str(
         table, "reference_separator", where, default=",", allow_empty=True
     )
-    if len(separator) > 16:
-        raise ConfigError(
-            f"{where}: 'reference_separator' is too long (maximum 16 characters)"
-        )
     allow_zip_download = _get_bool(table, "allow_zip_download", where, default=True)
     color = _get_str(table, "color", where, default="#243447")
     if not _COLOR_RE.fullmatch(color):
@@ -556,7 +689,7 @@ def public_path(prefix: str, path: str) -> str:
 
 def load_config(path: Path) -> Config:
     """Load, validate, and return the configuration."""
-    path = Path(path)
+    path = ensure_external_path(Path(path), "configuration")
     try:
         raw_bytes = path.read_bytes()
     except FileNotFoundError as exc:
@@ -574,7 +707,8 @@ def load_config(path: Path) -> Config:
     _warn_unknown(
         data,
         {"listen_address", "port", "max_upload_size", "trusted_proxies",
-          "max_image_pixels",
+           "max_image_pixels",
+          "limits",
           "allowed_hosts", "url_prefix",
           "show_full_path", "allow_unauthenticated_local", "allow_unauthenticated_remote",
          "allow_insecure_http_remote", "accept_bin", "accept_img", "accept_doc",
@@ -589,23 +723,16 @@ def load_config(path: Path) -> Config:
     if isinstance(port, bool) or not isinstance(port, int) or not (1 <= port <= 65535):
         raise ConfigError("'port' must be an integer between 1 and 65535")
 
-    max_upload_bytes = parse_size(
-        data.get("max_upload_size", DEFAULT_MAX_UPLOAD_BYTES)
+    max_upload_bytes = _parse_limit(
+        data.get("max_upload_size", DEFAULT_MAX_UPLOAD_BYTES),
+        "max_upload_size",
+        size=True,
     )
-    if max_upload_bytes < 1024:
-        raise ConfigError("'max_upload_size' is too small (minimum 1KB)")
-    if max_upload_bytes > MAX_UPLOAD_BYTES:
-        raise ConfigError("'max_upload_size' is too large (maximum 50MiB)")
-
-    max_image_pixels = data.get("max_image_pixels", MAX_PIXELS)
-    if (
-        isinstance(max_image_pixels, bool)
-        or not isinstance(max_image_pixels, int)
-        or not (1 <= max_image_pixels <= HARD_MAX_PIXELS)
-    ):
-        raise ConfigError(
-            f"'max_image_pixels' must be an integer between 1 and {HARD_MAX_PIXELS}"
-        )
+    max_image_pixels = _parse_limit(
+        data.get("max_image_pixels", DEFAULT_MAX_IMAGE_PIXELS),
+        "max_image_pixels",
+    )
+    limits = _parse_limits(data.get("limits"), warnings)
 
     trusted_proxies = _parse_trusted_proxies(data.get("trusted_proxies"), warnings)
     # The public hostname is deployment-specific; an absent key preserves the
@@ -649,6 +776,7 @@ def load_config(path: Path) -> Config:
         port=port,
         max_upload_bytes=max_upload_bytes,
         max_image_pixels=max_image_pixels,
+        limits=limits,
         trusted_proxies=trusted_proxies,
         allowed_hosts=allowed_hosts,
         url_prefix=url_prefix,
@@ -717,32 +845,61 @@ def check_startup_policy(cfg: Config) -> bool:
 def default_config_path() -> Path:
     """Return the default XDG path: $XDG_CONFIG_HOME/pasteberth/config.toml."""
     xdg = os.environ.get("XDG_CONFIG_HOME") or os.path.expanduser("~/.config")
-    return Path(xdg) / "pasteberth" / "config.toml"
+    path = Path(xdg).expanduser()
+    if not path.is_absolute():
+        path = Path.cwd() / path
+    return path / "pasteberth" / "config.toml"
 
 
-def repository_root() -> Path:
-    """Return the repository root containing the Pasteberth code."""
-    configured = os.environ.get("PASTEBERTH_REPO_ROOT")
+def deployment_root() -> Path:
+    """Return the physical root of the read-only PasteBerth deployment."""
+    configured = os.environ.get("PASTEBERTH_HOME")
     if configured:
-        return Path(configured).expanduser()
+        return Path(configured).expanduser().resolve()
     return Path(__file__).resolve().parent.parent
 
 
-def repository_config_path() -> Path:
-    return repository_root() / "config.toml"
+def default_data_path() -> Path:
+    """Return the XDG data directory used for mutable Pasteberth state."""
+    xdg = os.environ.get("XDG_DATA_HOME") or os.path.expanduser("~/.local/share")
+    path = Path(xdg).expanduser()
+    if not path.is_absolute():
+        path = Path.cwd() / path
+    return path / "pasteberth"
 
 
 def default_storage_path() -> Path:
-    return repository_root() / "storage" / "default"
+    return default_data_path() / "storage" / "default"
+
+
+def ensure_external_path(path: Path, label: str) -> Path:
+    """Reject mutable paths that resolve inside the read-only deployment."""
+    path = Path(path).expanduser()
+    try:
+        resolved = path.resolve()
+        root = deployment_root()
+    except (OSError, RuntimeError, ValueError) as exc:
+        raise ConfigError(f"{label} cannot be resolved: {path} ({exc})") from exc
+    try:
+        resolved.relative_to(root)
+    except ValueError:
+        # Keep the configured spelling for diagnostics. Callers resolve it
+        # immediately before opening it, so descriptor backends accept linked
+        # parents without allowing writes inside the read-only bundle.
+        return path
+    raise ConfigError(f"{label} must be outside the PasteBerth deployment: {path}")
 
 
 def build_default_config() -> Config:
     """Build a minimal local configuration without a user file."""
+    storage = ensure_external_path(default_storage_path(), "default storage")
+    config_path = ensure_external_path(default_config_path(), "default configuration")
     return Config(
         listen_address="127.0.0.1",
         port=8765,
         max_upload_bytes=DEFAULT_MAX_UPLOAD_BYTES,
-        max_image_pixels=MAX_PIXELS,
+        max_image_pixels=DEFAULT_MAX_IMAGE_PIXELS,
+        limits=LimitsConfig(),
         trusted_proxies=(),
         allowed_hosts=("localhost", "127.0.0.1", "::1"),
         url_prefix="",
@@ -759,7 +916,7 @@ def build_default_config() -> Config:
             "default": ZoneConfig(
                 id="default",
                 label="Default",
-                directory=default_storage_path(),
+                directory=storage,
                 retain=10,
                 reference_prefix="@",
                 reference_suffix="",
@@ -772,7 +929,7 @@ def build_default_config() -> Config:
         },
         groups=(),
         log_level="INFO",
-        config_path=repository_config_path(),
+        config_path=config_path,
         using_default_config=True,
     )
 
@@ -784,9 +941,6 @@ def find_config_path(explicit: str | None = None) -> Path | None:
     env = os.environ.get("PASTEBERTH_CONFIG")
     if env:
         return Path(env)
-    repo_path = repository_config_path()
-    if repo_path.is_file():
-        return repo_path
     xdg_path = default_config_path()
     if xdg_path.is_file():
         return xdg_path
@@ -794,13 +948,13 @@ def find_config_path(explicit: str | None = None) -> Path | None:
 
 
 def config_path_for_generation(explicit: str | None = None) -> Path:
-    """Return the ``--generate-config`` target (repository by default)."""
+    """Return the ``--generate-config`` target (XDG by default)."""
     if explicit:
         return Path(explicit)
     env = os.environ.get("PASTEBERTH_CONFIG")
     if env:
         return Path(env)
-    return repository_config_path()
+    return default_config_path()
 
 
 def resolve_config_path(explicit: str | None = None) -> Path:
@@ -818,18 +972,14 @@ def prepare_directories(cfg: Config) -> None:
     seen: dict[tuple[int, int], str] = {}
     for zone in cfg.zones.values():
         try:
-            symlink = fs.first_symlink_component(zone.directory)
-        except (OSError, ValueError) as exc:
+            directory_path = zone.directory.resolve()
+        except (OSError, RuntimeError, ValueError) as exc:
             raise ConfigError(
                 f"zone '{zone.id}': cannot inspect {zone.directory} ({exc})"
             ) from exc
-        if symlink is not None:
-            raise ConfigError(
-                f"zone '{zone.id}': path contains a symbolic link: {symlink}"
-            )
         try:
             directory = fs.open_directory(
-                zone.directory,
+                directory_path,
                 create=zone.create_directory,
                 mode=0o700,
             )
@@ -852,7 +1002,7 @@ def prepare_directories(cfg: Config) -> None:
             ) from exc
         try:
             with directory:
-                audit = fs.audit_permissions(zone.directory, directory=True)
+                audit = fs.audit_permissions(directory_path, directory=True)
                 mode = audit.mode
             # Shared directories (group/other read or write) are accepted with a
             # warning, not rejected. Rejection would push operators to bypass
@@ -864,7 +1014,7 @@ def prepare_directories(cfg: Config) -> None:
                     "zone '%s': permissions are not private on %s (%s); "
                     "0700 is recommended",
                     zone.id,
-                    zone.directory,
+                    directory_path,
                     permission_detail,
                 )
             identity = directory.identity
@@ -872,9 +1022,9 @@ def prepare_directories(cfg: Config) -> None:
             raise ConfigError(
                 f"zone '{zone.id}': cannot inspect {zone.directory} ({exc})"
             ) from exc
-        if not fs.check_access(zone.directory, write=True, execute=True):
+        if not fs.check_access(directory_path, write=True, execute=True):
             raise ConfigError(
-                f"zone '{zone.id}': directory is not writable: {zone.directory}"
+                f"zone '{zone.id}': directory is not writable: {directory_path}"
             )
         previous = seen.get(identity)
         if previous is not None:
@@ -891,7 +1041,8 @@ def validate_directory_identities(cfg: Config) -> None:
     seen: dict[tuple[int, int], str] = {}
     configured: dict[Path, str] = {}
     for zone in cfg.zones.values():
-        normalized = Path(os.path.normpath(str(zone.directory)))
+        directory_path = zone.directory.resolve()
+        normalized = Path(os.path.normpath(str(directory_path)))
         previous_path = configured.get(normalized)
         if previous_path is not None:
             raise ConfigError(
@@ -900,7 +1051,7 @@ def validate_directory_identities(cfg: Config) -> None:
             )
         configured[normalized] = zone.id
         try:
-            with fs.open_directory(zone.directory) as directory:
+            with fs.open_directory(directory_path) as directory:
                 identity = directory.identity
         except FileNotFoundError:
             continue

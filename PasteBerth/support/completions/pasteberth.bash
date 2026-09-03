@@ -1,10 +1,10 @@
 # Bash completion for Pasteberth.
 #
 # Install for the current user:
-#   source contrib/completions/pasteberth.bash
+#   source support/completions/pasteberth.bash
 #
 # Install permanently with bash-completion:
-#   install -Dm644 contrib/completions/pasteberth.bash \
+#   install -Dm644 support/completions/pasteberth.bash \
 #     "${BASH_COMPLETION_USER_DIR:-$HOME/.local/share/bash-completion}/completions/pasteberth"
 
 _pasteberth_complete_path() {
@@ -32,6 +32,7 @@ _pasteberth_complete() {
         delete
         passwd
         audit
+        completion
     )
     global_options=(-h --help --version --config --generate-config --force)
 
@@ -49,7 +50,7 @@ _pasteberth_complete() {
                 ;;
             --generate-config|--force|--version)
                 ;;
-            serve|drop|rename|delete|passwd|audit)
+            serve|drop|rename|delete|passwd|audit|completion)
                 command=${COMP_WORDS[i]}
                 command_index=$i
                 break
@@ -83,13 +84,17 @@ _pasteberth_complete() {
             options=(-h --help --config)
             values=()
             ;;
+        completion)
+            options=(-h --help --shell)
+            values=(bash)
+            ;;
         *)
             COMPREPLY=()
             return
             ;;
     esac
 
-    if [[ $prev == --log-level ]]; then
+    if [[ $prev == --log-level || $prev == --shell ]]; then
         COMPREPLY=( $(compgen -W "${values[*]}" -- "$cur") )
         return
     fi

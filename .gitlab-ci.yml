@@ -16,7 +16,7 @@ browser:
     - apt-get install -y --no-install-recommends python3
     - npm ci
   script:
-    - npm run test:e2e
+    - npm run test:e2e:all
   artifacts:
     when: always
     paths:

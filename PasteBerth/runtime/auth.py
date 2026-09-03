@@ -11,27 +11,36 @@ from __future__ import annotations
 import base64
 import hashlib
 import hmac
+import math
 import secrets
 import threading
 import time
 from pathlib import Path
 
-from pasteberth.platformfs import UnsupportedFilesystemError, platform_fs
+from .platformfs import UnsupportedFilesystemError, platform_fs
 
 SCRYPT_N = 2**14
 SCRYPT_R = 8
 SCRYPT_P = 1
 _DKLEN = 32
-_MAXMEM = 64 * 1024 * 1024
-_MAX_PASSWORD_FILE_BYTES = 16 * 1024
+DEFAULT_SCRYPT_MAX_MEMORY_BYTES = 64 * 1024 * 1024
 DEFAULT_MAX_SESSIONS = 4096
-MAX_SESSIONS = 1_000_000
+_UNSET = object()
 
 
 # ---------------------------------------------------------------- passwords
 
 
-def hash_password(password: str) -> str:
+def _scrypt_maxmem(maxmem: int | None) -> int:
+    # hashlib uses zero to mean that its platform default is allowed.
+    return 0 if maxmem is None else maxmem
+
+
+def hash_password(
+    password: str,
+    *,
+    maxmem: int | None = DEFAULT_SCRYPT_MAX_MEMORY_BYTES,
+) -> str:
     salt = secrets.token_bytes(16)
     digest = hashlib.scrypt(
         password.encode("utf-8"),
@@ -40,7 +49,7 @@ def hash_password(password: str) -> str:
         r=SCRYPT_R,
         p=SCRYPT_P,
         dklen=_DKLEN,
-        maxmem=_MAXMEM,
+        maxmem=_scrypt_maxmem(maxmem),
     )
     return "scrypt${}${}${}${}${}".format(
         SCRYPT_N,
@@ -51,7 +60,12 @@ def hash_password(password: str) -> str:
     )
 
 
-def verify_password(password: str, stored: str | None) -> bool:
+def verify_password(
+    password: str,
+    stored: str | None,
+    *,
+    maxmem: int | None = DEFAULT_SCRYPT_MAX_MEMORY_BYTES,
+) -> bool:
     """Compare safely; return false when no hash is configured."""
     if not stored:
         return False
@@ -76,7 +90,7 @@ def verify_password(password: str, stored: str | None) -> bool:
             r=r_value,
             p=p_value,
             dklen=len(expected),
-            maxmem=_MAXMEM,
+            maxmem=_scrypt_maxmem(maxmem),
         )
     except (ValueError, TypeError):
         return False
@@ -100,14 +114,12 @@ def valid_password_hash(stored: str | None) -> bool:
     return len(salt) == 16 and len(digest) == _DKLEN
 
 
-def load_password_hash(path: Path) -> str | None:
+def load_password_hash(path: Path, *, max_bytes: int | None = None) -> str | None:
     """Read the first line of ``passwd`` on every attempt.
 
     A change made by `pasteberth passwd` takes effect without a restart.
     """
-    path = Path(path)
-    if not path.is_absolute():
-        path = Path.cwd() / path
+    path = Path(path).expanduser().resolve()
     fs = platform_fs()
     try:
         with fs.open_directory(path.parent) as parent:
@@ -124,8 +136,8 @@ def load_password_hash(path: Path) -> str | None:
                     raise RuntimeError(f"permissions are too open on {path} (0600 required)")
                 if not fs.is_owned(entry):
                     raise RuntimeError(f"passwd is not owned by the process: {path}")
-                encoded = fh.read(_MAX_PASSWORD_FILE_BYTES + 1)
-        if len(encoded) > _MAX_PASSWORD_FILE_BYTES:
+                encoded = fh.read(max_bytes + 1) if max_bytes is not None else fh.read()
+        if max_bytes is not None and len(encoded) > max_bytes:
             raise RuntimeError(f"passwd file is too large: {path}")
         raw = encoded.decode("utf-8").strip()
     except FileNotFoundError:
@@ -138,9 +150,7 @@ def load_password_hash(path: Path) -> str | None:
 
 
 def save_password_hash(path: Path, password_hash: str) -> None:
-    path = Path(path)
-    if not path.is_absolute():
-        path = Path.cwd() / path
+    path = Path(path).expanduser().resolve()
     fs = platform_fs()
     temp_name = f".passwd-{secrets.token_hex(12)}.tmp"
     with fs.open_directory(path.parent, create=True, mode=0o700) as parent:
@@ -186,12 +196,14 @@ class SessionStore:
         ttl_seconds: int,
         password_file: Path | None = None,
         *,
-        max_sessions: int = DEFAULT_MAX_SESSIONS,
+        max_sessions: int | None = DEFAULT_MAX_SESSIONS,
     ):
-        if isinstance(max_sessions, bool) or not isinstance(max_sessions, int):
-            raise ValueError("max_sessions must be a positive integer")
-        if not (1 <= max_sessions <= MAX_SESSIONS):
-            raise ValueError(f"max_sessions must be between 1 and {MAX_SESSIONS}")
+        if max_sessions is not None and (
+            isinstance(max_sessions, bool)
+            or not isinstance(max_sessions, int)
+            or max_sessions < 1
+        ):
+            raise ValueError("max_sessions must be a positive integer or None")
         self.ttl = ttl_seconds
         self._password_file = password_file
         self.max_sessions = max_sessions
@@ -207,7 +219,7 @@ class SessionStore:
         token = secrets.token_urlsafe(32)
         with self._lock:
             self._purge_locked()
-            while len(self._sessions) >= self.max_sessions:
+            while self.max_sessions is not None and len(self._sessions) >= self.max_sessions:
                 oldest = next(iter(self._sessions))
                 del self._sessions[oldest]
             self._sessions[token] = (time.monotonic() + self.ttl, self._password_epoch())
@@ -263,22 +275,61 @@ class LoginRateLimiter:
 
     _FORGET_AFTER = 3600.0  # Forget the history after one hour without failure.
 
-    def __init__(self, max_concurrent_checks: int | None = None) -> None:
+    def __init__(
+        self,
+        max_concurrent_checks: int | None | object = _UNSET,
+        *,
+        max_tracked_ips: int | None = MAX_TRACKED_IPS,
+        max_delay: float | None = MAX_DELAY,
+        forget_after: float | None = _FORGET_AFTER,
+    ) -> None:
         # ip -> [consecutive failures, locked until, last event,
         #        expensive checks in progress]
         self._state: dict[str, list[float]] = {}
         self._lock = threading.Lock()
-        checks = (
-            self.MAX_CONCURRENT_CHECKS
-            if max_concurrent_checks is None
-            else max_concurrent_checks
+        if max_concurrent_checks is _UNSET:
+            max_concurrent_checks = self.MAX_CONCURRENT_CHECKS
+        if max_concurrent_checks is not None and (
+            isinstance(max_concurrent_checks, bool)
+            or not isinstance(max_concurrent_checks, int)
+            or max_concurrent_checks < 1
+        ):
+            raise ValueError("max_concurrent_checks must be positive or None")
+        if max_tracked_ips is not None and (
+            isinstance(max_tracked_ips, bool)
+            or not isinstance(max_tracked_ips, int)
+            or max_tracked_ips < 1
+        ):
+            raise ValueError("max_tracked_ips must be positive or None")
+        if max_delay is not None and (
+            isinstance(max_delay, bool)
+            or not isinstance(max_delay, (int, float))
+            or max_delay <= 0
+            or not math.isfinite(max_delay)
+        ):
+            raise ValueError("max_delay must be positive or None")
+        if forget_after is not None and (
+            isinstance(forget_after, bool)
+            or not isinstance(forget_after, (int, float))
+            or forget_after <= 0
+            or not math.isfinite(forget_after)
+        ):
+            raise ValueError("forget_after must be positive or None")
+        self.max_tracked_ips = max_tracked_ips
+        self.max_delay = float(max_delay) if max_delay is not None else None
+        self.forget_after = float(forget_after) if forget_after is not None else None
+        self._expensive_slots = (
+            threading.BoundedSemaphore(max_concurrent_checks)
+            if max_concurrent_checks is not None
+            else None
         )
-        if checks < 1:
-            raise ValueError("max_concurrent_checks must be positive")
-        self._expensive_slots = threading.BoundedSemaphore(checks)
 
     def _make_room_locked(self, ip: str, now: float) -> bool:
-        if ip in self._state or len(self._state) < self.MAX_TRACKED_IPS:
+        if (
+            ip in self._state
+            or self.max_tracked_ips is None
+            or len(self._state) < self.max_tracked_ips
+        ):
             return True
         idle = [
             (entry[2], candidate)
@@ -295,10 +346,28 @@ class LoginRateLimiter:
         stale = [
             ip
             for ip, (_, until, last, in_flight) in self._state.items()
-            if not in_flight and until < now and now - last > self._FORGET_AFTER
+            if not in_flight
+            and until < now
+            and self.forget_after is not None
+            and now - last > self.forget_after
         ]
         for ip in stale:
             del self._state[ip]
+
+    def _delay(self, failures: int) -> float:
+        if failures < self.THRESHOLD:
+            return 0.0
+        exponent = failures - self.THRESHOLD
+        if self.max_delay is None:
+            # Avoid constructing an unbounded integer when an unlimited
+            # operator policy has already made the lockout effectively final.
+            if exponent >= 1024:
+                return float("inf")
+            try:
+                return self.BASE_DELAY * (2 ** exponent)
+            except OverflowError:
+                return float("inf")
+        return min(self.BASE_DELAY * (2 ** exponent), self.max_delay)
 
     def acquire(self, ip: str) -> float:
         """Atomically reserve at most one scrypt check per IP."""
@@ -312,10 +381,13 @@ class LoginRateLimiter:
                     return retry
                 if entry[3] >= 1:
                     return 1.0
-            if not self._expensive_slots.acquire(blocking=False):
+            if self._expensive_slots is not None and not self._expensive_slots.acquire(
+                blocking=False
+            ):
                 return 1.0
             if not self._make_room_locked(ip, now):
-                self._expensive_slots.release()
+                if self._expensive_slots is not None:
+                    self._expensive_slots.release()
                 return 1.0
             if entry is None:
                 self._state[ip] = [0.0, 0.0, now, 1.0]
@@ -334,7 +406,7 @@ class LoginRateLimiter:
                 release_slot = True
                 if entry[3] == 0 and entry[0] == 0 and entry[1] <= entry[2]:
                     self._state.pop(ip, None)
-        if release_slot:
+        if release_slot and self._expensive_slots is not None:
             self._expensive_slots.release()
 
     def complete(self, ip: str, *, success: bool) -> None:
@@ -352,9 +424,7 @@ class LoginRateLimiter:
                 fails = int(entry[0]) + 1
                 delay = 0.0
                 if fails >= self.THRESHOLD:
-                    delay = min(
-                        self.BASE_DELAY * (2 ** (fails - self.THRESHOLD)), self.MAX_DELAY
-                    )
+                    delay = self._delay(fails)
                 until = now + delay if delay else 0.0
             entry[0] = float(fails)
             entry[1] = until
@@ -363,7 +433,7 @@ class LoginRateLimiter:
             release_slot = True
             if entry[3] == 0 and entry[0] == 0 and entry[1] <= now:
                 self._state.pop(ip, None)
-        if release_slot:
+        if release_slot and self._expensive_slots is not None:
             self._expensive_slots.release()
 
     def retry_after(self, ip: str) -> float:
@@ -385,9 +455,7 @@ class LoginRateLimiter:
             fails = int(entry[0]) + 1 if entry else 1
             delay = 0.0
             if fails >= self.THRESHOLD:
-                delay = min(
-                    self.BASE_DELAY * (2 ** (fails - self.THRESHOLD)), self.MAX_DELAY
-                )
+                delay = self._delay(fails)
             until = now + delay if delay else 0.0
             in_flight = entry[3] if entry else 0.0
             self._state[ip] = [float(fails), until, now, in_flight]

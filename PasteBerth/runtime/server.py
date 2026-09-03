@@ -54,15 +54,36 @@ class PasteberthServer(ThreadingHTTPServer):
     max_pending_requests = 8
     header_timeout = 5.0
 
-    def __init__(self, server_address, handler_class, bind_and_activate=True, tls_context=None):
+    def __init__(
+        self,
+        server_address,
+        handler_class,
+        bind_and_activate=True,
+        tls_context=None,
+        *,
+        limits=None,
+    ):
+        if limits is not None:
+            self.request_queue_size = limits.request_queue_size
+            self.max_active_requests = limits.max_active_requests
+            self.max_pending_requests = limits.max_pending_requests
+            self.header_timeout = limits.http_header_timeout_seconds
         self.address_family, resolved_address = _resolve_bind_address(
             server_address[0], server_address[1]
         )
         self.tls_context = tls_context
         self.active_timeout = getattr(handler_class, "timeout", 60)
         # TCPServer may call the overridden server_close() when bind fails.
-        self._active_slots = threading.BoundedSemaphore(self.max_active_requests)
-        self._pending_slots = threading.BoundedSemaphore(self.max_pending_requests)
+        self._active_slots = (
+            threading.BoundedSemaphore(self.max_active_requests)
+            if self.max_active_requests is not None
+            else None
+        )
+        self._pending_slots = (
+            threading.BoundedSemaphore(self.max_pending_requests)
+            if self.max_pending_requests is not None
+            else None
+        )
         self._active_sockets: set[socket.socket] = set()
         self._pending_sockets: set[socket.socket] = set()
         self._sockets_lock = threading.Lock()
@@ -84,13 +105,16 @@ class PasteberthServer(ThreadingHTTPServer):
         return request, client_address
 
     def process_request(self, request, client_address):
-        if not self._pending_slots.acquire(blocking=False):
+        if self._pending_slots is not None and not self._pending_slots.acquire(
+            blocking=False
+        ):
             request.close()
             return
         try:
             request.settimeout(self.header_timeout)
         except OSError:
-            self._pending_slots.release()
+            if self._pending_slots is not None:
+                self._pending_slots.release()
             request.close()
             return
         with self._sockets_lock:
@@ -115,19 +139,24 @@ class PasteberthServer(ThreadingHTTPServer):
                 return False
             if request not in self._pending_sockets:
                 return True
-        if not self._active_slots.acquire(blocking=False):
+        if self._active_slots is not None and not self._active_slots.acquire(
+            blocking=False
+        ):
             return False
         try:
             request.settimeout(self.active_timeout)
         except OSError:
-            self._active_slots.release()
+            if self._active_slots is not None:
+                self._active_slots.release()
             return False
         with self._sockets_lock:
             if request not in self._pending_sockets:
-                self._active_slots.release()
+                if self._active_slots is not None:
+                    self._active_slots.release()
                 return request in self._active_sockets
             self._pending_sockets.remove(request)
-        self._pending_slots.release()
+        if self._pending_slots is not None:
+            self._pending_slots.release()
         return True
 
     def _release_request(self, request) -> None:
@@ -138,8 +167,9 @@ class PasteberthServer(ThreadingHTTPServer):
             self._active_sockets.discard(request)
             self._pending_sockets.discard(request)
         if pending:
-            self._pending_slots.release()
-        else:
+            if self._pending_slots is not None:
+                self._pending_slots.release()
+        elif self._active_slots is not None:
             self._active_slots.release()
 
     def close_active_connections(self) -> None:
@@ -174,8 +204,14 @@ def serve_forever(
     tls_context=None,
     *,
     expected_loopback: bool | None = None,
+    limits=None,
 ) -> None:
-    server = PasteberthServer((listen_address, port), handler_class, tls_context=tls_context)
+    server = PasteberthServer(
+        (listen_address, port),
+        handler_class,
+        tls_context=tls_context,
+        limits=limits,
+    )
     if expected_loopback is True:
         try:
             bound_loopback = ipaddress.ip_address(server.server_address[0]).is_loopback

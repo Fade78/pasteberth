@@ -1,0 +1,1 @@
+"""PasteBerth deployment namespace."""

@@ -11,15 +11,15 @@ import threading
 from contextlib import contextmanager
 from urllib.parse import quote
 
-from pasteberth.config import Config, ZoneConfig, public_path, resolve_group_zone_ids
-from pasteberth.content import classify
-from pasteberth.images import (
+from .config import Config, ZoneConfig, public_path, resolve_group_zone_ids
+from .content import classify
+from .images import (
     InvalidImageError,
     mime_allowed,
     mime_syntax_allowed,
 )
-from pasteberth.platformfs import platform_fs
-from pasteberth.storage import (
+from .platformfs import platform_fs
+from .storage import (
     DestinationError,
     DestinationBusyError,
     LocalDestination,
@@ -101,7 +101,10 @@ class PasteService:
         for zid, zone in cfg.zones.items():
             self._zone_cfg[zid] = zone
             self._destinations[zid] = LocalDestination(
-                zone.directory, create_directory=zone.create_directory
+                zone.directory,
+                create_directory=zone.create_directory,
+                limits=cfg.limits,
+                max_image_pixels=cfg.max_image_pixels,
             )
             self._locks[zid] = threading.RLock()
             device = self._destinations[zid].device_id
@@ -121,6 +124,13 @@ class PasteService:
         }
         self._operation_state: dict[str, str] = {}
         self._operation_state_lock = threading.Lock()
+
+    def _valid_filename(self, name: object) -> bool:
+        return valid_filename(
+            name,
+            max_length=self.cfg.limits.max_filename_length,
+            max_bytes=self.cfg.limits.max_filename_bytes,
+        )
 
     @contextmanager
     def zone_operation(
@@ -172,20 +182,23 @@ class PasteService:
     ):
         if not data:
             raise ServiceError("empty_upload", "no data received")
-        if len(data) > self.cfg.max_upload_bytes:
+        if self.cfg.max_upload_bytes is not None and len(data) > self.cfg.max_upload_bytes:
             raise ServiceError(
                 "too_large",
                 f"content is too large ({len(data)} > {self.cfg.max_upload_bytes} bytes)",
             )
         target_filename = None
         if preserve_filename:
-            if not filename_hint or not valid_filename(filename_hint):
+            if not filename_hint or not self._valid_filename(filename_hint):
                 raise ServiceError(
                     "invalid_filename",
                     "the dropped filename is invalid",
                 )
             target_filename = filename_hint
-        if not mime_syntax_allowed(declared_mime):
+        if not mime_syntax_allowed(
+            declared_mime,
+            max_length=self.cfg.limits.max_mime_length,
+        ):
             raise ServiceError(
                 "unsupported_media_type",
                 f"declared Content-Type is invalid: {declared_mime!r}",
@@ -203,6 +216,11 @@ class PasteService:
                 declared_mime,
                 filename_hint,
                 max_pixels=self.cfg.max_image_pixels,
+                max_dimension=self.cfg.limits.max_image_dimension,
+                max_raw_bytes=self.cfg.limits.max_image_raw_bytes,
+                max_png_chunks=self.cfg.limits.max_png_chunks,
+                max_jpeg_segments=self.cfg.limits.max_jpeg_segments,
+                max_webp_chunks=self.cfg.limits.max_webp_chunks,
             )
         except InvalidImageError as exc:
             raise ServiceError(exc.code, str(exc)) from exc
@@ -392,7 +410,7 @@ class PasteService:
         """Delete a known image (file + sidecar) from a zone."""
         if zid not in self._zone_cfg:
             raise ServiceError("unknown_zone", f"unknown zone: {zid}")
-        if not valid_filename(filename):
+        if not self._valid_filename(filename):
             raise ServiceError("unknown_image", "invalid filename")
         try:
             with self.zone_operation(
@@ -425,7 +443,7 @@ class PasteService:
         if len(set(filenames)) != len(filenames):
             raise ServiceError("invalid_request", "duplicate filenames")
         for filename in filenames:
-            if not isinstance(filename, str) or not valid_filename(filename):
+            if not isinstance(filename, str) or not self._valid_filename(filename):
                 raise ServiceError("invalid_filename", "invalid filename")
         deleted: list[str] = []
         failed: list[dict] = []
@@ -467,7 +485,7 @@ class PasteService:
         """Rename a managed pair (file + sidecar) in a zone."""
         if zid not in self._zone_cfg:
             raise ServiceError("unknown_zone", f"unknown zone: {zid}")
-        if not valid_filename(source) or not valid_filename(target) or source == target:
+        if not self._valid_filename(source) or not self._valid_filename(target) or source == target:
             raise ServiceError("invalid_filename", "invalid source or target filename")
         try:
             with self.zone_operation(
@@ -487,10 +505,14 @@ class PasteService:
         """Update a managed item's short comment without changing its data."""
         if zid not in self._zone_cfg:
             raise ServiceError("unknown_zone", f"unknown zone: {zid}")
-        if not valid_filename(filename):
+        if not self._valid_filename(filename):
             raise ServiceError("unknown_image", "invalid filename")
         try:
-            comment = validate_comment(comment)
+            comment = validate_comment(
+                comment,
+                max_length=self.cfg.limits.max_comment_length,
+                max_bytes=self.cfg.limits.max_comment_bytes,
+            )
         except ValueError as exc:
             raise ServiceError("invalid_comment", str(exc)) from exc
         try:
@@ -513,7 +535,7 @@ class PasteService:
         """Return binary content and MIME for known files only."""
         if zid not in self._zone_cfg:
             raise ServiceError("unknown_zone", f"unknown zone: {zid}")
-        if not valid_filename(filename):
+        if not self._valid_filename(filename):
             raise ServiceError("unknown_image", "invalid filename")
         try:
             with self.zone_operation(
@@ -526,7 +548,10 @@ class PasteService:
                 item = known.get(filename)
                 if item is None:
                     raise ServiceError("unknown_image", "file is unknown in this zone")
-                if item.size > self.cfg.max_upload_bytes:
+                if (
+                    self.cfg.max_upload_bytes is not None
+                    and item.size > self.cfg.max_upload_bytes
+                ):
                     raise ServiceError("too_large", "preview is too large to serve")
                 data = destination.read(filename)
         except ServiceError:
@@ -553,7 +578,7 @@ class PasteService:
         if len(set(filenames)) != len(filenames):
             raise ServiceError("invalid_request", "duplicate filenames")
         for filename in filenames:
-            if not isinstance(filename, str) or not valid_filename(filename):
+            if not isinstance(filename, str) or not self._valid_filename(filename):
                 raise ServiceError("invalid_filename", "invalid filename")
         with self.zone_operation(
             zid, kind="archive", exclusive=True, blocking=blocking

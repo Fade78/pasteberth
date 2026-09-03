@@ -1,7 +1,7 @@
 # Pasteberth Operator Guide
 
 This guide is the detailed reference for installing, configuring, operating,
-and integrating Pasteberth 1.8.1. The short project overview is in
+and integrating Pasteberth 2.0.0. The short project overview is in
 [`README.md`](README.md); user-visible release history is in
 [`CHANGELOG.md`](CHANGELOG.md).
 
@@ -74,14 +74,14 @@ contexts:
 
 ## 2. Requirements and Support
 
-The 1.8.1 implementation requires:
+The 2.0.0 implementation requires:
 
 - Python 3.11 or newer;
 - a local filesystem supported by the active platform backend;
 - a modern browser for the Web UI;
 - no third-party Python runtime dependency.
 
-Linux is the current official and tested server platform for v1.8.1. The
+Linux is the current official and tested server platform for v2.0.0. The
 Windows backend has broad Wine coverage, but native Windows/NTFS validation is
 still outstanding and macOS support is not implemented. Do not infer support
 for every network or exotic filesystem from the operating system name.
@@ -91,39 +91,43 @@ Firefox when the corresponding Playwright browser is installed.
 
 ## 3. Installation
 
-### 3.1 Source checkout
+### 3.1 Deployable copy
 
-The supported v1.8.1 installation is a source checkout. It needs no root access
-and no installation script:
+The supported v2.0.0 installation is the tracked `PasteBerth/` directory. It is
+the complete code-only deployment unit: it needs no root access, installation
+script, Python package installation, or build step.
 
 ```sh
 git clone https://github.com/Fade78/pasteberth.git
 cd pasteberth
+cp -a PasteBerth "$HOME/PasteBerth"
+mkdir -p "$HOME/.local/bin"
+ln -s "$HOME/PasteBerth/pasteberth" "$HOME/.local/bin/pasteberth"
 ```
 
-The repository wrapper is the Unix convenience entry point:
+The executable is at the root of the deployment directory:
 
 ```sh
-./bin/pasteberth --help
+pasteberth --help
 ```
 
-It invokes `python3 -P -m pasteberth` from the checkout. To use the command from
-any directory:
+The executable resolves its physical target, so a symbolic link can live in any
+directory on `PATH`:
 
 ```sh
-export PATH="$PWD/bin:$PATH"
+export PATH="$HOME/.local/bin:$PATH"
 pasteberth --version
 ```
 
-The repository wrappers resolve the checkout before launching Python, replace
-the inherited `PYTHONPATH`, and use Python's `-P` safe-path mode. They therefore
-do not provide a plugin mechanism through the current directory or
-`PYTHONPATH`.
+The executable resolves the deployment directory before launching its private
+runtime, replaces the inherited `PYTHONPATH`, and uses Python's `-P` safe-path
+mode. It therefore does not provide a plugin mechanism through the current
+directory or `PYTHONPATH`. A copy of the executable without the rest of the
+deployment requires `PASTEBERTH_HOME=/absolute/path/to/PasteBerth`; `--config`
+only selects configuration and never locates the runtime.
 
-The Python project also declares the `pasteberth` console entry point in
-`pyproject.toml`. The repository wrapper remains the documented v1.8.1 operator
-path because default storage and generated configuration are deliberately
-repository-oriented.
+`pyproject.toml`, tests, browser tooling, documentation sources, and Git
+metadata are repository material. They are not needed in the copied deployment.
 
 ### 3.2 First start
 
@@ -131,11 +135,11 @@ Generate a configuration, edit its zones, set the password, audit it, and
 start the server:
 
 ```sh
-./bin/pasteberth --generate-config
-# edit config.toml: paths, zones, limits, and deployment options
-./bin/pasteberth passwd --config config.toml
-./bin/pasteberth audit --config config.toml
-./bin/pasteberth --config config.toml
+pasteberth --generate-config
+# edit ~/.config/pasteberth/config.toml: paths, zones, limits, and options
+pasteberth passwd
+pasteberth audit
+pasteberth
 ```
 
 Open `http://127.0.0.1:8765/` in the browser unless the configuration changes
@@ -144,9 +148,10 @@ password hash is kept in a separate `passwd` file and is never written to
 `config.toml`.
 
 For a local trial, running without any configuration intentionally uses a
-loopback-only minimal mode with `<repository>/storage/default` and no
-authentication. This mode is suitable for a first look only; it must not be
-exposed through a proxy or a non-loopback listener.
+loopback-only minimal mode with `$XDG_DATA_HOME/pasteberth/storage/default`
+(normally `~/.local/share/pasteberth/storage/default`) and no authentication.
+This mode is suitable for a first look only; it must not be exposed through a
+proxy or a non-loopback listener.
 
 ### 3.3 Configuration discovery
 
@@ -154,22 +159,27 @@ For normal execution, an existing configuration is selected in this order:
 
 1. explicit `--config PATH`;
 2. `PASTEBERTH_CONFIG`;
-3. `config.toml` at the repository root;
-4. `~/.config/pasteberth/config.toml`;
-5. built-in minimal mode when no file exists.
+3. `$XDG_CONFIG_HOME/pasteberth/config.toml` (normally
+   `~/.config/pasteberth/config.toml`);
+4. built-in minimal mode when no file exists.
 
 `--generate-config` writes to the explicit path or `PASTEBERTH_CONFIG`, then
-to the repository-root `config.toml`. It does not generate into the XDG path.
+to `$XDG_CONFIG_HOME/pasteberth/config.toml`. It never writes inside the
+read-only deployment.
 By default it refuses to replace an existing file; add the global `--force`
 option only after checking the target path.
+
+The active configuration, password file, TLS private key, and zone directories
+must be outside `PasteBerth/`. These paths may contain symbolic links; Pasteberth
+resolves the target before opening it and checks the target and its parents.
 
 Use the same explicit `--config PATH` for `passwd`, `audit`, the server, and
 filesystem commands when more than one configuration exists.
 
 ## 4. Configuration
 
-Start from [`config.example.toml`](config.example.toml). Configuration is TOML
-and is loaded when the service starts. Restart the server after changing
+Start from [`PasteBerth/support/config.example.toml`](PasteBerth/support/config.example.toml).
+Configuration is TOML and is loaded when the service starts. Restart the server after changing
 listeners, TLS, proxy trust, host allowlists, upload limits, zones, groups, or
 authentication settings. The password hash is reloaded for every login
 attempt, so changing it does not require a restart.
@@ -180,8 +190,8 @@ attempt, so changing it does not require a restart.
 |---|---:|---|
 | `listen_address` | `127.0.0.1` | Address on which the HTTP server listens. |
 | `port` | `8765` | TCP listening port. |
-| `max_upload_size` | `20MiB` | Maximum size of one upload; the hard maximum is `50MiB`. |
-| `max_image_pixels` | `25000000` | Structural image pixel budget; hard maximum is 50 MP. |
+| `max_upload_size` | `20MiB` | Maximum size of one upload; use `"unlimited"` for no application cap. |
+| `max_image_pixels` | `25000000` | Structural image pixel budget; use `"unlimited"` to disable it. |
 | `url_prefix` | `""` | Public path prefix such as `/paste`; the proxy must preserve it. |
 | `show_full_path` | `true` | Display absolute file references in the Web UI; set `false` when paths are sensitive. |
 | `trusted_proxies` | `[]` | IP addresses or CIDR networks allowed to provide `X-Forwarded-*`. |
@@ -197,10 +207,26 @@ attempt, so changing it does not require a restart.
 All three `accept_*` switches may be disabled, but disabling all of them
 refuses every upload.
 
-The `max_upload_size` limit applies to the extracted content. A
-`multipart/form-data` request may use up to an additional 1 MiB for its bounded
-framing and auxiliary fields; the content itself remains limited by the
-configured value.
+The `max_upload_size` limit applies to the extracted content. Multipart framing
+and all other operational budgets are controlled in the optional `[limits]`
+table. Each numeric or size value there accepts `"unlimited"`.
+
+The available `[limits]` keys are `max_image_dimension`, `max_image_raw_size`,
+`max_filename_length`, `max_filename_size`, `max_png_chunks`,
+`max_jpeg_segments`, `max_webp_chunks`, `max_mime_length`,
+`max_multipart_boundary_length`, `max_multipart_parts`,
+`max_multipart_header_size`, `max_multipart_field_name_length`,
+`max_batch_names`, `max_batch_body_size`, `max_comment_body_size`,
+`max_http_header_size`, `max_login_body_size`, `max_login_fields`,
+`max_login_delay_seconds`, `max_login_concurrent_checks`,
+`max_login_tracked_ips`, `login_forget_after_seconds`,
+`max_scrypt_memory_size`, `max_password_file_size`,
+`max_metadata_size`, `max_comment_length`, `max_comment_bytes`,
+`request_queue_size`, `max_active_requests`, `max_pending_requests`,
+`http_header_timeout_seconds`, and `http_request_timeout_seconds`.
+`request_queue_size` must remain a positive integer because it is passed to the
+operating-system listen backlog; the other numeric and size budgets may use
+`"unlimited"` where the operation supports it.
 
 ### 4.2 TLS
 
@@ -231,8 +257,9 @@ The password file defaults to `passwd` next to the selected configuration. It
 contains a salted scrypt hash and should be readable only by the service user.
 `pasteberth passwd` creates or replaces it safely. `max_sessions` bounds live
 authenticated sessions held in memory; when the bound is reached, the oldest
-session is evicted before a new one is created. It does not limit TCP
-connections or pending unauthenticated requests.
+session is evicted before a new one is created. Use `"unlimited"` to disable
+FIFO eviction. It does not limit TCP connections or pending unauthenticated
+requests.
 
 ### 4.4 Zones
 
@@ -242,7 +269,7 @@ Each `[[zones]]` table defines one independent project area:
 |---|---:|---|
 | `id` | required | Lowercase API/UI identifier, up to 64 characters. |
 | `label` | `id` | Human-readable UI label. |
-| `type` | `local` | Only `local` is implemented in v1.8.1. |
+| `type` | `local` | Only `local` is implemented in v2.0.0. |
 | `directory` | required | Absolute path as seen by the server and the harness. |
 | `retain` | `10` | Number of managed items retained in the zone. |
 | `reference_prefix` | `@` | Text prepended to one returned reference. |
@@ -355,8 +382,8 @@ clipboard. Clipboard permissions are controlled by the browser.
 Structural image validation checks containers, dimensions, chunk/segment
 structure, and pixel budgets without fully decoding the codec bitstream. A
 structurally valid but undecodable file can therefore have a broken preview;
-the server never executes it. Images are limited to `16,384 x 16,384` pixels
-and 25 MP by default, with a hard 50 MP budget.
+the server never executes it. The default image budgets are `16,384 x 16,384`
+pixels, 25 MP, and 256 MiB of encoded input; all are operator-configurable.
 
 ### 5.3 History and selection
 
@@ -524,22 +551,29 @@ Unless a parser error prevents command dispatch, the CLI uses these codes:
 
 ## 7. Bash Completion
 
-The repository provides a self-contained Bash completion script at
-[`contrib/completions/pasteberth.bash`](contrib/completions/pasteberth.bash).
+The deployment provides a self-contained Bash completion script at
+[`PasteBerth/support/completions/pasteberth.bash`](PasteBerth/support/completions/pasteberth.bash).
 It completes commands, options, log levels, configuration paths, and ordinary
 filesystem arguments for filesystem operations.
+
+The command can emit the same script directly, which is convenient for a
+temporary shell integration:
+
+```sh
+eval "$(pasteberth completion)"
+```
 
 Use it for the current shell:
 
 ```sh
-source contrib/completions/pasteberth.bash
+source PasteBerth/support/completions/pasteberth.bash
 ```
 
 Install it for the current user:
 
 ```sh
 mkdir -p "$HOME/.local/share/bash-completion/completions"
-install -m 0644 contrib/completions/pasteberth.bash \
+install -m 0644 PasteBerth/support/completions/pasteberth.bash \
   "$HOME/.local/share/bash-completion/completions/pasteberth"
 ```
 
@@ -547,7 +581,7 @@ On systems using the global bash-completion directory, an administrator can
 install it with:
 
 ```sh
-sudo install -Dm0644 contrib/completions/pasteberth.bash \
+sudo install -Dm0644 PasteBerth/support/completions/pasteberth.bash \
   /etc/bash_completion.d/pasteberth
 ```
 
@@ -580,8 +614,9 @@ YYYY-MM-DD_HH-MM-SS_<6 hex characters>.ext
 ```
 
 For a browser drop, `preserve_name=1` retains a valid original filename. Names
-are limited to 200 characters and 240 UTF-8 bytes. Separators, NUL, CR/LF,
-`.`/`..`, Pasteberth internal names, and transaction prefixes are rejected.
+default to 200 characters and 240 UTF-8 bytes; these two budgets are
+configurable as `max_filename_length` and `max_filename_size`. Separators, NUL,
+CR/LF, `.`/`..`, Pasteberth internal names, and transaction prefixes are rejected.
 Names beginning with a dot, such as `.env`, are valid user names.
 
 The following are internal and must not be edited or removed manually while a
@@ -605,10 +640,11 @@ preserved as a foreign artifact during recovery and is never executed as a
 deletion journal. Do not rename, edit, or remove it while investigating an old
 zone.
 
-The storage directory is ignored by Git in the repository checkout. Back it up
-separately if its contents matter. For a clean backup, stop the service first
-or otherwise ensure no transaction is active; copy managed data and matching
-sidecars together. Do not treat foreign files as managed Pasteberth content.
+Zone directories are deployment state and must remain outside the read-only
+`PasteBerth/` directory. Back them up separately if their contents matter. For
+a clean backup, stop the service first or otherwise ensure no transaction is
+active; copy managed data and matching sidecars together. Do not treat foreign
+files as managed Pasteberth content.
 
 ## 9. Deployment
 
@@ -645,14 +681,15 @@ The browser `Origin` is still `scheme://Host[:port]`, without `/paste`.
 
 ### 9.2 systemd user service
 
-[`deploy/pasteberth.service`](deploy/pasteberth.service) is an optional user
-service template. It needs no root and contains example paths. Copy and adapt
-it only after generating, authenticating, and auditing the configuration:
+[`PasteBerth/support/deploy/pasteberth.service`](PasteBerth/support/deploy/pasteberth.service)
+is an optional user service template. It needs no root and contains example
+paths. Copy and adapt it only after generating, authenticating, and auditing the
+configuration:
 
 ```sh
 mkdir -p ~/.config/systemd/user
-cp deploy/pasteberth.service ~/.config/systemd/user/pasteberth.service
-# edit WorkingDirectory, ExecStart, and --config for this checkout
+cp PasteBerth/support/deploy/pasteberth.service ~/.config/systemd/user/pasteberth.service
+# edit --config and ReadWritePaths for this deployment
 systemctl --user daemon-reload
 systemctl --user enable --now pasteberth.service
 journalctl --user -u pasteberth -f
@@ -730,8 +767,9 @@ server {
 }
 ```
 
-The proxy body limit must be at least the configured `max_upload_size` plus
-1 MiB for multipart framing; `51m` covers the hard 50 MiB content limit.
+The proxy body limit must be at least the configured upload and multipart
+budgets. If the application upload limit is `"unlimited"`, configure the proxy
+according to the maximum size appropriate for that deployment.
 `X-Forwarded-*` headers from an untrusted peer are ignored.
 
 ## 10. Security and Trust Boundaries
@@ -754,18 +792,18 @@ uploads.
 
 The server uses salted scrypt hashes, constant-time password comparison,
 server-side revocable sessions, `HttpOnly`/`SameSite=Lax` cookies, CSRF Origin
-or Referer checks, strict security headers, bounded request bodies, bounded
-image inspection, and progressive login throttling. The password hash uses the
-scrypt `N=16384` work factor. Login bodies are limited to 4 KiB, upload parsing
-has a shared 128 MiB memory budget, uploads default to 20 MiB and cannot exceed
-50 MiB, and session tokens are 256-bit values. Cookies gain `Secure` when the
-effective request scheme is HTTPS. The UI and API responses are marked
-`no-store` and include CSP, `X-Frame-Options: DENY`, `nosniff`, and
-`Referrer-Policy: no-referrer` headers.
+or Referer checks, strict security headers, configurable request and image
+budgets, and progressive login throttling. The password hash uses the scrypt
+`N=16384` work factor. Set the operational budgets in `[limits]`, or use
+`"unlimited"` where the deployment accepts the associated resource risk.
+Cookies gain `Secure` when the effective request scheme is HTTPS. The UI and
+API responses are marked `no-store` and include CSP, `X-Frame-Options: DENY`,
+`nosniff`, and `Referrer-Policy: no-referrer` headers.
 
 A file without a coherent Pasteberth sidecar is foreign. Pasteberth never
-overwrites, renames, or deletes such a file through managed operations. Symbolic
-links and unsafe filesystem entries are refused, and transaction cleanup checks
+overwrites, renames, or deletes such a file through managed operations. Linked
+configuration, zone, source, and credential paths are resolved and checked;
+unsafe entries inside a managed zone remain foreign. Transaction cleanup checks
 object identity before destructive actions.
 
 ## 11. HTTP API
@@ -844,7 +882,7 @@ The main application error codes are:
 | `428` | `replacement_required` | Explicit replacement was required but not requested. |
 | `429` | `rate_limited` | Login attempts are temporarily throttled. |
 | `500` | `destination_error`, `internal` | The server could not complete a storage or internal operation. |
-| `503` | `preview_busy`, `retention_error`, `upload_busy` | Preview slots, retention, or shared upload memory are temporarily unavailable. |
+| `503` | `retention_error` | Retention cleanup could not complete. |
 | `507` | `storage_low` | The zone's free-space reserve would be exceeded. |
 
 The response includes fields such as:
@@ -862,7 +900,7 @@ The response includes fields such as:
   "mime": "image/png",
   "comment": "Reference capture",
   "preview_url": "/previews/default/2026-08-25_01-22-31_a81c42.png",
-  "reference": "@/path/to/repository/storage/default/2026-08-25_01-22-31_a81c42.png"
+  "reference": "@/home/user/.local/share/pasteberth/storage/default/2026-08-25_01-22-31_a81c42.png"
 }
 ```
 
@@ -1030,7 +1068,7 @@ restart the service.
 
 The next major platform goal is native Windows and macOS support with the same
 transaction and security guarantees. That work is intentionally separate from
-the v1.8.1 support matrix and must not be represented as already supported.
+the v2.0.0 support matrix and must not be represented as already supported.
 
 ## 16. License
 

@@ -8,11 +8,11 @@ import tempfile
 import threading
 from pathlib import Path
 
-from pasteberth.auth import LoginRateLimiter, SessionStore
-from pasteberth.config import load_config, prepare_directories
-from pasteberth.server import PasteberthServer
-from pasteberth.service import PasteService
-from pasteberth.webapp import make_handler
+from PasteBerth.runtime.auth import LoginRateLimiter, SessionStore
+from PasteBerth.runtime.config import load_config, prepare_directories
+from PasteBerth.runtime.server import PasteberthServer
+from PasteBerth.runtime.service import PasteService
+from PasteBerth.runtime.webapp import make_handler
 
 
 PORT = int(os.environ.get("PASTEBERTH_E2E_PORT", "8876"))
@@ -117,11 +117,17 @@ def main() -> None:
             password_file=cfg.password_file() if cfg.auth.enabled else None,
             max_sessions=cfg.auth.max_sessions,
         )
-        limiter = LoginRateLimiter()
+        limiter = LoginRateLimiter(
+            max_concurrent_checks=cfg.limits.max_login_concurrent_checks,
+            max_tracked_ips=cfg.limits.max_login_tracked_ips,
+            max_delay=cfg.limits.max_login_delay_seconds,
+            forget_after=cfg.limits.login_forget_after_seconds,
+        )
         base_handler = make_handler(cfg, service, sessions, limiter)
         server = PasteberthServer(
             (cfg.listen_address, cfg.port),
             _test_handler(base_handler, service, URL_PREFIX),
+            limits=cfg.limits,
         )
 
         def stop(_signum, _frame) -> None:

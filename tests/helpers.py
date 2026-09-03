@@ -12,11 +12,11 @@ import zlib
 from http.client import HTTPConnection
 from pathlib import Path
 
-from pasteberth.auth import LoginRateLimiter, SessionStore, hash_password, save_password_hash
-from pasteberth.config import load_config, prepare_directories
-from pasteberth.server import PasteberthServer
-from pasteberth.service import PasteService
-from pasteberth.webapp import make_handler
+from PasteBerth.runtime.auth import LoginRateLimiter, SessionStore, hash_password, save_password_hash
+from PasteBerth.runtime.config import load_config, prepare_directories
+from PasteBerth.runtime.server import PasteberthServer
+from PasteBerth.runtime.service import PasteService
+from PasteBerth.runtime.webapp import make_handler
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
@@ -143,11 +143,11 @@ def write_config(
     groups: list[dict] | None = None,
     *,
     auth_enabled: bool = False,
-    max_sessions: int | None = None,
+    max_sessions: int | str | None = None,
     listen_address: str = "127.0.0.1",
     port: int | None = None,
     max_upload_size: str = "20MiB",
-    max_image_pixels: int | None = None,
+    max_image_pixels: int | str | None = None,
     url_prefix: str | None = None,
     trusted_proxies: str | None = '["127.0.0.1", "::1"]',
     allowed_hosts: str | None = None,
@@ -163,6 +163,7 @@ def write_config(
     tls_private_key: str | None = None,
     password_file: str | None = None,
     min_free_percent: float | None = None,
+    limits: dict[str, object] | None = None,
     extra: str = "",
     password: str | None = None,
 ) -> Path:
@@ -179,7 +180,12 @@ def write_config(
         lines.append(f"port = {port}")
     lines.append(f"max_upload_size = {json.dumps(max_upload_size)}")
     if max_image_pixels is not None:
-        lines.append(f"max_image_pixels = {max_image_pixels}")
+        rendered_pixels = (
+            json.dumps(max_image_pixels)
+            if isinstance(max_image_pixels, str)
+            else str(max_image_pixels)
+        )
+        lines.append(f"max_image_pixels = {rendered_pixels}")
     if url_prefix is not None:
         lines.append(f"url_prefix = {json.dumps(url_prefix)}")
     if trusted_proxies is not None:
@@ -207,6 +213,16 @@ def write_config(
     if show_full_path is not None:
         lines.append(f"show_full_path = {str(show_full_path).lower()}")
     lines.append('log_level = "WARNING"')
+    if limits:
+        lines.extend(["", "[limits]"])
+        for key, value in limits.items():
+            if isinstance(value, str):
+                rendered = json.dumps(value)
+            elif isinstance(value, bool):
+                rendered = str(value).lower()
+            else:
+                rendered = str(value)
+            lines.append(f"{key} = {rendered}")
     if tls_enabled or tls_certificate is not None or tls_private_key is not None:
         lines.extend(
             [
@@ -223,7 +239,10 @@ def write_config(
     lines.append("[auth]")
     lines.append(f"enabled = {str(auth_enabled).lower()}")
     if max_sessions is not None:
-        lines.append(f"max_sessions = {max_sessions}")
+        rendered_sessions = (
+            json.dumps(max_sessions) if isinstance(max_sessions, str) else str(max_sessions)
+        )
+        lines.append(f"max_sessions = {rendered_sessions}")
     if password_file is not None:
         lines.append(f"password_file = {json.dumps(password_file)}")
     lines.append("")
@@ -293,9 +312,14 @@ class LiveServer:
             password_file=self.cfg.password_file() if self.cfg.auth.enabled else None,
             max_sessions=self.cfg.auth.max_sessions,
         )
-        self.limiter = LoginRateLimiter()
+        self.limiter = LoginRateLimiter(
+            max_concurrent_checks=self.cfg.limits.max_login_concurrent_checks,
+            max_tracked_ips=self.cfg.limits.max_login_tracked_ips,
+            max_delay=self.cfg.limits.max_login_delay_seconds,
+            forget_after=self.cfg.limits.login_forget_after_seconds,
+        )
         handler = make_handler(self.cfg, self.service, self.sessions, self.limiter)
-        self.httpd = PasteberthServer(("127.0.0.1", 0), handler)
+        self.httpd = PasteberthServer(("127.0.0.1", 0), handler, limits=self.cfg.limits)
         self.port = self.httpd.server_address[1]
         self.thread = threading.Thread(target=self.httpd.serve_forever, daemon=True)
         self.thread.start()
@@ -309,8 +333,8 @@ class LiveServer:
         """Simule un redémarrage du service : nouvelles instances, mêmes disques."""
         self.stop()
         fresh = LiveServer.__new__(LiveServer)
-        from pasteberth.config import load_config as _lc
-        from pasteberth.auth import SessionStore as _SS, LoginRateLimiter as _LR
+        from PasteBerth.runtime.config import load_config as _lc
+        from PasteBerth.runtime.auth import SessionStore as _SS, LoginRateLimiter as _LR
 
         fresh.cfg = _lc(self.cfg.config_path)
         prepare_directories(fresh.cfg)
@@ -320,9 +344,16 @@ class LiveServer:
             password_file=fresh.cfg.password_file() if fresh.cfg.auth.enabled else None,
             max_sessions=fresh.cfg.auth.max_sessions,
         )
-        fresh.limiter = _LR()
+        fresh.limiter = _LR(
+            max_concurrent_checks=fresh.cfg.limits.max_login_concurrent_checks,
+            max_tracked_ips=fresh.cfg.limits.max_login_tracked_ips,
+            max_delay=fresh.cfg.limits.max_login_delay_seconds,
+            forget_after=fresh.cfg.limits.login_forget_after_seconds,
+        )
         handler = make_handler(fresh.cfg, fresh.service, fresh.sessions, fresh.limiter)
-        fresh.httpd = PasteberthServer(("127.0.0.1", 0), handler)
+        fresh.httpd = PasteberthServer(
+            ("127.0.0.1", 0), handler, limits=fresh.cfg.limits
+        )
         fresh.port = fresh.httpd.server_address[1]
         fresh.thread = threading.Thread(target=fresh.httpd.serve_forever, daemon=True)
         fresh.thread.start()

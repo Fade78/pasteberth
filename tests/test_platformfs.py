@@ -8,7 +8,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from pasteberth.platformfs import (
+from PasteBerth.runtime.platformfs import (
     BusyError,
     EntryChangedError,
     EntryExistsError,
@@ -16,7 +16,7 @@ from pasteberth.platformfs import (
     InvalidNameError,
     platform_fs,
 )
-from pasteberth.platformfs.linux import LinuxPlatformFS
+from PasteBerth.runtime.platformfs.linux import LinuxPlatformFS
 from tests.helpers import running_under_wine
 
 
@@ -235,7 +235,7 @@ class LinuxPlatformFSBehavior(unittest.TestCase):
                     "_renameat2",
                     return_value=-1,
                 ) as renameat2, mock.patch(
-                    "pasteberth.platformfs.linux.ctypes.get_errno",
+                    "PasteBerth.runtime.platformfs.linux.ctypes.get_errno",
                     return_value=error_number,
                 ):
                     self.fs.rename_noreplace(

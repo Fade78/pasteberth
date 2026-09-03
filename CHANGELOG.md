@@ -2,6 +2,25 @@
 
 This file records user-visible changes to Pasteberth.
 
+## [2.0.0] - 2026-09-02
+
+### Deployment Layout
+
+- make `PasteBerth/` the code-only deployment directory;
+- expose `PasteBerth/pasteberth` as the sole executable entry point;
+- resolve the deployment from an external symbolic link and support an explicit
+  `PASTEBERTH_HOME` for a separately copied executable;
+- move configuration and default storage to external XDG locations;
+- remove the repository-root `bin/pasteberth` and compatibility `run.sh` paths.
+- move upload, parser, image, authentication, and HTTP resource budgets into
+  configuration, with explicit `"unlimited"` support where applicable;
+- accept external symbolic-link paths after validating their resolved targets;
+- add `pasteberth completion` for Bash.
+
+This release changes the private Python module path to `PasteBerth.runtime`.
+The public `pasteberth` command, HTTP API, zone data format, and existing
+absolute zone paths remain unchanged.
+
 ## [1.8.1] - 2026-09-01
 
 ### Web UI and API

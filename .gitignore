@@ -20,7 +20,13 @@ config.toml
 passwd
 *.passwd
 /storage/*
-!/storage/.gitignore
+
+# The deployable bundle is code-only; mutable state must stay outside it.
+/PasteBerth/config.toml
+/PasteBerth/passwd
+/PasteBerth/*.passwd
+/PasteBerth/storage/
+/PasteBerth/captures/
 
 # Runtime data
 data/

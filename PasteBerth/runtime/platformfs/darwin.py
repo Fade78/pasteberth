@@ -5,8 +5,8 @@ import ctypes
 import errno
 import os
 
-from pasteberth.platformfs.base import EntryChangedError, EntryExistsError
-from pasteberth.platformfs.posix import PosixDirectoryHandle, PosixPlatformFS
+from .base import EntryChangedError, EntryExistsError
+from .posix import PosixDirectoryHandle, PosixPlatformFS
 
 
 _RENAME_EXCL = 0x00000004

@@ -3,7 +3,7 @@ import struct
 import unittest
 import zlib
 
-from pasteberth.content import classify, safe_extension
+from PasteBerth.runtime.content import classify, safe_extension
 from tests.helpers import _png_chunk, make_png, make_jpeg, make_webp_lossy
 
 

@@ -9,9 +9,9 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-import pasteberth.storage as storage_module
-from pasteberth.images import ImageInfo
-from pasteberth.storage import (
+import PasteBerth.runtime.storage as storage_module
+from PasteBerth.runtime.images import ImageInfo
+from PasteBerth.runtime.storage import (
     DestinationBusyError,
     DestinationError,
     LocalDestination,
@@ -22,7 +22,7 @@ from pasteberth.storage import (
     validate_comment,
     valid_filename,
 )
-from pasteberth.platformfs import VolumeSpace, platform_fs
+from PasteBerth.runtime.platformfs import VolumeSpace, platform_fs
 from tests.helpers import make_png, running_under_wine
 
 INFO = lambda w=4, h=3: ImageInfo(fmt="png", width=w, height=h)
@@ -281,7 +281,7 @@ class TestSauvegarde(Base):
             return result
 
         with mock.patch(
-            "pasteberth.storage._rename_noreplace",
+            "PasteBerth.runtime.storage._rename_noreplace",
             side_effect=fail_after_data_install,
         ):
             with self.assertRaises(OSError):
@@ -357,7 +357,7 @@ class TestSauvegarde(Base):
             return original_move(directory_fd, source, destination)
 
         with mock.patch(
-            "pasteberth.storage._rename_noreplace",
+            "PasteBerth.runtime.storage._rename_noreplace",
             side_effect=swap_before_move,
         ):
             with self.assertRaises(StorageConflictError):
@@ -1136,7 +1136,7 @@ class TestSauvegarde(Base):
             return original_move(directory_fd, old_name, new_name)
 
         with mock.patch(
-            "pasteberth.storage._rename_noreplace",
+            "PasteBerth.runtime.storage._rename_noreplace",
             side_effect=appear_before_move,
         ):
             with self.assertRaises(StorageConflictError):
@@ -2013,7 +2013,7 @@ class TestOwnership(Base):
             return original_move(directory_fd, source, destination)
 
         with mock.patch(
-            "pasteberth.storage._rename_noreplace",
+            "PasteBerth.runtime.storage._rename_noreplace",
             side_effect=swap_before_move,
         ):
             with self.assertRaises(StorageConflictError):
@@ -2484,13 +2484,13 @@ class TestRepertoires(unittest.TestCase):
         with self.assertRaises(DestinationError):
             LocalDestination(target, create_directory=False)
 
-    def test_lien_symbolique_parent_refuse(self):
+    def test_lien_symbolique_parent_est_suivi(self):
         outside = self.tmp / "outside"
         outside.mkdir(mode=0o700)
         link = self.tmp / "link"
         link.symlink_to(outside, target_is_directory=True)
-        with self.assertRaisesRegex(DestinationError, "path contains a rejected symbolic link"):
-            LocalDestination(link / "images")
+        destination = LocalDestination(link / "images")
+        self.assertTrue(destination.directory.is_dir())
 
     def test_reference_path_absolu(self):
         dest = LocalDestination(self.tmp / "r", create_directory=True)
@@ -2556,7 +2556,7 @@ class TestRepertoires(unittest.TestCase):
                 })()
             return result
 
-        with mock.patch("pasteberth.storage.os.stat", side_effect=foreign_stat):
+        with mock.patch("PasteBerth.runtime.storage.os.stat", side_effect=foreign_stat):
             LocalDestination(target)
         self.assertTrue(orphan.exists())
 

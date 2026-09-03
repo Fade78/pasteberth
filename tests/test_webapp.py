@@ -13,8 +13,8 @@ import zipfile
 from pathlib import Path
 from unittest import mock
 
-from pasteberth import __version__
-from pasteberth.platformfs import VolumeSpace
+from PasteBerth.runtime import __version__
+from PasteBerth.runtime.platformfs import VolumeSpace
 from tests.helpers import (
     build_multipart,
     json_of,
@@ -26,7 +26,7 @@ from tests.helpers import (
     write_config,
     LiveServer,
 )
-from pasteberth.webapp import BodyMemoryBudget, _safe_log_text
+from PasteBerth.runtime.webapp import _safe_log_text
 
 PASSWORD = "mot-de-passe-de-test-123"
 FILENAME_RE = re.compile(r"^\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}_[0-9a-f]{6}\.(png|jpg|webp)$")
@@ -72,6 +72,7 @@ class Base(unittest.TestCase):
             accept_doc=self.config_kwargs.get("accept_doc"),
             show_full_path=self.config_kwargs.get("show_full_path"),
             groups=self.config_kwargs.get("groups"),
+            limits=self.config_kwargs.get("limits"),
         )
         self.tmp = tmp
         self.url_prefix = self.config_kwargs.get("url_prefix") or ""
@@ -103,16 +104,6 @@ class Base(unittest.TestCase):
             headers=headers,
             cookie=self.cookie if cookie == "default" else cookie,
         )
-
-
-class TestBudgetMemoire(unittest.TestCase):
-    def test_reservation_et_liberation(self):
-        budget = BodyMemoryBudget(200_000)
-        first = budget.reserve(60_000)
-        self.assertIsNotNone(first)
-        self.assertIsNone(budget.reserve(60_000))
-        budget.release(first)
-        self.assertIsNotNone(budget.reserve(60_000))
 
 
 class TestLimiteUpload(Base):
@@ -152,6 +143,31 @@ class TestLimiteUpload(Base):
         )
         self.assertEqual(status, 413)
         self.assertEqual(json_of(response)["error"]["code"], "too_large")
+
+
+class TestLimiteNomFichier(Base):
+    config_kwargs = {
+        "limits": {
+            "max_filename_length": 8,
+            "max_filename_size": 8,
+        }
+    }
+
+    def test_nom_preserve_respecte_la_limite_configuree(self):
+        body, content_type = build_multipart(
+            filename="too-long.txt",
+            data=b"ok",
+            content_type="text/plain",
+            extra_fields={"preserve_name": "1"},
+        )
+        status, _, response = self.req(
+            "POST",
+            "/api/zones/default/images",
+            body=body,
+            headers={"Content-Type": content_type},
+        )
+        self.assertEqual(status, 400)
+        self.assertEqual(json_of(response)["error"]["code"], "invalid_filename")
 
 
 class TestPublic(Base):
@@ -644,7 +660,7 @@ class TestPreviewsConcurrence(Base):
     password = PASSWORD
     config_kwargs = {"max_upload_size": "50MiB"}
 
-    def test_preview_busy_est_temporaire(self):
+    def test_previews_concurrentes_sont_servies(self):
         body, ctype = build_multipart(data=make_png())
         status, _, response = self.req(
             "POST",
@@ -679,9 +695,6 @@ class TestPreviewsConcurrence(Base):
             for thread in threads:
                 thread.start()
             self.assertTrue(both_active.wait(2))
-            status, headers, _ = self.req("GET", preview_url)
-            self.assertEqual(status, 503)
-            self.assertEqual(headers["retry-after"], "1")
             release.set()
             for thread in threads:
                 thread.join(timeout=5)
@@ -1841,7 +1854,7 @@ class TestProxysConfiance(Base):
         self.assertNotIn("Secure", headers["set-cookie"])
 
     def test_xff_confie_pour_rate_limiting(self):
-        from pasteberth.auth import LoginRateLimiter
+        from PasteBerth.runtime.auth import LoginRateLimiter
 
         for i in range(LoginRateLimiter.THRESHOLD):
             status, _, _ = request(

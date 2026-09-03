@@ -9,7 +9,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from pasteberth.server import PasteberthServer
+from PasteBerth.runtime.server import PasteberthServer
 
 from tests.helpers import LiveServer, running_under_wine, write_config
 
@@ -290,7 +290,7 @@ class TestCycleDeVieServeur(unittest.TestCase):
         resolved = [
             (socket.AF_INET, socket.SOCK_STREAM, socket.IPPROTO_TCP, "", ("127.0.0.1", 0))
         ]
-        with mock.patch("pasteberth.server.socket.getaddrinfo", return_value=resolved):
+        with mock.patch("PasteBerth.runtime.server.socket.getaddrinfo", return_value=resolved):
             server = PasteberthServer(("pasteberth.test", 0), object)
         try:
             self.assertEqual(server.server_address[0], "127.0.0.1")

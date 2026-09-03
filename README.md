@@ -37,7 +37,7 @@ service between independent servers.
 
 ## Quick Start
 
-The current public release is `1.8.1`. The documented v1.8.1 server runs on
+The current public release is `2.0.0`. The documented v2.0.0 server runs on
 Linux, requires Python 3.11 or newer, and has no third-party
 Python runtime dependency. A native Windows backend is included but has only
 been validated under Wine; macOS and native Windows remain outside the official
@@ -46,19 +46,23 @@ support matrix until real-OS validation is available.
 ```sh
 git clone https://github.com/Fade78/pasteberth.git
 cd pasteberth
-./bin/pasteberth --generate-config
-# edit config.toml: set the zones and their absolute server-side directories
-./bin/pasteberth passwd --config config.toml
-./bin/pasteberth audit --config config.toml
-./bin/pasteberth --config config.toml
+cp -a PasteBerth "$HOME/PasteBerth"
+mkdir -p "$HOME/.local/bin"
+ln -s "$HOME/PasteBerth/pasteberth" "$HOME/.local/bin/pasteberth"
+pasteberth --generate-config
+# edit ~/.config/pasteberth/config.toml: set the zones and their absolute paths
+pasteberth passwd
+pasteberth audit
+pasteberth
 ```
 
 Open `http://127.0.0.1:8765/` and sign in with the password created by
 `pasteberth passwd`.
 
 For a first local trial, running without a configuration uses a loopback-only
-minimal zone at `<repository>/storage/default`. It has no authentication and
-must not be exposed through a proxy or a non-loopback listener.
+minimal zone at `$XDG_DATA_HOME/pasteberth/storage/default` (normally
+`~/.local/share/pasteberth/storage/default`). It has no authentication and must
+not be exposed through a proxy or a non-loopback listener.
 
 ### Reverse Proxy And Mounted Paths
 
@@ -148,7 +152,7 @@ covers:
 - installation, configuration, and the configuration discovery order;
 - Web UI behavior, selection, clipboard handling, and content types;
 - every CLI command, its syntax, and its exit codes;
-- Bash completion in [`contrib/completions/pasteberth.bash`](contrib/completions/pasteberth.bash);
+- Bash completion in [`PasteBerth/support/completions/pasteberth.bash`](PasteBerth/support/completions/pasteberth.bash);
 - filesystem layout, sidecars, retention, backup, and recovery;
 - systemd, Caddy, nginx, TLS, authentication, and security boundaries;
 - the HTTP API, batch operations, errors, and troubleshooting;
@@ -156,13 +160,13 @@ covers:
 
 User-visible release history is in [`CHANGELOG.md`](CHANGELOG.md).
 
-The commented [`config.example.toml`](config.example.toml) is the reference
-configuration template. The optional Linux user-service template is
-[`deploy/pasteberth.service`](deploy/pasteberth.service).
+The commented [`PasteBerth/support/config.example.toml`](PasteBerth/support/config.example.toml)
+is the reference configuration template. The optional Linux user-service
+template is [`PasteBerth/support/deploy/pasteberth.service`](PasteBerth/support/deploy/pasteberth.service).
 
 ## Support Status
 
-| Area | v1.8.1 status |
+| Area | v2.0.0 status |
 |---|---|
 | Python | 3.11 or newer |
 | Server | Linux, officially tested |

@@ -2,6 +2,7 @@
 démarrage, commande passwd."""
 import json
 import os
+import shutil
 import stat
 import socket
 import subprocess
@@ -11,11 +12,11 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from pasteberth import __version__
-from pasteberth.auth import load_password_hash, verify_password
-from pasteberth.cli import _audit_tls, _network_warning, _read_drop_source
-from pasteberth.config import load_config
-from pasteberth.platformfs import platform_fs
+from PasteBerth.runtime import __version__
+from PasteBerth.runtime.auth import load_password_hash, verify_password
+from PasteBerth.runtime.cli import _audit_tls, _network_warning, _read_drop_source
+from PasteBerth.runtime.config import load_config
+from PasteBerth.runtime.platformfs import platform_fs
 
 from tests.helpers import REPO_ROOT, running_under_wine, write_config
 
@@ -30,7 +31,7 @@ def run_cli(args, *, cwd=None, input_text=None, env=None):
         else:
             process_env[key] = value
     return subprocess.run(
-        [sys.executable, "-m", "pasteberth", *args],
+        [sys.executable, "-m", "PasteBerth.runtime", *args],
         capture_output=True,
         text=True,
         input=input_text,
@@ -72,6 +73,12 @@ class TestVersion(unittest.TestCase):
                 self.assertEqual(proc.returncode, 2)
                 self.assertIn("invalid choice", proc.stderr)
 
+    def test_completion_bash_emet_le_script_emballe(self):
+        proc = run_cli(["completion", "--shell", "bash"])
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertIn("_pasteberth_complete()", proc.stdout)
+        self.assertIn("complete -o bashdefault", proc.stdout)
+
 
 class TestWrappers(unittest.TestCase):
     def setUp(self):
@@ -89,10 +96,19 @@ class TestWrappers(unittest.TestCase):
         return package.parent
 
     def _run_wrapper(self, wrapper, *, cwd, pythonpath):
+        return self._run_executable(REPO_ROOT / wrapper, cwd=cwd, pythonpath=pythonpath)
+
+    def _run_executable(self, executable, *, cwd, pythonpath, extra_env=None, args=None):
         env = dict(os.environ)
         env["PYTHONPATH"] = str(pythonpath)
+        env.pop("PASTEBERTH_HOME", None)
+        for key, value in (extra_env or {}).items():
+            if value is None:
+                env.pop(key, None)
+            else:
+                env[key] = value
         return subprocess.run(
-            [str(REPO_ROOT / wrapper), "--version"],
+            [str(executable), *(args or ["--version"])],
             capture_output=True,
             text=True,
             env=env,
@@ -102,7 +118,7 @@ class TestWrappers(unittest.TestCase):
 
     def test_wrappers_resistent_au_cwd_et_au_pythonpath(self):
         fake_root = self._fake_package()
-        for wrapper in ("bin/pasteberth", "run.sh"):
+        for wrapper in ("PasteBerth/pasteberth",):
             with self.subTest(wrapper=wrapper):
                 proc = self._run_wrapper(
                     wrapper,
@@ -112,6 +128,96 @@ class TestWrappers(unittest.TestCase):
                 self.assertEqual(proc.returncode, 0, proc.stderr)
                 self.assertIn(f"pasteberth {__version__}", proc.stdout)
                 self.assertNotIn("WRAPPER_SHADOW_MARKER", proc.stdout + proc.stderr)
+
+    def test_lien_symbolique_externe_retrouve_le_bundle(self):
+        fake_root = self._fake_package()
+        link_dir = self.tmp / "local-bin"
+        link_dir.mkdir()
+        link = link_dir / "pasteberth"
+        link.symlink_to(REPO_ROOT / "PasteBerth" / "pasteberth")
+
+        proc = self._run_executable(link, cwd=fake_root, pythonpath=fake_root)
+
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertIn(f"pasteberth {__version__}", proc.stdout)
+        self.assertNotIn("WRAPPER_SHADOW_MARKER", proc.stdout + proc.stderr)
+
+    def test_copie_complete_du_bundle_reste_autonome(self):
+        fake_root = self._fake_package()
+        bundle = self.tmp / "PasteBerth"
+        shutil.copytree(
+            REPO_ROOT / "PasteBerth",
+            bundle,
+            ignore=shutil.ignore_patterns("__pycache__"),
+        )
+
+        proc = self._run_executable(
+            bundle / "pasteberth",
+            cwd=fake_root,
+            pythonpath=fake_root,
+        )
+
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertIn(f"pasteberth {__version__}", proc.stdout)
+        self.assertFalse((bundle / "runtime" / "__pycache__").exists())
+
+    def test_copie_complete_genere_son_etat_hors_bundle(self):
+        bundle = self.tmp / "PasteBerth"
+        config_home = self.tmp / "config-home"
+        data_home = self.tmp / "data-home"
+        shutil.copytree(
+            REPO_ROOT / "PasteBerth",
+            bundle,
+            ignore=shutil.ignore_patterns("__pycache__"),
+        )
+
+        proc = self._run_executable(
+            bundle / "pasteberth",
+            cwd=self.tmp,
+            pythonpath=self.tmp,
+            args=["--generate-config"],
+            extra_env={
+                "PASTEBERTH_CONFIG": None,
+                "XDG_CONFIG_HOME": str(config_home),
+                "XDG_DATA_HOME": str(data_home),
+            },
+        )
+
+        target = config_home / "pasteberth" / "config.toml"
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertTrue(target.is_file())
+        self.assertIn(str(data_home / "pasteberth" / "storage" / "default"), target.read_text())
+        self.assertFalse((bundle / "config.toml").exists())
+        self.assertFalse((bundle / "storage").exists())
+        self.assertFalse((bundle / "runtime" / "__pycache__").exists())
+
+    def test_executable_isole_exige_pasteberth_home(self):
+        bundle = self.tmp / "PasteBerth"
+        shutil.copytree(
+            REPO_ROOT / "PasteBerth",
+            bundle,
+            ignore=shutil.ignore_patterns("__pycache__"),
+        )
+        executable = self.tmp / "pasteberth"
+        shutil.copy2(bundle / "pasteberth", executable)
+        executable.chmod(0o755)
+
+        without_home = self._run_executable(
+            executable,
+            cwd=self.tmp,
+            pythonpath=self.tmp,
+        )
+        with_home = self._run_executable(
+            executable,
+            cwd=self.tmp,
+            pythonpath=self.tmp,
+            extra_env={"PASTEBERTH_HOME": str(bundle)},
+        )
+
+        self.assertEqual(without_home.returncode, 2)
+        self.assertIn("invalid deployment root", without_home.stderr)
+        self.assertEqual(with_home.returncode, 0, with_home.stderr)
+        self.assertIn(f"pasteberth {__version__}", with_home.stdout)
 
 
 class TestErreursDemarrage(unittest.TestCase):
@@ -312,7 +418,14 @@ class TestConfigurationDepot(unittest.TestCase):
 
     def test_generation_configuration_locale(self):
         target = self.tmp / "config.toml"
-        proc = run_cli(["--generate-config", "--config", str(target)])
+        proc = run_cli(
+            ["--generate-config", "--config", str(target)],
+            env={
+                "PASTEBERTH_CONFIG": None,
+                "XDG_CONFIG_HOME": str(self.tmp / "config-home"),
+                "XDG_DATA_HOME": str(self.tmp / "data-home"),
+            },
+        )
         self.assertEqual(proc.returncode, 0, proc.stderr)
         self.assertTrue(target.is_file())
         if platform_fs().backend_name == "windows":
@@ -326,7 +439,10 @@ class TestConfigurationDepot(unittest.TestCase):
         self.assertIn('id = "default"', content)
         self.assertIn('url_prefix = ""', content)
         self.assertIn("allowed_hosts = []", content)
-        self.assertIn("storage/default", content)
+        self.assertIn(
+            str(self.tmp / "data-home" / "pasteberth" / "storage" / "default"),
+            content,
+        )
         self.assertIn("structural pixel budget", content)
         self.assertIn("Keep this listener on loopback", content)
         self.assertIn("show_full_path = true", content)
@@ -344,13 +460,45 @@ class TestConfigurationDepot(unittest.TestCase):
             ["audit"],
             cwd=self.tmp,
             env={
-                "PASTEBERTH_REPO_ROOT": str(self.tmp),
                 "PASTEBERTH_CONFIG": None,
                 "XDG_CONFIG_HOME": str(self.tmp / "xdg"),
+                "XDG_DATA_HOME": str(self.tmp / "xdg-data"),
             },
         )
         self.assertEqual(proc.returncode, 1)
         self.assertIn("default storage", proc.stdout)
+
+    def test_generation_par_defaut_ecrit_hors_du_bundle(self):
+        config_home = self.tmp / "config-home"
+        data_home = self.tmp / "data-home"
+        proc = run_cli(
+            ["--generate-config"],
+            cwd=self.tmp,
+            env={
+                "PASTEBERTH_CONFIG": None,
+                "XDG_CONFIG_HOME": str(config_home),
+                "XDG_DATA_HOME": str(data_home),
+            },
+        )
+
+        target = config_home / "pasteberth" / "config.toml"
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertTrue(target.is_file())
+        self.assertIn(str(data_home / "pasteberth" / "storage" / "default"), target.read_text())
+        self.assertFalse((REPO_ROOT / "PasteBerth" / "config.toml").exists())
+
+    def test_configuration_dans_le_bundle_refusee(self):
+        target = REPO_ROOT / "PasteBerth" / "config.toml"
+        target.write_text("", encoding="utf-8")
+        self.addCleanup(target.unlink)
+
+        proc = run_cli(
+            ["audit", "--config", str(target)],
+            env={"PASTEBERTH_CONFIG": None},
+        )
+
+        self.assertEqual(proc.returncode, 2)
+        self.assertIn("outside the PasteBerth deployment", proc.stderr)
 
     def test_audit_allowed_hosts_vide_avertit_wildcard(self):
         with socket.socket() as probe:
@@ -562,8 +710,8 @@ class TestConfigurationDepot(unittest.TestCase):
             "notBefore": "Jan  1 00:00:00 2020 GMT",
             "notAfter": "Jan  1 00:00:00 2099 GMT",
         }
-        with mock.patch("pasteberth.cli.ssl._ssl._test_decode_cert", return_value=decoded):
-            with mock.patch("pasteberth.server.create_tls_context"):
+        with mock.patch("PasteBerth.runtime.cli.ssl._ssl._test_decode_cert", return_value=decoded):
+            with mock.patch("PasteBerth.runtime.server.create_tls_context"):
                 self.assertEqual(_audit_tls(cfg), [])
 
     def test_audit_refuse_certificat_expire(self):
@@ -574,8 +722,8 @@ class TestConfigurationDepot(unittest.TestCase):
             "notBefore": "Jan  1 00:00:00 2020 GMT",
             "notAfter": "Jan  1 00:00:00 2021 GMT",
         }
-        with mock.patch("pasteberth.cli.ssl._ssl._test_decode_cert", return_value=decoded):
-            with mock.patch("pasteberth.server.create_tls_context"):
+        with mock.patch("PasteBerth.runtime.cli.ssl._ssl._test_decode_cert", return_value=decoded):
+            with mock.patch("PasteBerth.runtime.server.create_tls_context"):
                 errors = _audit_tls(cfg)
         self.assertIn("TLS certificate: certificate has expired", errors)
 
@@ -587,8 +735,8 @@ class TestConfigurationDepot(unittest.TestCase):
             "notBefore": "Jan  1 00:00:00 2099 GMT",
             "notAfter": "Jan  1 00:00:00 2100 GMT",
         }
-        with mock.patch("pasteberth.cli.ssl._ssl._test_decode_cert", return_value=decoded):
-            with mock.patch("pasteberth.server.create_tls_context"):
+        with mock.patch("PasteBerth.runtime.cli.ssl._ssl._test_decode_cert", return_value=decoded):
+            with mock.patch("PasteBerth.runtime.server.create_tls_context"):
                 errors = _audit_tls(cfg)
         self.assertIn("TLS certificate: certificate is not valid yet", errors)
 
@@ -600,9 +748,9 @@ class TestConfigurationDepot(unittest.TestCase):
             "notBefore": "Jan  1 00:00:00 2020 GMT",
             "notAfter": "Jan  1 00:00:00 2099 GMT",
         }
-        with mock.patch("pasteberth.cli.ssl._ssl._test_decode_cert", return_value=decoded):
+        with mock.patch("PasteBerth.runtime.cli.ssl._ssl._test_decode_cert", return_value=decoded):
             with mock.patch(
-                "pasteberth.server.create_tls_context",
+                "PasteBerth.runtime.server.create_tls_context",
                 side_effect=ValueError("clé et certificat différents"),
             ):
                 errors = _audit_tls(cfg)
@@ -626,8 +774,8 @@ class TestConfigurationDepot(unittest.TestCase):
             "notBefore": "Jan  1 00:00:00 2020 GMT",
             "notAfter": "Jan  1 00:00:00 2099 GMT",
         }
-        with mock.patch("pasteberth.cli.ssl._ssl._test_decode_cert", return_value=decoded):
-            with mock.patch("pasteberth.server.create_tls_context"):
+        with mock.patch("PasteBerth.runtime.cli.ssl._ssl._test_decode_cert", return_value=decoded):
+            with mock.patch("PasteBerth.runtime.server.create_tls_context"):
                 self.assertEqual(_audit_tls(cfg), [])
 
     def test_audit_refuse_rotation_certificat_dans_parent_inscriptible(self):
@@ -651,8 +799,8 @@ class TestConfigurationDepot(unittest.TestCase):
             "notBefore": "Jan  1 00:00:00 2020 GMT",
             "notAfter": "Jan  1 00:00:00 2099 GMT",
         }
-        with mock.patch("pasteberth.cli.ssl._ssl._test_decode_cert", return_value=decoded):
-            with mock.patch("pasteberth.server.create_tls_context"):
+        with mock.patch("PasteBerth.runtime.cli.ssl._ssl._test_decode_cert", return_value=decoded):
+            with mock.patch("PasteBerth.runtime.server.create_tls_context"):
                 errors = _audit_tls(cfg)
         self.assertTrue(any("parent writable by a third party" in error for error in errors))
 

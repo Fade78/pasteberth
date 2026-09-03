@@ -28,16 +28,15 @@ from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler
 from pathlib import Path
 
-from pasteberth import __version__
-from pasteberth.auth import LoginRateLimiter, SessionStore, load_password_hash, verify_password
-from pasteberth.config import Config, public_path
-from pasteberth.multipart import (
-    MAX_MULTIPART_OVERHEAD,
+from . import __version__
+from .auth import LoginRateLimiter, SessionStore, load_password_hash, verify_password
+from .config import Config, public_path
+from .multipart import (
     MultipartError,
     extract_boundary,
     parse_multipart,
 )
-from pasteberth.service import PasteService, ServiceError
+from .service import PasteService, ServiceError
 
 log = logging.getLogger("pasteberth.http")
 
@@ -47,11 +46,7 @@ _STATIC_DIR = _PACKAGE_DIR / "static"
 _TEMPLATES_DIR = _PACKAGE_DIR / "templates"
 
 _ZONE_RE = r"([a-z0-9][a-z0-9_-]{0,63})"
-_FILENAME_RE = r"([^/\\\x00]{1,200})"
-_MAX_BATCH_NAMES = 10_000
-_MAX_BATCH_NAMES_BODY = 2 * 1024 * 1024
-_MAX_COMMENT_BODY_BYTES = 8 * 1024
-
+_FILENAME_RE = r"([^/\\\x00]+)"
 _ROUTES: tuple[tuple[str, re.Pattern, str], ...] = tuple(
     (method, re.compile(pattern), name)
     for method, pattern, name in (
@@ -95,10 +90,6 @@ class BodyTooLarge(Exception):
     pass
 
 
-class BodyMemoryUnavailable(Exception):
-    pass
-
-
 class HeaderTooLarge(Exception):
     pass
 
@@ -106,7 +97,7 @@ class HeaderTooLarge(Exception):
 class HeaderBudgetReader:
     """Count bytes read during the HTTP header phase."""
 
-    def __init__(self, raw, max_bytes: int):
+    def __init__(self, raw, max_bytes: int | None):
         self._raw = raw
         self._max_bytes = max_bytes
         self._read_bytes = 0
@@ -115,7 +106,7 @@ class HeaderBudgetReader:
     def _count(self, data: bytes) -> bytes:
         if self._enabled:
             self._read_bytes += len(data)
-            if self._read_bytes > self._max_bytes:
+            if self._max_bytes is not None and self._read_bytes > self._max_bytes:
                 raise HeaderTooLarge()
         return data
 
@@ -134,32 +125,6 @@ class HeaderBudgetReader:
 
     def __getattr__(self, name):
         return getattr(self._raw, name)
-
-
-class BodyMemoryBudget:
-    """Non-blocking budget for temporary upload copies."""
-
-    def __init__(self, max_bytes: int):
-        self.max_bytes = max_bytes
-        self._used = 0
-        self._lock = threading.Lock()
-
-    def reserve(self, body_bytes: int) -> int | None:
-            # The raw body and a multipart-extracted copy may coexist.
-        charge = body_bytes * 2 + 64 * 1024
-        if charge > self.max_bytes:
-            return None
-        with self._lock:
-            if self._used + charge > self.max_bytes:
-                return None
-            self._used += charge
-        return charge
-
-    def release(self, charge: int) -> None:
-        if not charge:
-            return
-        with self._lock:
-            self._used = max(0, self._used - charge)
 
 
 class _ChunkedWriter:
@@ -191,7 +156,12 @@ class _ChunkedWriter:
         self.handler.wfile.flush()
 
 
-def _parse_filename_list(body: bytes, content_type: str) -> list[str]:
+def _parse_filename_list(
+    body: bytes,
+    content_type: str,
+    *,
+    max_names: int | None = None,
+) -> list[str]:
     """Parse a list of names for zone operations."""
     media_type = (content_type or "").split(";", 1)[0].strip().lower()
     if media_type == "application/json":
@@ -205,7 +175,7 @@ def _parse_filename_list(body: bytes, content_type: str) -> list[str]:
             fields = urllib.parse.parse_qs(
                 body.decode("utf-8"),
                 keep_blank_values=True,
-                max_num_fields=_MAX_BATCH_NAMES,
+                max_num_fields=max_names,
             )
         except (UnicodeDecodeError, ValueError) as exc:
             raise ValueError("invalid form") from exc
@@ -214,7 +184,7 @@ def _parse_filename_list(body: bytes, content_type: str) -> list[str]:
         raise ValueError("Content-Type must be JSON or form data")
     if not isinstance(filenames, list) or not filenames:
         raise ValueError("'filenames' list is required")
-    if len(filenames) > _MAX_BATCH_NAMES:
+    if max_names is not None and len(filenames) > max_names:
         raise ValueError("too many files requested")
     if not all(isinstance(filename, str) for filename in filenames):
         raise ValueError("filenames must be strings")
@@ -229,10 +199,6 @@ def _json_object_without_duplicates(pairs):
             raise ValueError(f"duplicate JSON key: {key!r}")
         result[key] = value
     return result
-
-
-_UPLOAD_MEMORY_BUDGET = 128 * 1024 * 1024
-_MAX_HEADER_BYTES = 64 * 1024
 
 
 def _safe_log_text(value: object, *, limit: int | None = None) -> str:
@@ -251,18 +217,15 @@ def _safe_log_text(value: object, *, limit: int | None = None) -> str:
 def make_handler(cfg: Config, service: PasteService, sessions: SessionStore,
                  limiter: LoginRateLimiter) -> type[BaseHTTPRequestHandler]:
     """Build the handler class with injected dependencies."""
-    upload_memory = BodyMemoryBudget(_UPLOAD_MEMORY_BUDGET)
-    preview_slots = threading.BoundedSemaphore(
-        max(1, _UPLOAD_MEMORY_BUDGET // cfg.max_upload_bytes)
-    )
-
     class PasteberthHandler(BaseHTTPRequestHandler):
         server_version = "Pasteberth"
         sys_version = ""
         protocol_version = "HTTP/1.1"
-        timeout = 60
+        timeout = cfg.limits.http_request_timeout_seconds
 
         def _expire_request(self) -> None:
+            if self.timeout is None:
+                return
             if getattr(self, "_streaming_response", False):
                 elapsed = time.monotonic() - getattr(
                     self, "_stream_last_activity", time.monotonic()
@@ -285,10 +248,12 @@ def make_handler(cfg: Config, service: PasteService, sessions: SessionStore,
             self._response_started = False
             self._streaming_response = False
             self.rfile.reset()
-            timer = threading.Timer(self.timeout, self._expire_request)
-            timer.daemon = True
-            self._request_timer = timer
-            timer.start()
+            timer = None
+            if self.timeout is not None:
+                timer = threading.Timer(self.timeout, self._expire_request)
+                timer.daemon = True
+                self._request_timer = timer
+                timer.start()
             try:
                 super().handle_one_request()
             except HeaderTooLarge:
@@ -300,7 +265,8 @@ def make_handler(cfg: Config, service: PasteService, sessions: SessionStore,
             except (OSError, TimeoutError):
                 self.close_connection = True
             finally:
-                timer.cancel()
+                if timer is not None:
+                    timer.cancel()
                 active_timer = getattr(self, "_request_timer", None)
                 if active_timer is not None and active_timer is not timer:
                     active_timer.cancel()
@@ -311,7 +277,7 @@ def make_handler(cfg: Config, service: PasteService, sessions: SessionStore,
             # The server admits a connection to a short pending-header pool
             # before this handler can promote it after parsing the headers.
             self.connection.settimeout(self.server.header_timeout)
-            self.rfile = HeaderBudgetReader(self.rfile, _MAX_HEADER_BYTES)
+            self.rfile = HeaderBudgetReader(self.rfile, cfg.limits.max_http_header_bytes)
 
         def parse_request(self) -> bool:
             try:
@@ -632,8 +598,6 @@ def make_handler(cfg: Config, service: PasteService, sessions: SessionStore,
         def _read_body(
             self,
             max_bytes: int | None = None,
-            *,
-            memory_budget: BodyMemoryBudget | None = None,
         ) -> tuple[bytes, int]:
             if "chunked" in (self.headers.get("Transfer-Encoding") or "").lower():
                 self.close_connection = True
@@ -647,31 +611,22 @@ def make_handler(cfg: Config, service: PasteService, sessions: SessionStore,
                 raise ClientAbort()
             if length < 0:
                 raise ClientAbort()
-            limit = cfg.max_upload_bytes if max_bytes is None else max_bytes
-            if length > limit:
+            limit = max_bytes
+            if limit is not None and length > limit:
                 self.close_connection = True
                 raise BodyTooLarge()
-            reservation = memory_budget.reserve(length) if memory_budget else 0
-            if memory_budget and reservation is None:
-                self.close_connection = True
-                raise BodyMemoryUnavailable()
             chunks: list[bytes] = []
             remaining = length
-            try:
-                while remaining > 0:
-                    try:
-                        chunk = self.rfile.read(min(remaining, 65536))
-                    except OSError as exc:
-                        raise ClientAbort() from exc
-                    if not chunk:
-                        raise ClientAbort()
-                    chunks.append(chunk)
-                    remaining -= len(chunk)
-                return b"".join(chunks), reservation or 0
-            except BaseException:
-                if memory_budget:
-                    memory_budget.release(reservation or 0)
-                raise
+            while remaining > 0:
+                try:
+                    chunk = self.rfile.read(min(remaining, 65536))
+                except OSError as exc:
+                    raise ClientAbort() from exc
+                if not chunk:
+                    raise ClientAbort()
+                chunks.append(chunk)
+                remaining -= len(chunk)
+            return b"".join(chunks), 0
 
         # --------------------------------------------------------- dispatch
 
@@ -891,7 +846,7 @@ def make_handler(cfg: Config, service: PasteService, sessions: SessionStore,
             released = False
             try:
                 try:
-                    body, _ = self._read_body(4 * 1024)
+                    body, _ = self._read_body(cfg.limits.max_login_body_bytes)
                 except BodyTooLarge:
                     self.close_connection = True
                     self._error(413, "too_large", "login body is too large")
@@ -903,7 +858,13 @@ def make_handler(cfg: Config, service: PasteService, sessions: SessionStore,
                 if "multipart/form-data" in ctype:
                     boundary = extract_boundary(self.headers.get("Content-Type", ""))
                     try:
-                        fields = parse_multipart(body, boundary or "")
+                        fields = parse_multipart(
+                            body,
+                            boundary or "",
+                            max_parts=cfg.limits.max_multipart_parts,
+                            max_header_bytes=cfg.limits.max_multipart_header_bytes,
+                            max_field_name_length=cfg.limits.max_multipart_field_name_length,
+                        )
                     except MultipartError:
                         password = ""
                     else:
@@ -919,7 +880,7 @@ def make_handler(cfg: Config, service: PasteService, sessions: SessionStore,
                     try:
                         values = urllib.parse.parse_qs(
                             body.decode("utf-8", "replace"),
-                            max_num_fields=8,
+                            max_num_fields=cfg.limits.max_login_fields,
                         )
                     except ValueError:
                         values = {}
@@ -935,8 +896,15 @@ def make_handler(cfg: Config, service: PasteService, sessions: SessionStore,
                     )
                     return
                 acquired = True
-                stored_hash = load_password_hash(cfg.password_file())
-                if password and verify_password(password, stored_hash):
+                stored_hash = load_password_hash(
+                    cfg.password_file(),
+                    max_bytes=cfg.limits.max_password_file_bytes,
+                )
+                if password and verify_password(
+                    password,
+                    stored_hash,
+                    maxmem=cfg.limits.max_scrypt_memory_bytes,
+                ):
                     limiter.complete(ip, success=True)
                     released = True
                     log.info("login succeeded (%s)", _safe_log_text(ip))
@@ -1019,38 +987,34 @@ def make_handler(cfg: Config, service: PasteService, sessions: SessionStore,
                 return
             ctype_raw = self.headers.get("Content-Type") or ""
             ctype = ctype_raw.split(";")[0].strip().lower()
-            body_limit = cfg.max_upload_bytes
-            if ctype == "multipart/form-data":
-                body_limit += MAX_MULTIPART_OVERHEAD
-            reservation = 0
+            # The service validates the extracted file. Multipart framing is
+            # deliberately not given a second hidden ceiling here.
+            body_limit = None if ctype == "multipart/form-data" else cfg.max_upload_bytes
             try:
-                body, reservation = self._read_body(
-                    max_bytes=body_limit,
-                    memory_budget=upload_memory,
-                )
+                body, _ = self._read_body(max_bytes=body_limit)
             except BodyTooLarge:
                 self.close_connection = True
                 self._error(413, "too_large", "request body is too large")
-                return
-            except BodyMemoryUnavailable:
-                self.close_connection = True
-                self._error(
-                    503,
-                    "upload_busy",
-                    "too much upload data is currently in memory",
-                    extra_headers=[("Retry-After", "1")],
-                )
                 return
             except ClientAbort:
                 raise
             try:
                 if ctype == "multipart/form-data":
-                    boundary = extract_boundary(ctype_raw)
+                    boundary = extract_boundary(
+                        ctype_raw,
+                        max_length=cfg.limits.max_multipart_boundary_length,
+                    )
                     if not boundary:
                         self._error(400, "invalid_request", "multipart boundary is missing")
                         return
                     try:
-                        fields = parse_multipart(body, boundary)
+                        fields = parse_multipart(
+                            body,
+                            boundary,
+                            max_parts=cfg.limits.max_multipart_parts,
+                            max_header_bytes=cfg.limits.max_multipart_header_bytes,
+                            max_field_name_length=cfg.limits.max_multipart_field_name_length,
+                        )
                     except MultipartError as exc:
                         self._error(400, "invalid_request", f"invalid multipart body: {exc}")
                         return
@@ -1096,13 +1060,11 @@ def make_handler(cfg: Config, service: PasteService, sessions: SessionStore,
             except ServiceError as exc:
                 self._service_error(exc)
                 return
-            finally:
-                upload_memory.release(reservation)
             self._json(201, item)
 
         def _read_filename_request(self) -> list[str] | None:
             try:
-                body, _ = self._read_body(max_bytes=_MAX_BATCH_NAMES_BODY)
+                body, _ = self._read_body(max_bytes=cfg.limits.max_batch_body_bytes)
             except BodyTooLarge:
                 self.close_connection = True
                 self._error(413, "too_large", "file list is too large")
@@ -1111,7 +1073,9 @@ def make_handler(cfg: Config, service: PasteService, sessions: SessionStore,
                 raise
             try:
                 return _parse_filename_list(
-                    body, self.headers.get("Content-Type") or ""
+                    body,
+                    self.headers.get("Content-Type") or "",
+                    max_names=cfg.limits.max_batch_names,
                 )
             except ValueError as exc:
                 self._error(400, "invalid_request", str(exc))
@@ -1138,7 +1102,7 @@ def make_handler(cfg: Config, service: PasteService, sessions: SessionStore,
                 self._error(415, "unsupported_media_type", "Content-Type must be application/json")
                 return
             try:
-                body, _ = self._read_body(max_bytes=_MAX_COMMENT_BODY_BYTES)
+                body, _ = self._read_body(max_bytes=cfg.limits.max_comment_body_bytes)
             except BodyTooLarge:
                 self.close_connection = True
                 self._error(413, "too_large", "comment request is too large")
@@ -1237,44 +1201,33 @@ def make_handler(cfg: Config, service: PasteService, sessions: SessionStore,
         def _h_preview(self, zid: str, filename: str) -> None:
             if not self._require_auth_api():
                 return
-            if not preview_slots.acquire(blocking=False):
-                self._error(
-                    503,
-                    "preview_busy",
-                    "too many previews are currently being served",
-                    extra_headers=[("Retry-After", "1")],
-                )
-                return
             try:
-                try:
-                    data, mime = service.preview(zid, filename)
-                except ServiceError as exc:
-                    self._service_error(exc)
-                    return
-                extra = []
-                if mime not in ("image/png", "image/jpeg", "image/webp"):
-                    # Attachment: stored HTML must never be rendered same-origin
-                    # by direct navigation (defense in depth; CSP already blocks
-                    # inline scripts).
-                    fallback = "".join(
-                        char if 32 <= ord(char) < 127 and char not in {'"', "\\"} else "_"
-                        for char in filename
-                    ) or "download"
-                    encoded = urllib.parse.quote(filename, safe="")
-                    extra = [
-                        (
-                            "Content-Disposition",
-                            f'attachment; filename="{fallback}"; filename*=UTF-8\'\'{encoded}',
-                        )
-                    ]
-                self._finish(
-                    200,
-                    mime,
-                    data,
-                    cache_control="no-store",
-                    extra_headers=extra,
-                )
-            finally:
-                preview_slots.release()
+                data, mime = service.preview(zid, filename)
+            except ServiceError as exc:
+                self._service_error(exc)
+                return
+            extra = []
+            if mime not in ("image/png", "image/jpeg", "image/webp"):
+                # Attachment: stored HTML must never be rendered same-origin
+                # by direct navigation (defense in depth; CSP already blocks
+                # inline scripts).
+                fallback = "".join(
+                    char if 32 <= ord(char) < 127 and char not in {'"', "\\"} else "_"
+                    for char in filename
+                ) or "download"
+                encoded = urllib.parse.quote(filename, safe="")
+                extra = [
+                    (
+                        "Content-Disposition",
+                        f'attachment; filename="{fallback}"; filename*=UTF-8\'\'{encoded}',
+                    )
+                ]
+            self._finish(
+                200,
+                mime,
+                data,
+                cache_control="no-store",
+                extra_headers=extra,
+            )
 
     return PasteberthHandler

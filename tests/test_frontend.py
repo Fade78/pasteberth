@@ -8,7 +8,7 @@ uniquement chromatique, absence d'accumulation de Blob URLs.
 import unittest
 from pathlib import Path
 
-import pasteberth
+import PasteBerth.runtime as pasteberth
 
 
 class TestContratsFrontend(unittest.TestCase):

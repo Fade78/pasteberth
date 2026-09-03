@@ -7,7 +7,7 @@ import stat
 from dataclasses import replace
 from pathlib import Path
 
-from pasteberth.config import (
+from PasteBerth.runtime.config import (
     ConfigError,
     build_default_config,
     check_startup_policy,
@@ -21,8 +21,8 @@ from pasteberth.config import (
     resolve_config_path,
     resolve_group_zone_ids,
 )
-from pasteberth.platformfs import platform_fs
-from pasteberth.server import address_family_for
+from PasteBerth.runtime.platformfs import platform_fs
+from PasteBerth.runtime.server import address_family_for
 from tests.helpers import write_config
 
 
@@ -214,13 +214,52 @@ class TestParsing(unittest.TestCase):
         self.assertEqual(cfg.auth.password_file, password_file)
         self.assertEqual(cfg.password_file(), password_file)
 
-    def test_max_sessions_configurable_et_borne(self):
+    def test_max_sessions_configurable_ou_sans_limite(self):
         cfg = make_cfg(self.tmp, max_sessions=12)
         self.assertEqual(cfg.auth.max_sessions, 12)
-        for value in (0, -1, 1_000_001, True):
+        large = make_cfg(self.tmp, max_sessions=1_000_001)
+        self.assertEqual(large.auth.max_sessions, 1_000_001)
+        unlimited = make_cfg(self.tmp, max_sessions="unlimited")
+        self.assertIsNone(unlimited.auth.max_sessions)
+        for value in (0, -1, True):
             with self.subTest(value=value):
                 with self.assertRaises(ConfigError):
                     make_cfg(self.tmp, max_sessions=value)
+
+    def test_budgets_operationnels_configurables(self):
+        cfg = make_cfg(
+            self.tmp,
+            limits={
+                "max_filename_length": 17,
+                "max_filename_size": "1KiB",
+                "max_login_delay_seconds": 0.5,
+                "max_login_concurrent_checks": "unlimited",
+                "max_login_tracked_ips": 12,
+                "login_forget_after_seconds": "unlimited",
+                "max_scrypt_memory_size": "unlimited",
+                "request_queue_size": 64,
+                "max_active_requests": "unlimited",
+                "max_pending_requests": 3,
+                "http_header_timeout_seconds": 0.25,
+                "http_request_timeout_seconds": "unlimited",
+            },
+        )
+        self.assertEqual(cfg.limits.max_filename_length, 17)
+        self.assertEqual(cfg.limits.max_filename_bytes, 1024)
+        self.assertEqual(cfg.limits.max_login_delay_seconds, 0.5)
+        self.assertIsNone(cfg.limits.max_login_concurrent_checks)
+        self.assertEqual(cfg.limits.max_login_tracked_ips, 12)
+        self.assertIsNone(cfg.limits.login_forget_after_seconds)
+        self.assertIsNone(cfg.limits.max_scrypt_memory_bytes)
+        self.assertEqual(cfg.limits.request_queue_size, 64)
+        self.assertIsNone(cfg.limits.max_active_requests)
+        self.assertEqual(cfg.limits.max_pending_requests, 3)
+        self.assertEqual(cfg.limits.http_header_timeout_seconds, 0.25)
+        self.assertIsNone(cfg.limits.http_request_timeout_seconds)
+
+    def test_file_attente_ne_peut_pas_etre_sans_limite(self):
+        with self.assertRaisesRegex(ConfigError, "request_queue_size"):
+            make_cfg(self.tmp, limits={"request_queue_size": "unlimited"})
 
     def test_fichier_passwd_doit_etre_absolu(self):
         with self.assertRaisesRegex(ConfigError, "password_file"):
@@ -358,15 +397,17 @@ class TestParsing(unittest.TestCase):
         with self.assertRaises(ConfigError):
             make_cfg(self.tmp, port=99999)
 
-    def test_upload_trop_grand(self):
-        with self.assertRaises(ConfigError):
-            make_cfg(self.tmp, max_upload_size="51MiB")
+    def test_upload_grand_est_controle_par_la_configuration(self):
+        cfg = make_cfg(self.tmp, max_upload_size="50GiB")
+        self.assertEqual(cfg.max_upload_bytes, 50 * 1024**3)
+        unlimited = make_cfg(self.tmp, max_upload_size="unlimited")
+        self.assertIsNone(unlimited.max_upload_bytes)
 
-    def test_budget_pixels_borne(self):
-        cfg = make_cfg(self.tmp, max_image_pixels=50_000_000)
-        self.assertEqual(cfg.max_image_pixels, 50_000_000)
-        with self.assertRaises(ConfigError):
-            make_cfg(self.tmp, max_image_pixels=50_000_001)
+    def test_budget_pixels_est_controle_par_la_configuration(self):
+        cfg = make_cfg(self.tmp, max_image_pixels=500_000_001)
+        self.assertEqual(cfg.max_image_pixels, 500_000_001)
+        unlimited = make_cfg(self.tmp, max_image_pixels="unlimited")
+        self.assertIsNone(unlimited.max_image_pixels)
 
     def test_seuil_espace_invalide(self):
         with self.assertRaises(ConfigError):
@@ -492,6 +533,16 @@ class TestRepertoires(unittest.TestCase):
         with self.assertRaises(ConfigError):
             prepare_directories(cfg)
 
+    def test_zone_dans_le_bundle_refusee(self):
+        bundle_runtime = Path(__file__).resolve().parent.parent / "PasteBerth" / "runtime"
+        with self.assertRaisesRegex(ConfigError, "outside the PasteBerth deployment"):
+            load_config(
+                write_config(
+                    self.tmp,
+                    zones=[{"id": "x", "directory": str(bundle_runtime)}],
+                )
+            )
+
     def test_repertoire_permissions_non_privees_avertissent(self):
         target = self.tmp / "open"
         target.mkdir(mode=0o755)
@@ -528,7 +579,7 @@ class TestRepertoires(unittest.TestCase):
         else:
             self.assertEqual(stat.S_IMODE(target.stat().st_mode), 0o775)
 
-    def test_lien_symbolique_parent_refuse(self):
+    def test_lien_symbolique_parent_est_suivi(self):
         target = self.tmp / "outside"
         target.mkdir(mode=0o700)
         link = self.tmp / "link"
@@ -536,8 +587,8 @@ class TestRepertoires(unittest.TestCase):
         cfg = load_config(
             write_config(self.tmp, zones=[{"id": "x", "directory": str(link / "images")}])
         )
-        with self.assertRaisesRegex(ConfigError, "path contains a symbolic link"):
-            prepare_directories(cfg)
+        prepare_directories(cfg)
+        self.assertTrue((target / "images").is_dir())
 
     def test_chemin_nul_retourne_une_erreur_de_configuration(self):
         cfg = make_cfg(self.tmp)

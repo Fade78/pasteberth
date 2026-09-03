@@ -4,7 +4,7 @@ from __future__ import annotations
 import platform
 from functools import lru_cache
 
-from pasteberth.platformfs.base import (
+from .base import (
     BusyError,
     DirectoryHandle,
     EntryChangedError,
@@ -28,15 +28,15 @@ def platform_fs() -> PlatformFS:
     """Return the host backend without importing unrelated native modules."""
     system = platform.system()
     if system == "Linux":
-        from pasteberth.platformfs.linux import LinuxPlatformFS
+        from .linux import LinuxPlatformFS
 
         return LinuxPlatformFS()
     if system == "Darwin":
-        from pasteberth.platformfs.darwin import DarwinPlatformFS
+        from .darwin import DarwinPlatformFS
 
         return DarwinPlatformFS()
     if system == "Windows":
-        from pasteberth.platformfs.windows import WindowsPlatformFS
+        from .windows import WindowsPlatformFS
 
         return WindowsPlatformFS()
     raise UnsupportedFilesystemError(f"unsupported operating system: {system}")

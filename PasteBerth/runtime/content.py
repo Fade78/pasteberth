@@ -10,12 +10,15 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
-from pasteberth.images import (
+from .config import DEFAULT_MAX_IMAGE_PIXELS, LimitsConfig
+from .images import (
     FORMATS,
     InvalidImageError,
     inspect_image,
     mime_for,
 )
+
+_DEFAULT_LIMITS = LimitsConfig()
 
 # Declared text types -> extension (paste preserves clipboard identity).
 TEXT_MIMES: dict[str, str] = {
@@ -87,14 +90,27 @@ def classify(
     declared_mime: str | None,
     filename_hint: str | None = None,
     *,
-    max_pixels: int = 25_000_000,
+    max_pixels: int | None = DEFAULT_MAX_IMAGE_PIXELS,
+    max_dimension: int | None = _DEFAULT_LIMITS.max_image_dimension,
+    max_raw_bytes: int | None = _DEFAULT_LIMITS.max_image_raw_bytes,
+    max_png_chunks: int | None = _DEFAULT_LIMITS.max_png_chunks,
+    max_jpeg_segments: int | None = _DEFAULT_LIMITS.max_jpeg_segments,
+    max_webp_chunks: int | None = _DEFAULT_LIMITS.max_webp_chunks,
 ) -> ContentInfo:
     """Classify content: image signature, UTF-8 text, or binary fallback."""
     # 1. Image: the content signature is authoritative.
     for sig, fmt in _SIGNATURES:
         if data.startswith(sig):
             try:
-                info = inspect_image(data, max_pixels=max_pixels)
+                info = inspect_image(
+                    data,
+                    max_pixels=max_pixels,
+                    max_dimension=max_dimension,
+                    max_raw_bytes=max_raw_bytes,
+                    max_png_chunks=max_png_chunks,
+                    max_jpeg_segments=max_jpeg_segments,
+                    max_webp_chunks=max_webp_chunks,
+                )
             except InvalidImageError:
                 # An image-looking upload that cannot pass the bounded
                 # structural check is still safe to retain as an attachment.

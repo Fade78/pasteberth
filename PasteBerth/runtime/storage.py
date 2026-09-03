@@ -1,8 +1,8 @@
 """Storage destinations and circular per-zone retention.
 
 The local destination assumes a directory private to the Pasteberth process.
-File access goes through a directory descriptor and rejects symbolic links so
-sidecar ownership checks cannot become an arbitrary read or delete primitive.
+File access goes through a directory descriptor so sidecar ownership checks
+cannot become an arbitrary read or delete primitive.
 """
 from __future__ import annotations
 
@@ -20,15 +20,13 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
-from pasteberth.images import (
+from .config import LimitsConfig
+from .images import (
     FORMATS,
-    HARD_MAX_PIXELS,
-    MAX_MIME_LENGTH,
-    MAX_DIMENSION,
     ImageInfo,
     mime_for,
 )
-from pasteberth.platformfs import (
+from .platformfs import (
     BusyError,
     DirectoryHandle,
     EntryChangedError,
@@ -39,12 +37,14 @@ from pasteberth.platformfs import (
     platform_fs,
 )
 
+_DEFAULT_LIMITS = LimitsConfig()
+
 log = logging.getLogger("pasteberth.storage")
 
 _GENERATED_FILENAME_RE = re.compile(
     r"^\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}_[0-9a-f]{6}\.[a-z0-9]{1,10}$"
 )
-_CLIENT_FILENAME_RE = re.compile(r"^[^/\\\x00\r\n]{1,200}$")
+_CLIENT_FILENAME_RE = re.compile(r"^[^/\\\x00\r\n]+$")
 _META_KEYS = {"filename", "created_at", "width", "height", "size", "format"}
 # kind/mime were added in v1.0.3; v1.0.1/v1.0.2 sidecars (6 keys) remain valid.
 _META_KEYS_NEW = _META_KEYS | {"kind", "mime"}
@@ -52,11 +52,6 @@ _META_KEYS_WITH_COMMENT = _META_KEYS | {"comment"}
 _META_KEYS_NEW_WITH_COMMENT = _META_KEYS_NEW | {"comment"}
 _MIME_RE = re.compile(r"^[A-Za-z0-9!#$%&'*+.^_`|~-]+/[A-Za-z0-9!#$%&'*+.^_`|~-]+$")
 _TEXT_MIMES = {"application/json", "application/xml", "application/x-yaml"}
-_MAX_META_BYTES = 64 * 1024
-_MAX_COMMENT_LENGTH = 280
-_MAX_COMMENT_BYTES = 1024
-
-
 def _meta_keys_ok(raw: dict) -> bool:
     return set(raw) in (
         _META_KEYS,
@@ -66,18 +61,23 @@ def _meta_keys_ok(raw: dict) -> bool:
     )
 
 
-def validate_comment(value: object) -> str:
+def validate_comment(
+    value: object,
+    *,
+    max_length: int | None = _DEFAULT_LIMITS.max_comment_length,
+    max_bytes: int | None = _DEFAULT_LIMITS.max_comment_bytes,
+) -> str:
     """Validate a short, safe Unicode comment suitable for a JSON sidecar."""
     if not isinstance(value, str):
         raise ValueError("comment must be a string")
-    if len(value) > _MAX_COMMENT_LENGTH:
-        raise ValueError(f"comment must be at most {_MAX_COMMENT_LENGTH} characters")
+    if max_length is not None and len(value) > max_length:
+        raise ValueError(f"comment must be at most {max_length} characters")
     try:
         encoded = value.encode("utf-8")
     except UnicodeEncodeError as exc:
         raise ValueError("comment contains invalid Unicode") from exc
-    if len(encoded) > _MAX_COMMENT_BYTES:
-        raise ValueError(f"comment must be at most {_MAX_COMMENT_BYTES} UTF-8 bytes")
+    if max_bytes is not None and len(encoded) > max_bytes:
+        raise ValueError(f"comment must be at most {max_bytes} UTF-8 bytes")
     for char in value:
         category = unicodedata.category(char)
         if category.startswith("C") and char not in {"\n", "\u200c", "\u200d"}:
@@ -206,19 +206,26 @@ def _internal_marker_name(name: object) -> bool:
     )
 
 
-def _filename_shape_ok(name: object) -> bool:
+def _filename_shape_ok(
+    name: object,
+    *,
+    max_length: int | None = _DEFAULT_LIMITS.max_filename_length,
+    max_bytes: int | None = _DEFAULT_LIMITS.max_filename_bytes,
+) -> bool:
     if not isinstance(name, str) or not name.strip():
         return False
     if name in {".", "..", ".pasteberth.lock"}:
         return False
     try:
-        if len(name.encode("utf-8")) > 240:
+        if max_bytes is not None and len(name.encode("utf-8")) > max_bytes:
             return False
     except UnicodeEncodeError:
         return False
     if any(unicodedata.category(char).startswith("C") for char in name):
         return False
-    return bool(_CLIENT_FILENAME_RE.fullmatch(name))
+    return (max_length is None or len(name) <= max_length) and bool(
+        _CLIENT_FILENAME_RE.fullmatch(name)
+    )
 
 
 def _legacy_pbdel_filename(name: object) -> bool:
@@ -231,8 +238,13 @@ def _persisted_filename(name: object) -> bool:
     return valid_filename(name) or _legacy_pbdel_filename(name)
 
 
-def valid_filename(name: object) -> bool:
-    if not _filename_shape_ok(name):
+def valid_filename(
+    name: object,
+    *,
+    max_length: int | None = _DEFAULT_LIMITS.max_filename_length,
+    max_bytes: int | None = _DEFAULT_LIMITS.max_filename_bytes,
+) -> bool:
+    if not _filename_shape_ok(name, max_length=max_length, max_bytes=max_bytes):
         return False
     return not name.startswith(_INTERNAL_RESERVED_PREFIXES)
 
@@ -365,9 +377,18 @@ class Destination(ABC):
 
 
 class LocalDestination(Destination):
-    def __init__(self, directory: Path, *, create_directory: bool = True):
-        self.directory = Path(directory)
+    def __init__(
+        self,
+        directory: Path,
+        *,
+        create_directory: bool = True,
+        limits: LimitsConfig | None = None,
+        max_image_pixels: int | None = None,
+    ):
+        self.directory = Path(directory).expanduser().resolve()
         self.create_directory = create_directory
+        self.limits = limits or LimitsConfig()
+        self.max_image_pixels = max_image_pixels
         self._fs = platform_fs()
         lock_key = os.path.normcase(os.path.abspath(os.fspath(self.directory)))
         self._stable_lock_name = (
@@ -397,6 +418,26 @@ class LocalDestination(Destination):
         with self.operation_lock(exclusive=True):
             self.reconcile()
 
+    def _valid_filename(self, name: object) -> bool:
+        return valid_filename(
+            name,
+            max_length=self.limits.max_filename_length,
+            max_bytes=self.limits.max_filename_bytes,
+        )
+
+    def _legacy_pbdel_filename(self, name: object) -> bool:
+        return (
+            _filename_shape_ok(
+                name,
+                max_length=self.limits.max_filename_length,
+                max_bytes=self.limits.max_filename_bytes,
+            )
+            and name.startswith(".pbdel-")
+        )
+
+    def _persisted_filename(self, name: object) -> bool:
+        return self._valid_filename(name) or self._legacy_pbdel_filename(name)
+
     def _ensure_dir(self) -> None:
         bound = self._operation_directory.get()
         if bound is not None:
@@ -406,14 +447,6 @@ class LocalDestination(Destination):
         # Permissions are not inspected here: shared directories are accepted
         # with a startup warning from config.py. Rejecting them at runtime would
         # break legitimate shared zones and encourage bypassing protection.
-        try:
-            symlink = self._fs.first_symlink_component(self.directory)
-        except (OSError, ValueError) as exc:
-            raise DestinationError(
-                f"cannot inspect {self.directory}: {exc}"
-            ) from exc
-        if symlink is not None:
-            raise DestinationError(f"zone path contains a rejected symbolic link: {symlink}")
         directory = None
         try:
             directory = self._fs.open_directory(
@@ -532,9 +565,9 @@ class LocalDestination(Destination):
         is_sidecar_name = (
             isinstance(name, str)
             and name.endswith(".json")
-            and _persisted_filename(name[:-5])
+            and self._valid_filename(name[:-5])
         )
-        if not valid_filename(name) and not is_sidecar_name and not _internal_marker_name(name):
+        if not self._valid_filename(name) and not is_sidecar_name and not _internal_marker_name(name):
             raise DestinationError(f"invalid filename: {name!r}")
         try:
             return self._fs.open_existing(directory, name, mode=mode)
@@ -599,8 +632,7 @@ class LocalDestination(Destination):
             raise ValueError(f"invalid transaction identity: {key}")
         return (value[0], value[1])
 
-    @staticmethod
-    def _parse_transaction(marker_name: str, raw: object) -> dict:
+    def _parse_transaction(self, marker_name: str, raw: object) -> dict:
         if not isinstance(raw, dict) or set(raw) not in (
             _TXN_KEYS,
             _TXN_KEYS_WITHOUT_GUARDS,
@@ -617,7 +649,7 @@ class LocalDestination(Destination):
         ):
             raise ValueError("inconsistent transaction state")
         target = raw["target"]
-        if not _persisted_filename(target):
+        if not self._persisted_filename(target):
             raise ValueError("invalid transaction target")
         expected_names = {
             "data_backup": f".pbbackup-{token}.data",
@@ -644,15 +676,14 @@ class LocalDestination(Destination):
                 raise ValueError(f"missing transaction identity: {key}")
         return raw
 
-    @staticmethod
-    def _parse_delete_transaction(marker_name: str, raw: object) -> dict:
+    def _parse_delete_transaction(self, marker_name: str, raw: object) -> dict:
         if not isinstance(raw, dict) or set(raw) != _DELETE_KEYS:
             raise ValueError("invalid deletion marker")
         token = _delete_token(marker_name)
         if token is None or raw["version"] != 1:
             raise ValueError("invalid deletion marker")
         target = raw["target"]
-        if not _persisted_filename(target):
+        if not self._persisted_filename(target):
             raise ValueError("invalid deletion target")
         if (
             raw["data_trash"] != f".pbtrash-{token}.data"
@@ -664,8 +695,7 @@ class LocalDestination(Destination):
                 raise ValueError(f"missing deletion identity: {key}")
         return raw
 
-    @staticmethod
-    def _parse_rename_transaction(marker_name: str, raw: object) -> dict:
+    def _parse_rename_transaction(self, marker_name: str, raw: object) -> dict:
         if not isinstance(raw, dict) or set(raw) not in (
             _RENAME_KEYS,
             _RENAME_KEYS_WITHOUT_GUARDS,
@@ -688,8 +718,8 @@ class LocalDestination(Destination):
         source = raw["source"]
         target = raw["target"]
         if (
-            not _persisted_filename(source)
-            or not _persisted_filename(target)
+            not self._persisted_filename(source)
+            or not self._persisted_filename(target)
             or source == target
         ):
             raise ValueError("invalid rename names")
@@ -761,7 +791,7 @@ class LocalDestination(Destination):
         name: str,
     ) -> bool:
         """Do not execute an old client upload as a deletion marker."""
-        if not _legacy_pbdel_filename(name):
+        if not self._legacy_pbdel_filename(name):
             return False
         sidecar_name = name + ".json"
         try:
@@ -2594,17 +2624,21 @@ class LocalDestination(Destination):
         return filename + ".json"
 
     def _read_meta(self, directory_fd: DirectoryHandle, name: str) -> dict:
-        """Read a sidecar from a descriptor within a fixed size bound."""
+        """Read a sidecar from a descriptor within the configured budget."""
         try:
             with self._open_file(directory_fd, name, "rb") as fh:
-                encoded = fh.read(_MAX_META_BYTES + 1)
+                max_bytes = self.limits.max_metadata_bytes
+                encoded = fh.read(max_bytes + 1) if max_bytes is not None else fh.read()
         except FileNotFoundError:
             raise
         except DestinationError:
             raise
         except OSError as exc:
             raise DestinationError(f"cannot read sidecar {name!r}") from exc
-        if len(encoded) > _MAX_META_BYTES:
+        if (
+            self.limits.max_metadata_bytes is not None
+            and len(encoded) > self.limits.max_metadata_bytes
+        ):
             raise DestinationError(f"sidecar is too large: {name!r}")
         try:
             raw = json.loads(encoded.decode("utf-8"))
@@ -2614,8 +2648,8 @@ class LocalDestination(Destination):
             raise DestinationError(f"invalid sidecar: {name!r}")
         return raw
 
-    @staticmethod
     def _validated_item(
+        self,
         raw: dict,
         filename: str,
         actual_size: int | None = None,
@@ -2640,7 +2674,10 @@ class LocalDestination(Destination):
         if (
             not isinstance(mime, str)
             or not _MIME_RE.fullmatch(mime)
-            or len(mime) > MAX_MIME_LENGTH
+            or (
+                self.limits.max_mime_length is not None
+                and len(mime) > self.limits.max_mime_length
+            )
         ):
             raise ValueError("invalid MIME type")
         if isinstance(size, bool) or not isinstance(size, int):
@@ -2648,9 +2685,18 @@ class LocalDestination(Destination):
         if kind == "image":
             if any(isinstance(v, bool) or not isinstance(v, int) for v in (width, height)):
                 raise ValueError("invalid numeric types")
-            if not (1 <= width <= MAX_DIMENSION and 1 <= height <= MAX_DIMENSION):
+            if width < 1 or height < 1 or (
+                self.limits.max_image_dimension is not None
+                and (
+                    width > self.limits.max_image_dimension
+                    or height > self.limits.max_image_dimension
+                )
+            ):
                 raise ValueError("invalid dimensions")
-            if width * height > HARD_MAX_PIXELS:
+            if (
+                self.max_image_pixels is not None
+                and width * height > self.max_image_pixels
+            ):
                 raise ValueError("inconsistent metadata")
             if fmt not in FORMATS:
                 raise ValueError("invalid format")
@@ -2670,7 +2716,11 @@ class LocalDestination(Destination):
                 raise ValueError("invalid binary MIME type")
         if size < 0 or (actual_size is not None and size != actual_size):
             raise ValueError("inconsistent metadata")
-        comment = validate_comment(raw.get("comment", ""))
+        comment = validate_comment(
+            raw.get("comment", ""),
+            max_length=self.limits.max_comment_length,
+            max_bytes=self.limits.max_comment_bytes,
+        )
         return StoredImage(filename, created_at, width, height, size, fmt, kind, mime, comment)
 
     def _require_owned(
@@ -2681,7 +2731,7 @@ class LocalDestination(Destination):
         allow_stale_sidecar: bool = False,
     ) -> tuple[FileHandle, tuple[int, int]]:
         """Operate only on a file with a present regular sidecar."""
-        if not valid_filename(filename):
+        if not self._valid_filename(filename):
             raise DestinationError(f"invalid filename: {filename!r}")
         meta_name = self._meta_name(filename)
         file_handle = None
@@ -3242,7 +3292,7 @@ class LocalDestination(Destination):
     ) -> StoredImage:
         self._ensure_dir()
         if filename is not None:
-            if not valid_filename(filename):
+            if not self._valid_filename(filename):
                 raise DestinationError(f"invalid filename: {filename!r}")
             with self._directory_fd() as directory_fd:
                 return self._save_named(
@@ -3366,7 +3416,7 @@ class LocalDestination(Destination):
                     log.warning("invalid sidecar, ignored: %s", entry.name)
                     continue
                 filename = raw.get("filename")
-                if not valid_filename(filename) or entry.name != filename + ".json":
+                if not self._valid_filename(filename) or entry.name != filename + ".json":
                     log.warning("inconsistent sidecar, ignored: %s", entry.name)
                     continue
                 if filename in blocked_targets:
@@ -3396,7 +3446,7 @@ class LocalDestination(Destination):
 
     def rename(self, source: str, target: str) -> StoredImage:
         """Rename a managed pair without ever replacing a target."""
-        if not valid_filename(source) or not valid_filename(target):
+        if not self._valid_filename(source) or not self._valid_filename(target):
             raise DestinationError("invalid filename")
         if source == target:
             raise DestinationError("source and target names are identical")
@@ -3555,9 +3605,13 @@ class LocalDestination(Destination):
 
     def update_comment(self, filename: str, comment: str) -> StoredImage:
         """Replace only a managed item's sidecar comment atomically."""
-        if not valid_filename(filename):
+        if not self._valid_filename(filename):
             raise DestinationError(f"invalid filename: {filename!r}")
-        comment = validate_comment(comment)
+        comment = validate_comment(
+            comment,
+            max_length=self.limits.max_comment_length,
+            max_bytes=self.limits.max_comment_bytes,
+        )
         with self._directory_fd() as directory_fd:
             if filename in self._active_transaction_names(directory_fd):
                 raise StorageConflictError(

@@ -1,15 +1,17 @@
 # Pasteberth example configuration.
 #
-# The recommended local file is config.toml at the repository root.
-#   (or $PASTEBERTH_CONFIG, or --config PATH)
+# The recommended local file is $XDG_CONFIG_HOME/pasteberth/config.toml
+# (normally ~/.config/pasteberth/config.toml), or an explicit --config PATH.
+# PASTEBERTH_CONFIG is also accepted. Keep the active file outside the
+# read-only PasteBerth deployment.
 #
 # The password is NEVER written here: `pasteberth passwd` stores a salted
 # scrypt hash in a separate `passwd` file, configured below or next to config.toml.
 
 listen_address = "127.0.0.1"      # keep loopback when TLS terminates in a proxy
 port = 8765
-max_upload_size = "20MiB"         # 20 MiB per upload; absolute maximum 50 MiB
-max_image_pixels = 25000000        # structural pixel budget; default 25 MP, max 50 MP
+max_upload_size = "20MiB"         # set to "unlimited" for no application cap
+max_image_pixels = 25000000        # set to "unlimited" to disable the pixel budget
 # Empty for a root deployment, or e.g. "/paste" when mounted below a proxy path.
 url_prefix = ""
 # Display absolute file paths in the web UI; set false when paths are sensitive.
@@ -42,6 +44,43 @@ accept_doc = true
 
 log_level = "INFO"                # DEBUG | INFO | WARNING | ERROR
 
+# Operational budgets. Most values accept "unlimited"; request_queue_size is
+# always a positive integer because it configures the OS listen backlog. These
+# budgets are independent from max_upload_size.
+[limits]
+max_image_dimension = 16384
+max_image_raw_size = "256MiB"
+max_filename_length = 200
+max_filename_size = 240
+max_png_chunks = 100000
+max_jpeg_segments = 100000
+max_webp_chunks = 100000
+max_mime_length = 120
+max_multipart_boundary_length = 70
+max_multipart_parts = 32
+max_multipart_header_size = "8KiB"
+max_multipart_field_name_length = 256
+max_batch_names = 10000
+max_batch_body_size = "2MiB"
+max_comment_body_size = "8KiB"
+max_http_header_size = "64KiB"
+max_login_body_size = "4KiB"
+max_login_fields = 8
+max_login_delay_seconds = 900
+max_login_concurrent_checks = 4
+max_login_tracked_ips = 4096
+login_forget_after_seconds = 3600
+max_scrypt_memory_size = "64MiB"
+max_password_file_size = "16KiB"
+max_metadata_size = "64KiB"
+max_comment_length = 280
+max_comment_bytes = 1024
+request_queue_size = 32
+max_active_requests = 64
+max_pending_requests = 8
+http_header_timeout_seconds = 5
+http_request_timeout_seconds = 60
+
 [tls]
 enabled = false
 # certificate = "/absolute/path/to/cert.pem"
@@ -50,7 +89,7 @@ enabled = false
 [auth]
 enabled = true                    # false only with the explicit opt-in above
 session_ttl_hours = 72            # server-side session lifetime
-max_sessions = 4096               # maximum number of live server-side sessions
+max_sessions = 4096               # use "unlimited" to disable FIFO eviction
 # password_file = "/absolute/path/to/passwd"  # regular 0600 file
 
 # --------------------------------------------------------------- default zone
@@ -73,8 +112,8 @@ max_sessions = 4096               # maximum number of live server-side sessions
 id = "default"
 label = "Default"
 type = "local"
-# The generator replaces this path with <repository>/storage/default.
-directory = "/absolute/path/to/pasteberth/storage/default"
+# The generator replaces this path with the external XDG data directory.
+directory = "/absolute/path/to/pasteberth-data/storage/default"
 retain = 10
 reference_prefix = "@"
 reference_suffix = ""

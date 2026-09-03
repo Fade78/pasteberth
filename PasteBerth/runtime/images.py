@@ -1,4 +1,4 @@
-"""Bounded structural validation for PNG, JPEG, and WebP images.
+"""Configurable structural validation for PNG, JPEG, and WebP images.
 
 The server does not decode pixels or codec bitstreams. It checks containers,
 dimensions, and required budgets before a browser/harness preview; the
@@ -17,14 +17,10 @@ import struct
 import zlib
 from dataclasses import dataclass
 
-MAX_DIMENSION = 16_384
-MAX_PIXELS = 25_000_000
-HARD_MAX_PIXELS = 50_000_000
-MAX_MIME_LENGTH = 120
-_MAX_PNG_RAW_BYTES = 256 * 1024 * 1024
-_MAX_PNG_CHUNKS = 100_000
-_MAX_JPEG_SEGMENTS = 100_000
-_MAX_WEBP_CHUNKS = 100_000
+from .config import DEFAULT_MAX_IMAGE_PIXELS, LimitsConfig
+
+_DEFAULT_LIMITS = LimitsConfig()
+
 _PNG_CHANNELS = {0: 1, 2: 3, 3: 1, 4: 2, 6: 4}
 
 # Accepted formats -> (extension, MIME type).
@@ -62,13 +58,22 @@ class ImageInfo:
     ext: str = ".png"
 
 
-def _check_dims(width: int, height: int, fmt: str, max_pixels: int) -> ImageInfo:
-    if not (1 <= width <= MAX_DIMENSION and 1 <= height <= MAX_DIMENSION):
+def _check_dims(
+    width: int,
+    height: int,
+    fmt: str,
+    max_pixels: int | None,
+    max_dimension: int | None,
+) -> ImageInfo:
+    if width < 1 or height < 1 or (
+        max_dimension is not None
+        and (width > max_dimension or height > max_dimension)
+    ):
         raise InvalidImageError(
             "invalid_image",
             f"unrealistic {fmt} dimensions: {width}x{height}",
         )
-    if width * height > max_pixels:
+    if max_pixels is not None and width * height > max_pixels:
         raise InvalidImageError(
             "invalid_image",
             f"{fmt} image is too large to decode: {width}x{height} "
@@ -77,7 +82,13 @@ def _check_dims(width: int, height: int, fmt: str, max_pixels: int) -> ImageInfo
     return ImageInfo(fmt=fmt, width=width, height=height, mime=mime_for(fmt), ext=FORMATS[fmt][0])
 
 
-def _parse_png(data: bytes, max_pixels: int) -> ImageInfo:
+def _parse_png(
+    data: bytes,
+    max_pixels: int | None,
+    max_dimension: int | None,
+    max_raw_bytes: int | None,
+    max_chunks: int | None,
+) -> ImageInfo:
     signature = b"\x89PNG\r\n\x1a\n"
     if len(data) < len(signature) or not data.startswith(signature):
         raise InvalidImageError("invalid_image", "PNG signature is missing")
@@ -99,7 +110,7 @@ def _parse_png(data: bytes, max_pixels: int) -> ImageInfo:
     chunk_count = 0
     while pos < len(data):
         chunk_count += 1
-        if chunk_count > _MAX_PNG_CHUNKS:
+        if max_chunks is not None and chunk_count > max_chunks:
             raise InvalidImageError("invalid_image", "too many PNG chunks")
         if pos + 12 > len(data):
             raise InvalidImageError("invalid_image", "truncated PNG chunk")
@@ -139,7 +150,7 @@ def _parse_png(data: bytes, max_pixels: int) -> ImageInfo:
             dimensions = (width, height)
             # Bound dimensions before deriving any row-level structures from
             # attacker-controlled 32-bit values.
-            info = _check_dims(width, height, "png", max_pixels)
+            info = _check_dims(width, height, "png", max_pixels, max_dimension)
             png_raw_size = _png_raw_size(width, height, bit_depth, color_type, interlace)
             png_filter_offsets = _png_filter_offsets(
                 width, height, bit_depth, color_type, interlace
@@ -207,7 +218,7 @@ def _parse_png(data: bytes, max_pixels: int) -> ImageInfo:
         raise InvalidImageError("invalid_image", "incomplete PNG")
     if color_type == 3 and not saw_plte:
         raise InvalidImageError("invalid_image", "PNG palette is missing")
-    if png_raw_size > _MAX_PNG_RAW_BYTES:
+    if max_raw_bytes is not None and png_raw_size > max_raw_bytes:
         raise InvalidImageError("invalid_image", "decompressed PNG data is too large")
     filter_bpp = max(1, (_PNG_CHANNELS[color_type] * bit_depth + 7) // 8)
     _validate_png_data(
@@ -229,7 +240,12 @@ _SOF_MARKERS = {
 }
 
 
-def _parse_jpeg(data: bytes, max_pixels: int) -> ImageInfo:
+def _parse_jpeg(
+    data: bytes,
+    max_pixels: int | None,
+    max_dimension: int | None,
+    max_segments: int | None,
+) -> ImageInfo:
     if len(data) < 4 or data[0:2] != b"\xff\xd8":
         raise InvalidImageError("invalid_image", "JPEG signature is missing")
     pos = 2
@@ -246,7 +262,7 @@ def _parse_jpeg(data: bytes, max_pixels: int) -> ImageInfo:
         marker = data[pos]
         pos += 1
         segment_count += 1
-        if segment_count > _MAX_JPEG_SEGMENTS:
+        if max_segments is not None and segment_count > max_segments:
             raise InvalidImageError("invalid_image", "too many JPEG segments")
         if marker == 0xD9:
             break
@@ -260,7 +276,7 @@ def _parse_jpeg(data: bytes, max_pixels: int) -> ImageInfo:
             eoi = data.find(b"\xff\xd9", entropy_start)
             if eoi <= entropy_start or eoi + 2 != end:
                 raise InvalidImageError("invalid_image", "JPEG end marker is missing or inconsistent")
-            return _check_dims(*dimensions, "jpeg", max_pixels)
+            return _check_dims(*dimensions, "jpeg", max_pixels, max_dimension)
         if marker in (0x01,) or 0xD0 <= marker <= 0xD7:
             continue
         if pos + 2 > end:
@@ -281,7 +297,12 @@ def _parse_jpeg(data: bytes, max_pixels: int) -> ImageInfo:
     raise InvalidImageError("invalid_image", "incomplete JPEG or missing frame header")
 
 
-def _parse_webp(data: bytes, max_pixels: int) -> ImageInfo:
+def _parse_webp(
+    data: bytes,
+    max_pixels: int | None,
+    max_dimension: int | None,
+    max_chunks: int | None,
+) -> ImageInfo:
     if len(data) < 20 or data[0:4] != b"RIFF" or data[8:12] != b"WEBP":
         raise InvalidImageError("invalid_image", "WebP signature is missing")
     riff_size = struct.unpack("<I", data[4:8])[0]
@@ -298,7 +319,7 @@ def _parse_webp(data: bytes, max_pixels: int) -> ImageInfo:
     chunk_count = 0
     while pos < end:
         chunk_count += 1
-        if chunk_count > _MAX_WEBP_CHUNKS:
+        if max_chunks is not None and chunk_count > max_chunks:
             raise InvalidImageError("invalid_image", "too many WebP chunks")
         if pos + 8 > end:
             raise InvalidImageError("invalid_image", "truncated WebP chunk")
@@ -356,7 +377,7 @@ def _parse_webp(data: bytes, max_pixels: int) -> ImageInfo:
         raise InvalidImageError("invalid_image", "WebP dimension chunk is missing")
     if not saw_image_payload:
         raise InvalidImageError("invalid_image", "WebP image payload is missing")
-    return _check_dims(*dimensions, "webp", max_pixels)
+    return _check_dims(*dimensions, "webp", max_pixels, max_dimension)
 
 
 _PARSERS = {"png": _parse_png, "jpeg": _parse_jpeg, "webp": _parse_webp}
@@ -547,10 +568,17 @@ def _validate_png_data(
         raise InvalidImageError("invalid_image", "inconsistent decompressed PNG size")
 
 
-def inspect_image(data: bytes, *, max_pixels: int = MAX_PIXELS) -> ImageInfo:
+def inspect_image(
+    data: bytes,
+    *,
+    max_pixels: int | None = DEFAULT_MAX_IMAGE_PIXELS,
+    max_dimension: int | None = _DEFAULT_LIMITS.max_image_dimension,
+    max_raw_bytes: int | None = _DEFAULT_LIMITS.max_image_raw_bytes,
+    max_png_chunks: int | None = _DEFAULT_LIMITS.max_png_chunks,
+    max_jpeg_segments: int | None = _DEFAULT_LIMITS.max_jpeg_segments,
+    max_webp_chunks: int | None = _DEFAULT_LIMITS.max_webp_chunks,
+) -> ImageInfo:
     """Identify and validate an image from its content."""
-    if not (1 <= max_pixels <= HARD_MAX_PIXELS):
-        raise ValueError(f"max_pixels must be between 1 and {HARD_MAX_PIXELS}")
     if not data:
         raise InvalidImageError("empty_upload", "upload is empty")
     fmt = None
@@ -563,7 +591,17 @@ def inspect_image(data: bytes, *, max_pixels: int = MAX_PIXELS) -> ImageInfo:
             "unsupported_format",
             "unrecognized content (accepted formats: PNG, JPEG, WebP)",
         )
-    return _PARSERS[fmt](data, max_pixels)
+    if fmt == "png":
+        return _parse_png(
+            data,
+            max_pixels,
+            max_dimension,
+            max_raw_bytes,
+            max_png_chunks,
+        )
+    if fmt == "jpeg":
+        return _parse_jpeg(data, max_pixels, max_dimension, max_jpeg_segments)
+    return _parse_webp(data, max_pixels, max_dimension, max_webp_chunks)
 
 
 def mime_allowed(declared: str | None) -> bool:
@@ -573,12 +611,16 @@ def mime_allowed(declared: str | None) -> bool:
     return declared.split(";")[0].strip().lower() in ALLOWED_DECLARED_MIMES
 
 
-def mime_syntax_allowed(declared: str | None) -> bool:
+def mime_syntax_allowed(
+    declared: str | None,
+    *,
+    max_length: int | None = _DEFAULT_LIMITS.max_mime_length,
+) -> bool:
     """Check MIME syntax before letting it influence classification."""
     if not declared:
         return True
     value = declared.split(";", 1)[0].strip().lower()
-    return len(value) <= MAX_MIME_LENGTH and bool(
+    return (max_length is None or len(value) <= max_length) and bool(
         re.fullmatch(
             r"[A-Za-z0-9!#$%&'*+.^_`|~-]+/[A-Za-z0-9!#$%&'*+.^_`|~-]+",
             value,

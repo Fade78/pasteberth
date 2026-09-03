@@ -6,8 +6,8 @@ import errno
 import os
 import re
 
-from pasteberth.platformfs.base import EntryChangedError, EntryExistsError
-from pasteberth.platformfs.posix import PosixDirectoryHandle, PosixPlatformFS
+from .base import EntryChangedError, EntryExistsError
+from .posix import PosixDirectoryHandle, PosixPlatformFS
 
 
 _RENAME_NOREPLACE = 1

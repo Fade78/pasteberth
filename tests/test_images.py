@@ -12,7 +12,7 @@ from tests.helpers import (
     make_webp_vp8l,
     make_webp_vp8x,
 )
-from pasteberth.images import (
+from PasteBerth.runtime.images import (
     InvalidImageError,
     inspect_image,
     mime_allowed,
@@ -45,7 +45,7 @@ class TestPng(unittest.TestCase):
             + _png_chunk(b"IDAT", zlib.compress(b""))
             + _png_chunk(b"IEND", b"")
         )
-        with mock.patch("pasteberth.images._png_filter_offsets") as offsets:
+        with mock.patch("PasteBerth.runtime.images._png_filter_offsets") as offsets:
             with self.assertRaises(InvalidImageError):
                 inspect_image(bad)
         offsets.assert_not_called()
@@ -142,9 +142,8 @@ class TestPng(unittest.TestCase):
             inspect_image(bad)
 
     def test_chunk_png_trop_nombreux_rejete(self):
-        with mock.patch("pasteberth.images._MAX_PNG_CHUNKS", 2):
-            with self.assertRaises(InvalidImageError):
-                inspect_image(make_png())
+        with self.assertRaises(InvalidImageError):
+            inspect_image(make_png(), max_png_chunks=2)
 
     def test_trns_png_invalide_rejete(self):
         ihdr = struct.pack(">IIBBBBB", 1, 1, 8, 2, 0, 0, 0)
@@ -253,9 +252,8 @@ class TestJpeg(unittest.TestCase):
             inspect_image(data)
 
     def test_trop_de_segments_rejete(self):
-        with mock.patch("pasteberth.images._MAX_JPEG_SEGMENTS", 2):
-            with self.assertRaises(InvalidImageError):
-                inspect_image(make_jpeg())
+        with self.assertRaises(InvalidImageError):
+            inspect_image(make_jpeg(), max_jpeg_segments=2)
 
 
 class TestWebp(unittest.TestCase):
@@ -310,9 +308,8 @@ class TestWebp(unittest.TestCase):
             inspect_image(bytes(bad))
 
     def test_trop_de_chunks_rejete(self):
-        with mock.patch("pasteberth.images._MAX_WEBP_CHUNKS", 0):
-            with self.assertRaises(InvalidImageError):
-                inspect_image(make_webp_lossy())
+        with self.assertRaises(InvalidImageError):
+            inspect_image(make_webp_lossy(), max_webp_chunks=0)
 
 
 class TestRejets(unittest.TestCase):

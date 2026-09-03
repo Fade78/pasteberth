@@ -5,7 +5,7 @@ import unittest
 import os
 from pathlib import Path
 
-from pasteberth.auth import (
+from PasteBerth.runtime.auth import (
     LoginRateLimiter,
     SessionStore,
     hash_password,
@@ -14,13 +14,17 @@ from pasteberth.auth import (
     valid_password_hash,
     verify_password,
 )
-from pasteberth.platformfs import platform_fs
+from PasteBerth.runtime.platformfs import platform_fs
 from tests.helpers import running_under_wine
 
 PASSWORD = "correct horse battery staple"
 
 
 class TestHash(unittest.TestCase):
+    def test_budget_scrypt_desactive_explicitement(self):
+        stored = hash_password(PASSWORD, maxmem=None)
+        self.assertTrue(verify_password(PASSWORD, stored, maxmem=None))
+
     def test_roundtrip(self):
         stored = hash_password(PASSWORD)
         self.assertTrue(stored.startswith("scrypt$"))
@@ -71,15 +75,15 @@ class TestHash(unittest.TestCase):
             with self.assertRaises(RuntimeError):
                 load_password_hash(path)
 
-    def test_parent_symbolique_refuse(self):
+    def test_parent_symbolique_est_suivi(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             real = root / "real"
             real.mkdir()
             link = root / "link"
             link.symlink_to(real, target_is_directory=True)
-            with self.assertRaises(OSError):
-                save_password_hash(link / "passwd", hash_password(PASSWORD))
+            save_password_hash(link / "passwd", hash_password(PASSWORD))
+            self.assertTrue((real / "passwd").is_file())
 
     def test_changement_corrige_un_mode_trop_ouvert(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -172,6 +176,20 @@ class TestSessions(unittest.TestCase):
 
 
 class TestRateLimiter(unittest.TestCase):
+    def test_budgets_de_login_sont_configurables(self):
+        limiter = LoginRateLimiter(
+            max_concurrent_checks=None,
+            max_tracked_ips=1,
+            max_delay=1.0,
+            forget_after=None,
+        )
+        ip = "10.0.0.20"
+        for _ in range(LoginRateLimiter.THRESHOLD):
+            limiter.register_failure(ip)
+        self.assertLessEqual(limiter.retry_after(ip), 1.0)
+        limiter.register_failure("10.0.0.21")
+        self.assertIn(ip, limiter._state)
+
     def test_verrouillage_progressif(self):
         limiter = LoginRateLimiter()
         ip = "10.1.2.3"
@@ -230,15 +248,13 @@ class TestRateLimiter(unittest.TestCase):
         limiter.complete(ip, success=True)
 
     def test_nombre_ips_suivi_borne(self):
-        limiter = LoginRateLimiter()
-        limiter.MAX_TRACKED_IPS = 2
+        limiter = LoginRateLimiter(max_tracked_ips=2)
         for ip in ("10.0.0.1", "10.0.0.2", "10.0.0.3"):
             limiter.register_failure(ip)
         self.assertLessEqual(len(limiter._state), 2)
 
     def test_lockout_actif_ne_peut_pas_etre_evince_par_du_churn(self):
-        limiter = LoginRateLimiter()
-        limiter.MAX_TRACKED_IPS = 1
+        limiter = LoginRateLimiter(max_tracked_ips=1)
         locked = "10.0.0.10"
         for _ in range(LoginRateLimiter.THRESHOLD):
             limiter.register_failure(locked)
@@ -250,8 +266,7 @@ class TestRateLimiter(unittest.TestCase):
         self.assertGreater(limiter.retry_after(locked), 0.0)
 
     def test_table_pleine_de_lockouts_ne_perd_pas_de_slot(self):
-        limiter = LoginRateLimiter(max_concurrent_checks=1)
-        limiter.MAX_TRACKED_IPS = 1
+        limiter = LoginRateLimiter(max_concurrent_checks=1, max_tracked_ips=1)
         locked = "10.0.0.12"
         for _ in range(LoginRateLimiter.THRESHOLD):
             limiter.register_failure(locked)
@@ -262,8 +277,7 @@ class TestRateLimiter(unittest.TestCase):
         limiter.complete("10.0.0.13", success=True)
 
     def test_lockout_expire_reste_evinçable(self):
-        limiter = LoginRateLimiter()
-        limiter.MAX_TRACKED_IPS = 1
+        limiter = LoginRateLimiter(max_tracked_ips=1)
         expired = "10.0.0.14"
         for _ in range(LoginRateLimiter.THRESHOLD):
             limiter.register_failure(expired)

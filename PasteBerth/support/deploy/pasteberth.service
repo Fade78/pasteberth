@@ -5,9 +5,9 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-# Example paths only; adapt them to the repository and configuration you use.
+# Example paths only; adapt them to the deployment and configuration you use.
 WorkingDirectory=%h/PasteBerth
-ExecStart=%h/PasteBerth/bin/pasteberth --config %h/PasteBerth/config.toml
+ExecStart=%h/PasteBerth/pasteberth --config %h/.config/pasteberth/config.toml
 Restart=on-failure
 RestartSec=2
 TimeoutStopSec=90
@@ -22,9 +22,11 @@ RestrictSUIDSGID=true
 # service will refuse to start if a declared path is missing):
 #ProtectSystem=full
 #ProtectHome=read-only
-#ReadWritePaths=%h/PasteBerth/storage %h/PasteBerth/captures
+#ReadWritePaths=%h/.config/pasteberth %h/.local/share/pasteberth %h/.cache/pasteberth
 # Add every configured zone directory and any parent created by
-# create_directory=true. Keep zones outside /tmp and /var/tmp with PrivateTmp=true.
+# create_directory=true, plus the password file and runtime lock directory.
+# Keep zones outside /tmp and /var/tmp with PrivateTmp=true. The PasteBerth
+# deployment itself should remain read-only.
 
 [Install]
 WantedBy=default.target

@@ -1,7 +1,7 @@
 """Tests du parser multipart borné."""
 import unittest
 
-from pasteberth.multipart import MultipartError, extract_boundary, parse_multipart
+from PasteBerth.runtime.multipart import MultipartError, extract_boundary, parse_multipart
 from tests.helpers import build_multipart
 
 
