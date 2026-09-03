@@ -793,6 +793,7 @@ code, kbd {
 }
 
 .toast.error { border-color: var(--danger); color: #ffd7d3; }
+.toast.warning { border-color: #ffd166; color: #ffe7a3; }
 
 /* A native modal dialog sits above the document's regular stacking contexts. */
 dialog#pv > .toast {
@@ -987,6 +988,8 @@ kbd {
 /* Mode compact : les zones deviennent des bandes de couleur étroites,
    toujours visibles, avec un bouton pour coller dedans. */
 @media (max-width: 600px) {
+  /* Keep controls comfortable for touch without making the compact layout loud. */
+  button, select { min-height: 44px; }
   .grid {
     grid-template-columns: 1fr;
     gap: 8px;
@@ -1000,6 +1003,7 @@ kbd {
   }
   .zone-head { display: flex; align-items: center; }
   .zone-select { gap: 0.4rem; }
+  .zone-upload-btn { padding: 0.5rem 0.65rem; }
   .zone-label { font-size: 0.9rem; }
   .zone-count { font-size: 0.7rem; }
   .drop-hint { padding: 0.6rem 0.8rem; font-size: 0.8rem; }
@@ -1012,8 +1016,8 @@ kbd {
   .latest-actions button { padding: 0.25rem 0.5rem; font-size: 0.75rem; }
   .meta .dims { font-size: 0.68rem; }
   .thumbs { gap: 4px; }
-  .thumb { width: 40px; height: 40px; }
-  .thumb-content { width: 40px; height: 40px; }
+  .thumb { width: 44px; height: 44px; }
+  .thumb-content { width: 44px; height: 44px; }
   .pv-actions { flex: 1 1 100%; }
   .pv-actions button { flex: 1 1 auto; }
   .help { font-size: 0.68rem; }

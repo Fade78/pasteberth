@@ -2,6 +2,20 @@
 
 This file records user-visible changes to Pasteberth.
 
+## [2.0.1] - 2026-09-03
+
+### Uploads and Retention
+
+- warn and ask for confirmation before an upload would evict retained items;
+- report retained filenames removed by a successful upload through the
+  `retention_deleted` API field;
+- keep retention enforcement authoritative on the server under the zone lock.
+
+### Mobile Web UI
+
+- make zone and action controls comfortable for touch input;
+- keep the per-zone multiple-file picker usable on compact screens.
+
 ## [2.0.0] - 2026-09-02
 
 ### Deployment Layout

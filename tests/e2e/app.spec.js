@@ -642,7 +642,7 @@ test("dépose plusieurs fichiers séquentiellement et permet la sélection group
   const defaultZone = page.locator('[data-zone="default"]');
   await defaultZone.getByRole("button", { name: "Select zone Default" }).click();
 
-  await dispatchMultiDrop(page, '[data-zone="default"]');
+  await dispatchMultiDrop(page, '.zone[data-zone="default"]');
 
   await expect(defaultZone.locator(".thumb-wrap")).toHaveCount(2);
   await expect(defaultZone.locator(".selection-latest")).toBeVisible();
@@ -669,6 +669,63 @@ test("dépose plusieurs fichiers séquentiellement et permet la sélection group
   await expect(thumbnails).toHaveCount(2);
   await expect(thumbnails.nth(0)).toHaveAttribute("aria-pressed", "true");
   await expect(thumbnails.nth(1)).toHaveAttribute("aria-pressed", "true");
+});
+
+test("le bouton d'une zone ouvre le sélecteur de fichiers multiple", async ({ page }) => {
+  await openApp(page);
+  const defaultZone = page.locator('[data-zone="default"]');
+  const chooserPromise = page.waitForEvent("filechooser");
+  await defaultZone.getByRole("button", { name: "Add files to Default" }).click();
+  const chooser = await chooserPromise;
+  await chooser.setFiles([
+    { name: "picker-one.txt", mimeType: "text/plain", buffer: Buffer.from("one") },
+    { name: "picker-two.txt", mimeType: "text/plain", buffer: Buffer.from("two") },
+  ]);
+
+  await expect(defaultZone.locator(".thumb-wrap")).toHaveCount(2);
+  await expect(defaultZone.locator(".selection-summary-name")).toHaveCount(2);
+});
+
+test("avertit avant de dépasser la rétention d'une zone", async ({ page }) => {
+  await openApp(page);
+  const defaultZone = page.locator('[data-zone="default"]');
+  await defaultZone.getByRole("button", { name: "Select zone Default" }).click();
+
+  for (let index = 1; index <= 5; index += 1) {
+    await dispatchPaste(page);
+    await expect(defaultZone.locator(".thumb-wrap")).toHaveCount(index);
+  }
+
+  let confirmation = "";
+  page.once("dialog", async (dialog) => {
+    confirmation = dialog.message();
+    await dialog.accept();
+  });
+  await dispatchMultiDrop(page, '.zone[data-zone="default"]');
+
+  await expect(defaultZone.locator(".thumb-wrap")).toHaveCount(5);
+  await expect(page.locator("#toast")).toContainText("Zone is full");
+  expect(confirmation).toContain("will remove 2 oldest managed items");
+});
+
+test("reste utilisable avec des cibles tactiles sur petit écran", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await openApp(page);
+  const defaultZone = page.locator('[data-zone="default"]');
+  const targets = await defaultZone.locator("button").evaluateAll((buttons) => (
+    buttons.map((button) => {
+      const rect = button.getBoundingClientRect();
+      return { width: rect.width, height: rect.height };
+    })
+  ));
+  expect(targets.length).toBe(2);
+  expect(targets.every(({ width, height }) => width >= 44 && height >= 44)).toBe(true);
+
+  const widths = await page.evaluate(() => ({
+    client: document.documentElement.clientWidth,
+    scroll: document.documentElement.scrollWidth,
+  }));
+  expect(widths.scroll).toBe(widths.client);
 });
 
 test("copie, télécharge et supprime la sélection d'une zone", async ({ page }) => {

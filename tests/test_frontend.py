@@ -70,6 +70,8 @@ class TestContratsFrontend(unittest.TestCase):
         self.assertIn("function uploadBatch", self.app_js)
         self.assertIn("dataTransfer.files", self.app_js)
         self.assertIn('id="file-picker"', self.index_html)
+        self.assertIn('type="file" multiple hidden', self.index_html)
+        self.assertIn("function chooseFiles", self.app_js)
 
     def test_selection_multiple_et_actions_de_zone(self):
         self.assertIn("selectedItemsByZone", self.app_js)
@@ -92,6 +94,7 @@ class TestContratsFrontend(unittest.TestCase):
         self.assertIn("@media", self.style_css)
         self.assertIn("<dialog", self.index_html)
         self.assertIn("auto-fit", self.style_css)
+        self.assertIn("min-height: 44px", self.style_css)
         self.assertIn("dialog#pv:not([open])", self.style_css)
         self.assertIn("dialog#replace:not([open])", self.style_css)
         self.assertIn("dialog-fallback-backdrop", self.style_css)
@@ -152,6 +155,9 @@ class TestContratsFrontend(unittest.TestCase):
 
     def test_reconciliation_apres_erreur_et_dialogue_legacy(self):
         self.assertIn('err.code === "retention_error"', self.app_js)
+        self.assertIn("function confirmRetention", self.app_js)
+        self.assertIn("retention_deleted", self.app_js)
+        self.assertIn('"warning"', self.app_js)
         self.assertIn("await refresh()", self.app_js)
         self.assertIn("function closePreview", self.app_js)
         self.assertIn('dialog.removeAttribute("open")', self.app_js)

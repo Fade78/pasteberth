@@ -1958,6 +1958,38 @@
     rememberItem(zoneId, item);
   }
 
+  function countNewUploads(zoneId, files, preserveName) {
+    const zone = state.zones.find(item => item.id === zoneId);
+    const knownNames = new Set(zone ? zone.images.map(item => item.filename) : []);
+    let additions = 0;
+    for (const file of files) {
+      const name = preserveName && file.name ? file.name : null;
+      if (name && knownNames.has(name)) continue;
+      additions += 1;
+      if (name) knownNames.add(name);
+    }
+    return additions;
+  }
+
+  function confirmRetention(zoneId, incomingCount) {
+    const zone = state.zones.find(item => item.id === zoneId);
+    if (!zone || incomingCount <= 0) return true;
+    const excess = zone.images.length + incomingCount - zone.retain;
+    if (excess <= 0) return true;
+    const itemLabel = excess === 1 ? "item" : "items";
+    const uploadLabel = incomingCount === 1 ? "this upload" : `${incomingCount} uploads`;
+    return window.confirm(
+      `${zone.label} retains at most ${zone.retain} items. `
+      + `${uploadLabel} will remove ${excess} oldest managed ${itemLabel}. Continue?`,
+    );
+  }
+
+  function retentionWarningMessage(deletedCount) {
+    if (!deletedCount) return "";
+    const itemLabel = deletedCount === 1 ? "item was" : "items were";
+    return `Zone is full; ${deletedCount} oldest managed ${itemLabel} removed`;
+  }
+
   async function upload(
     zoneId,
     file,
@@ -1966,6 +1998,7 @@
       allowReplace = false,
       autoCopy = true,
       notify = true,
+      warnCapacity = true,
     } = {},
   ) {
     if (!file) return;
@@ -1978,6 +2011,10 @@
         allowReplace = await askReplacement(file.name, zoneId);
         if (!allowReplace) return null;
       }
+      if (
+        warnCapacity
+        && !confirmRetention(zoneId, countNewUploads(zoneId, [file], preserveName))
+      ) return null;
       const fd = new FormData();
       // The server preserves names only for dropped files.
       fd.append("image", file, file.name || "clipboard");
@@ -1992,15 +2029,26 @@
       state.selectedItemsByZone[zoneId] = new Set([item.id]);
       state.selectionAnchorByZone[zoneId] = item.id;
       refreshUploadedZone(zoneId);
+      const retentionWarning = retentionWarningMessage(
+        Array.isArray(item.retention_deleted) ? item.retention_deleted.length : 0,
+      );
       if (notify) {
-        toast(`${item.kind === "image" ? "Image" : "Content"} uploaded (${shortRef(item.reference)})`);
+        const uploaded = `${item.kind === "image" ? "Image" : "Content"} uploaded (${shortRef(item.reference)})`;
+        toast(retentionWarning ? `${retentionWarning}; ${uploaded}` : uploaded,
+          retentionWarning ? "warning" : "info");
       }
       if (autoCopy) {
         // Best-effort automatic copy: report failures explicitly; the Copy link
         // button remains available.
         writeClipboard(item.reference).then(ok => {
-          if (ok) toast("Link copied");
-          else toast("Link NOT copied — use the Copy link button", "error");
+          if (ok) toast(retentionWarning ? `${retentionWarning}; Link copied` : "Link copied",
+            retentionWarning ? "warning" : "info");
+          else toast(
+            retentionWarning
+              ? `${retentionWarning}; Link NOT copied — use the Copy link button`
+              : "Link NOT copied — use the Copy link button",
+            "error",
+          );
         });
       }
       return item;
@@ -2045,6 +2093,7 @@
       await upload(zoneId, batch[0], { preserveName: true });
       return;
     }
+    if (!confirmRetention(zoneId, countNewUploads(zoneId, batch, true))) return;
     state.batchBusyZoneIds.add(zoneId);
     renderAll();
     refreshGeneration += 1;
@@ -2059,6 +2108,7 @@
           preserveName: true,
           autoCopy: false,
           notify: false,
+          warnCapacity: false,
         });
         if (item) successful.push(item);
         else failed += 1;
@@ -2071,10 +2121,25 @@
         state.selectionAnchorByZone[zoneId] = successful[successful.length - 1].id;
       }
       await refresh();
+      const retentionDeleted = successful.reduce(
+        (count, item) => count + (
+          Array.isArray(item.retention_deleted) ? item.retention_deleted.length : 0
+        ),
+        0,
+      );
+      const retentionWarning = retentionWarningMessage(retentionDeleted);
       if (successful.length && failed) {
-        toast(`${successful.length} files uploaded, ${failed} failed`, "error");
+        toast(
+          `${successful.length} files uploaded, ${failed} failed`
+            + (retentionWarning ? `; ${retentionWarning}` : ""),
+          "error",
+        );
       } else if (successful.length) {
-        toast(`${successful.length} files uploaded`);
+        toast(
+          `${successful.length} files uploaded`
+            + (retentionWarning ? `; ${retentionWarning}` : ""),
+          retentionWarning ? "warning" : "info",
+        );
       } else {
         toast("No files were uploaded", "error");
       }

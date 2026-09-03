@@ -1319,11 +1319,19 @@ class TestRetentionAPI(Base):
 
     def test_depassement_retain_default3(self):
         saved = []
+        deleted_by_upload = []
         for i in range(5):
             body, ctype = build_multipart(data=make_png(i + 2, 2))
             _, _, resp = self.req("POST", "/api/zones/default/images", body=body,
                                   headers={"Content-Type": ctype})
-            saved.append(json_of(resp))
+            item = json_of(resp)
+            saved.append(item)
+            deleted_by_upload.append(item.get("retention_deleted", []))
+        self.assertEqual(deleted_by_upload[:3], [[], [], []])
+        self.assertEqual(deleted_by_upload[-2:], [
+            [saved[0]["filename"]],
+            [saved[1]["filename"]],
+        ])
         status, _, resp = self.req("GET", "/api/zones/default/images")
         images = json_of(resp)["images"]
         self.assertEqual(len(images), 3)

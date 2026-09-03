@@ -246,7 +246,7 @@ class PasteService:
         target_filename: str | None,
         allow_replace: bool,
         adopt_existing: bool,
-    ) -> StoredImage:
+    ) -> tuple[StoredImage, list[str]]:
         try:
             device = destination.device_id
         except (DestinationError, OSError) as exc:
@@ -264,7 +264,7 @@ class PasteService:
                     allow_replace=allow_replace,
                     adopt_existing=adopt_existing,
                 )
-                destination.apply_retention(zone.retain, stored.filename)
+                retention_deleted = destination.apply_retention(zone.retain, stored.filename)
         except StorageLowError as exc:
             raise ServiceError("storage_low", str(exc)) from exc
         except RetentionError as exc:
@@ -282,7 +282,7 @@ class PasteService:
             stored.kind,
             stored.size,
         )
-        return stored
+        return stored, retention_deleted
 
     # ---------------------------------------------------------------- zones
 
@@ -371,7 +371,7 @@ class PasteService:
         with self.zone_operation(
             zid, kind="upload", exclusive=True, blocking=blocking
         ) as (zone, destination):
-            stored = self._store_prepared_upload(
+            stored, retention_deleted = self._store_prepared_upload(
                 zid,
                 zone,
                 destination,
@@ -381,7 +381,10 @@ class PasteService:
                 allow_replace,
                 adopt_existing,
             )
-        return self.item_payload(zid, stored)
+        payload = self.item_payload(zid, stored)
+        if retention_deleted:
+            payload["retention_deleted"] = retention_deleted
+        return payload
 
     # ------------------------------------------------------------ historique
 
