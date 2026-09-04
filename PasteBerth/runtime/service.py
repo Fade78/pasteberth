@@ -11,6 +11,11 @@ import threading
 from contextlib import contextmanager
 from urllib.parse import quote
 
+from .autozone import (
+    AutoZoneCandidate,
+    discover_autozones,
+    merge_autozone_groups,
+)
 from .config import Config, ZoneConfig, public_path, resolve_group_zone_ids
 from .content import classify
 from .images import (
@@ -22,10 +27,12 @@ from .platformfs import platform_fs
 from .storage import (
     DestinationError,
     DestinationBusyError,
+    DirectoryDestination,
     LocalDestination,
     ReplacementRequiredError,
     RetentionError,
     StorageConflictError,
+    StorageLimitError,
     StorageLowError,
     StoredImage,
     UnknownImageError,
@@ -75,6 +82,7 @@ class ServiceError(Exception):
         "unsupported_media_type": 415,
         "too_large": 413,
         "storage_low": 507,
+        "storage_limit": 507,
         "retention_error": 503,
         "storage_conflict": 409,
         "replacement_required": 428,
@@ -94,36 +102,153 @@ class ServiceError(Exception):
 class PasteService:
     def __init__(self, cfg: Config):
         self.cfg = cfg
+        self._registry_lock = threading.RLock()
+        self._autozone_refresh_lock = threading.Lock()
         self._zone_cfg: dict[str, ZoneConfig] = {}
         self._destinations: dict[str, LocalDestination] = {}
         self._locks: dict[str, threading.RLock] = {}
         self._space_locks: dict[int, _DeviceSpaceLock] = {}
-        for zid, zone in cfg.zones.items():
-            self._zone_cfg[zid] = zone
-            self._destinations[zid] = LocalDestination(
-                zone.directory,
-                create_directory=zone.create_directory,
-                limits=cfg.limits,
-                max_image_pixels=cfg.max_image_pixels,
-            )
-            self._locks[zid] = threading.RLock()
-            device = self._destinations[zid].device_id
-            self._space_locks.setdefault(device, _DeviceSpaceLock(device))
-
-        # Configuration is immutable for the process lifetime. Keeping
-        # precomputed memberships avoids rescanning patterns on every request
-        # and keeps /api/groups independent from files.
-        self._group_zone_ids = resolve_group_zone_ids(cfg.groups, self._zone_cfg)
-        zone_groups: dict[str, list[str]] = {zid: [] for zid in self._zone_cfg}
-        for group in cfg.groups:
-            zone_ids = self._group_zone_ids[group.name]
-            for zid in zone_ids:
-                zone_groups[zid].append(group.name)
-        self._zone_groups = {
-            zid: tuple(groups) for zid, groups in zone_groups.items()
-        }
         self._operation_state: dict[str, str] = {}
         self._operation_state_lock = threading.Lock()
+        self._autozone_diagnostics: tuple[str, ...] = ()
+        self._install_registry(cfg.zones, (), initial=True)
+        self._refresh_autozones()
+
+    def _new_destination(self, zone: ZoneConfig) -> LocalDestination:
+        common = {
+            "limits": self.cfg.limits,
+            "max_image_pixels": self.cfg.max_image_pixels,
+        }
+        if zone.storage_mode == "directory":
+            if zone.max_items is None:
+                raise DestinationError(
+                    f"directory zone {zone.id!r} has no max_items limit"
+                )
+            return DirectoryDestination(
+                zone.directory,
+                max_items=zone.max_items,
+                **common,
+            )
+        return LocalDestination(
+            zone.directory,
+            create_directory=zone.create_directory,
+            **common,
+        )
+
+    @staticmethod
+    def _destination_matches(destination: LocalDestination, zone: ZoneConfig) -> bool:
+        if getattr(destination, "directory", None) != zone.directory.resolve():
+            return False
+        if zone.storage_mode == "directory":
+            return (
+                isinstance(destination, DirectoryDestination)
+                and destination.max_items == zone.max_items
+            )
+        return isinstance(destination, LocalDestination) and not isinstance(
+            destination, DirectoryDestination
+        )
+
+    def _effective_groups(
+        self,
+        zones: dict[str, ZoneConfig],
+        candidates: tuple[AutoZoneCandidate, ...],
+    ):
+        return merge_autozone_groups(
+            self.cfg.groups,
+            self.cfg.autozones,
+            zones,
+            candidates,
+        )
+
+    def _install_registry(
+        self,
+        static_zones: dict[str, ZoneConfig],
+        candidates: tuple[AutoZoneCandidate, ...],
+        *,
+        initial: bool = False,
+    ) -> None:
+        zones = dict(static_zones)
+        for candidate in candidates:
+            if candidate.zone.id not in zones:
+                zones[candidate.zone.id] = candidate.zone
+
+        with self._registry_lock:
+            old_destinations = self._destinations
+            old_locks = self._locks
+        destinations: dict[str, LocalDestination] = {}
+        for zid, zone in zones.items():
+            old = old_destinations.get(zid)
+            if old is not None and self._destination_matches(old, zone):
+                try:
+                    old._ensure_dir()  # type: ignore[attr-defined]
+                except DestinationError:
+                    if zid in static_zones or initial:
+                        raise
+                else:
+                    destinations[zid] = old
+                    continue
+            try:
+                destinations[zid] = self._new_destination(zone)
+            except (DestinationError, OSError):
+                if zid in static_zones or initial:
+                    raise
+                log.warning("autozone destination unavailable: %s", zone.directory)
+                continue
+
+        active_zones = {
+            zid: zone for zid, zone in zones.items() if zid in destinations
+        }
+        for zid, destination in tuple(destinations.items()):
+            try:
+                device = destination.device_id
+            except (DestinationError, OSError):
+                if zid in static_zones or initial:
+                    raise
+                log.warning("autozone filesystem unavailable: %s", active_zones[zid].directory)
+                destinations.pop(zid, None)
+                active_zones.pop(zid, None)
+                continue
+            self._space_locks.setdefault(device, _DeviceSpaceLock(device))
+        active_candidates = tuple(
+            candidate for candidate in candidates if candidate.zone.id in active_zones
+        )
+        effective_groups, group_diagnostics = self._effective_groups(
+            active_zones, active_candidates
+        )
+        group_zone_ids = resolve_group_zone_ids(effective_groups, active_zones)
+        zone_groups: dict[str, list[str]] = {zid: [] for zid in active_zones}
+        for group in effective_groups:
+            for zid in group_zone_ids[group.name]:
+                zone_groups[zid].append(group.name)
+
+        locks = {zid: old_locks.get(zid, threading.RLock()) for zid in active_zones}
+        with self._registry_lock:
+            self._zone_cfg = active_zones
+            self._destinations = destinations
+            self._locks = locks
+            self._effective_group_configs = effective_groups
+            self._group_zone_ids = group_zone_ids
+            self._zone_groups = {
+                zid: tuple(groups) for zid, groups in zone_groups.items()
+            }
+        if group_diagnostics:
+            log.warning("%s", "; ".join(group_diagnostics))
+
+    def _refresh_autozones(self) -> None:
+        if not self.cfg.autozones:
+            return
+        with self._autozone_refresh_lock:
+            candidates, diagnostics = discover_autozones(
+                self.cfg.autozones,
+                self.cfg.zones,
+            )
+            candidate_tuple = tuple(candidates)
+            self._install_registry(self.cfg.zones, candidate_tuple)
+            diagnostic_tuple = tuple(diagnostics)
+            if diagnostic_tuple != self._autozone_diagnostics:
+                for message in diagnostic_tuple:
+                    log.warning("%s", message)
+                self._autozone_diagnostics = diagnostic_tuple
 
     def _valid_filename(self, name: object) -> bool:
         return valid_filename(
@@ -133,17 +258,18 @@ class PasteService:
         )
 
     @contextmanager
-    def zone_operation(
+    def _zone_operation_snapshot(
         self,
         zid: str,
+        zone: ZoneConfig,
+        destination: LocalDestination,
+        zone_lock: threading.RLock,
         *,
         kind: str,
         exclusive: bool,
-        blocking: bool = True,
+        blocking: bool,
     ):
-        """Coordinate a zone operation in this process and on disk."""
-        if zid not in self._zone_cfg:
-            raise ServiceError("unknown_zone", f"unknown zone: {zid}")
+        """Run an operation against an already captured registry snapshot."""
         with self._operation_state_lock:
             active = self._operation_state.get(zid)
         if active in {"delete_batch", "archive"}:
@@ -152,18 +278,22 @@ class PasteService:
                 f"zone {zid!r} is busy with a {active} operation",
             )
 
-        zone_lock = self._locks[zid]
         acquired = zone_lock.acquire(blocking=blocking)
         if not acquired:
             raise ServiceError("zone_busy", f"zone {zid!r} is busy")
         try:
-            destination = self._destinations[zid]
             try:
-                with destination.operation_lock(exclusive=exclusive, blocking=blocking):
+                # Directory publication may promote files from ``incoming`` while listing.
+                # Serialize those reads with writers so publication remains a single operation.
+                directory_exclusive = isinstance(destination, DirectoryDestination)
+                with destination.operation_lock(
+                    exclusive=exclusive or directory_exclusive,
+                    blocking=blocking,
+                ):
                     with self._operation_state_lock:
                         self._operation_state[zid] = kind
                     try:
-                        yield self._zone_cfg[zid], destination
+                        yield zone, destination
                     finally:
                         with self._operation_state_lock:
                             if self._operation_state.get(zid) == kind:
@@ -172,6 +302,36 @@ class PasteService:
                 raise ServiceError("zone_busy", str(exc)) from exc
         finally:
             zone_lock.release()
+
+    @contextmanager
+    def zone_operation(
+        self,
+        zid: str,
+        *,
+        kind: str,
+        exclusive: bool,
+        blocking: bool = True,
+        refresh: bool = True,
+    ):
+        """Coordinate a zone operation in this process and on disk."""
+        if refresh:
+            self._refresh_autozones()
+        with self._registry_lock:
+            zone = self._zone_cfg.get(zid)
+            destination = self._destinations.get(zid)
+            zone_lock = self._locks.get(zid)
+        if zone is None or destination is None or zone_lock is None:
+            raise ServiceError("unknown_zone", f"unknown zone: {zid}")
+        with self._zone_operation_snapshot(
+            zid,
+            zone,
+            destination,
+            zone_lock,
+            kind=kind,
+            exclusive=exclusive,
+            blocking=blocking,
+        ) as snapshot:
+            yield snapshot
 
     def _prepare_upload(
         self,
@@ -267,6 +427,8 @@ class PasteService:
                 retention_deleted = destination.apply_retention(zone.retain, stored.filename)
         except StorageLowError as exc:
             raise ServiceError("storage_low", str(exc)) from exc
+        except StorageLimitError as exc:
+            raise ServiceError("storage_limit", str(exc)) from exc
         except RetentionError as exc:
             raise ServiceError("retention_error", str(exc)) from exc
         except ReplacementRequiredError as exc:
@@ -291,19 +453,70 @@ class PasteService:
         return self.cfg.auth.enabled
 
     def has_zone(self, zid: str) -> bool:
-        return zid in self._zone_cfg
+        self._refresh_autozones()
+        with self._registry_lock:
+            return zid in self._zone_cfg
+
+    def _group_overview_from_registry(self) -> list[dict]:
+        with self._registry_lock:
+            groups = tuple(self._group_zone_ids.items())
+            configured = {
+                group.name: group
+                for group in self._effective_group_configs
+            }
+        return [
+            {
+                "name": name,
+                "selection": configured[name].selection,
+                "pattern": list(configured[name].pattern),
+                "layout": configured[name].layout,
+                "zone_ids": list(zone_ids),
+                "hide_empty": configured[name].hide_empty,
+                "show_count": configured[name].show_count,
+                "zone_count": len(zone_ids),
+            }
+            for name, zone_ids in groups
+        ]
 
     def overview(self, *, blocking: bool = True) -> dict:
+        self._refresh_autozones()
+        with self._registry_lock:
+            snapshot = tuple(
+                (
+                    zid,
+                    zone,
+                    self._destinations[zid],
+                    self._locks[zid],
+                    self._zone_groups.get(zid, ()),
+                )
+                for zid, zone in self._zone_cfg.items()
+            )
         zones = []
-        for zid, zone in self._zone_cfg.items():
+        for zid, zone, destination, zone_lock, groups in snapshot:
             busy = False
             try:
-                items = self.history(zid, blocking=blocking)
+                items = self.history(
+                    zid,
+                    blocking=blocking,
+                    _refresh=False,
+                    _snapshot=(zone, destination, zone_lock),
+                )
             except ServiceError as exc:
                 if exc.code != "zone_busy":
                     raise
                 busy = True
                 items = []
+            except (DestinationError, OSError) as exc:
+                raise ServiceError("destination_error", str(exc)) from exc
+            blocked = False
+            block_reason = None
+            if not busy and isinstance(destination, DirectoryDestination):
+                try:
+                    blocked, block_reason = destination.capacity_status(
+                        len(items), zone.min_free_percent
+                    )
+                except (DestinationError, OSError) as exc:
+                    block_reason = f"capacity unavailable: {exc}"
             zones.append(
                 {
                     "id": zid,
@@ -311,8 +524,12 @@ class PasteService:
                     "color": zone.color,
                     "retain": zone.retain,
                     "count": None if busy else len(items),
-                    "groups": list(self._zone_groups[zid]),
+                    "groups": list(groups),
                     "busy": busy,
+                    "storage_mode": zone.storage_mode,
+                    "max_items": zone.max_items,
+                    "blocked": blocked,
+                    "block_reason": block_reason,
                     "reference_prefix": zone.reference_prefix,
                     "reference_suffix": zone.reference_suffix,
                     "reference_list_prefix": zone.reference_list_prefix,
@@ -327,27 +544,13 @@ class PasteService:
             "max_image_pixels": self.cfg.max_image_pixels,
             "show_full_path": self.cfg.show_full_path,
             "zones": zones,
-            "groups": self.group_overview(),
+            "groups": self._group_overview_from_registry(),
         }
 
     def group_overview(self) -> list[dict]:
         """Return groups without reading storage destinations."""
-        groups = []
-        for group in self.cfg.groups:
-            zone_ids = self._group_zone_ids[group.name]
-            groups.append(
-                {
-                    "name": group.name,
-                    "selection": group.selection,
-                    "pattern": list(group.pattern),
-                    "layout": group.layout,
-                    "zone_ids": list(zone_ids),
-                    "hide_empty": group.hide_empty,
-                    "show_count": group.show_count,
-                    "zone_count": len(zone_ids),
-                }
-            )
-        return groups
+        self._refresh_autozones()
+        return self._group_overview_from_registry()
 
     # --------------------------------------------------------------- upload
 
@@ -363,7 +566,7 @@ class PasteService:
         adopt_existing: bool = False,
         blocking: bool = True,
     ) -> dict:
-        if zid not in self._zone_cfg:
+        if not self.has_zone(zid):
             raise ServiceError("unknown_zone", f"unknown zone: {zid}")
         info, target_filename = self._prepare_upload(
             data, declared_mime, filename_hint, preserve_filename
@@ -381,24 +584,51 @@ class PasteService:
                 allow_replace,
                 adopt_existing,
             )
-        payload = self.item_payload(zid, stored)
+        payload = self.item_payload(zid, stored, zone=zone, destination=destination)
         if retention_deleted:
             payload["retention_deleted"] = retention_deleted
         return payload
 
     # ------------------------------------------------------------ historique
 
-    def history(self, zid: str, *, blocking: bool = True) -> list[dict]:
+    def history(
+        self,
+        zid: str,
+        *,
+        blocking: bool = True,
+        _refresh: bool = True,
+        _snapshot: tuple[ZoneConfig, LocalDestination, threading.RLock] | None = None,
+    ) -> list[dict]:
         try:
-            with self.zone_operation(
-                zid, kind="history", exclusive=False, blocking=blocking
-            ) as (_zone, destination):
+            if _snapshot is None:
+                operation = self.zone_operation(
+                    zid,
+                    kind="history",
+                    exclusive=False,
+                    blocking=blocking,
+                    refresh=_refresh,
+                )
+            else:
+                zone, destination, zone_lock = _snapshot
+                operation = self._zone_operation_snapshot(
+                    zid,
+                    zone,
+                    destination,
+                    zone_lock,
+                    kind="history",
+                    exclusive=False,
+                    blocking=blocking,
+                )
+            with operation as (zone, destination):
                 items = destination.list()
         except ServiceError:
             raise
         except (DestinationError, OSError) as exc:
             raise ServiceError("destination_error", str(exc)) from exc
-        return [self.item_payload(zid, item) for item in items]
+        return [
+            self.item_payload(zid, item, zone=zone, destination=destination)
+            for item in items
+        ]
 
     # --------------------------------------------------------------- preview
 
@@ -411,7 +641,7 @@ class PasteService:
         blocking: bool = True,
     ) -> None:
         """Delete a known image (file + sidecar) from a zone."""
-        if zid not in self._zone_cfg:
+        if not self.has_zone(zid):
             raise ServiceError("unknown_zone", f"unknown zone: {zid}")
         if not self._valid_filename(filename):
             raise ServiceError("unknown_image", "invalid filename")
@@ -439,7 +669,7 @@ class PasteService:
         blocking: bool = True,
     ) -> dict:
         """Delete a batch under an exclusive zone lock."""
-        if zid not in self._zone_cfg:
+        if not self.has_zone(zid):
             raise ServiceError("unknown_zone", f"unknown zone: {zid}")
         if not filenames:
             raise ServiceError("invalid_request", "no files to delete")
@@ -486,14 +716,14 @@ class PasteService:
 
     def rename(self, zid: str, source: str, target: str, *, blocking: bool = True) -> dict:
         """Rename a managed pair (file + sidecar) in a zone."""
-        if zid not in self._zone_cfg:
+        if not self.has_zone(zid):
             raise ServiceError("unknown_zone", f"unknown zone: {zid}")
         if not self._valid_filename(source) or not self._valid_filename(target) or source == target:
             raise ServiceError("invalid_filename", "invalid source or target filename")
         try:
             with self.zone_operation(
                 zid, kind="rename", exclusive=True, blocking=blocking
-            ) as (_zone, destination):
+            ) as (zone, destination):
                 stored = destination.rename(source, target)
         except UnknownImageError as exc:
             raise ServiceError("unknown_image", str(exc)) from exc
@@ -502,11 +732,11 @@ class PasteService:
         except (DestinationError, OSError) as exc:
             raise ServiceError("destination_error", str(exc)) from exc
         log.info("rename zone=%s source=%s target=%s", zid, source, target)
-        return self.item_payload(zid, stored)
+        return self.item_payload(zid, stored, zone=zone, destination=destination)
 
     def update_comment(self, zid: str, filename: str, comment: object) -> dict:
         """Update a managed item's short comment without changing its data."""
-        if zid not in self._zone_cfg:
+        if not self.has_zone(zid):
             raise ServiceError("unknown_zone", f"unknown zone: {zid}")
         if not self._valid_filename(filename):
             raise ServiceError("unknown_image", "invalid filename")
@@ -521,7 +751,7 @@ class PasteService:
         try:
             with self.zone_operation(
                 zid, kind="comment", exclusive=True, blocking=True
-            ) as (_zone, destination):
+            ) as (zone, destination):
                 stored = destination.update_comment(filename, comment)
         except UnknownImageError as exc:
             raise ServiceError("unknown_image", str(exc)) from exc
@@ -530,13 +760,13 @@ class PasteService:
         except (DestinationError, OSError) as exc:
             raise ServiceError("destination_error", str(exc)) from exc
         log.info("comment updated zone=%s filename=%s", zid, filename)
-        return self.item_payload(zid, stored)
+        return self.item_payload(zid, stored, zone=zone, destination=destination)
 
     def preview(
         self, zid: str, filename: str, *, blocking: bool = True
     ) -> tuple[bytes, str]:
         """Return binary content and MIME for known files only."""
-        if zid not in self._zone_cfg:
+        if not self.has_zone(zid):
             raise ServiceError("unknown_zone", f"unknown zone: {zid}")
         if not self._valid_filename(filename):
             raise ServiceError("unknown_image", "invalid filename")
@@ -574,7 +804,7 @@ class PasteService:
         blocking: bool = True,
     ):
         """Expose archive files while holding a zone lock."""
-        if zid not in self._zone_cfg:
+        if not self.has_zone(zid):
             raise ServiceError("unknown_zone", f"unknown zone: {zid}")
         if not filenames:
             raise ServiceError("invalid_request", "no files to archive")
@@ -615,13 +845,30 @@ class PasteService:
 
     # ---------------------------------------------------------------- divers
 
-    def item_payload(self, zid: str, item: StoredImage) -> dict:
-        zone = self._zone_cfg[zid]
-        reference_path = self._destinations[zid].reference_path(item.filename)
+    def item_payload(
+        self,
+        zid: str,
+        item: StoredImage,
+        *,
+        zone: ZoneConfig | None = None,
+        destination: LocalDestination | None = None,
+    ) -> dict:
+        if zone is None or destination is None:
+            with self._registry_lock:
+                zone = self._zone_cfg.get(zid)
+                destination = self._destinations.get(zid)
+            if zone is None or destination is None:
+                raise ServiceError("unknown_zone", f"unknown zone: {zid}")
+        reference_path = destination.reference_path(item.filename)
         return {
             "id": item.filename,
             "filename": item.filename,
             "created_at": item.created_at.isoformat(timespec="microseconds"),
+            "changed_at": (
+                item.changed_at.isoformat(timespec="microseconds")
+                if item.changed_at is not None
+                else None
+            ),
             "width": item.width,
             "height": item.height,
             "size": item.size,

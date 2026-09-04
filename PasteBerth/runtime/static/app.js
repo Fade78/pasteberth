@@ -18,7 +18,7 @@
   }
 
   const state = {
-    zones: [],            // [{id,label,color,retain,count,images:[...]}]
+    zones: [],            // [{id,label,color,storage_mode,retain,max_items,count,images:[...]}]
     activeId: null,
     authEnabled: true,
     showFullPath: true,
@@ -186,7 +186,8 @@
         unsupported_media_type: "This media type is not supported",
         too_large: "The upload is too large",
         payload_too_large: "The upload is too large",
-        storage_low: "Not enough disk space",
+         storage_low: "Not enough disk space",
+         storage_limit: "This directory zone is full",
         retention_error: "Image retention failed",
         storage_conflict: "Name taken by an unmanaged file",
         replacement_required: "This name already exists; confirm replacement",
@@ -631,6 +632,7 @@
       item.format,
       item.width,
       item.height,
+      item.changed_at,
     ]);
   }
 
@@ -925,6 +927,7 @@
     if (zone.id === state.activeId) el.classList.add("active");
     if (state.batchBusyZoneIds.has(zone.id)) el.classList.add("busy");
     if (zone.busy) el.classList.add("server-busy");
+    if (zone.blocked) el.classList.add("blocked");
     applyZoneColors(el, zone.color);
 
     const head = document.createElement("header");
@@ -948,20 +951,41 @@
       badge.classList.add("zone-new-badge");
       zoneLabel.appendChild(badge);
     }
-    select.querySelector(".zone-count").textContent = `${zone.images.length} / ${zone.retain}`;
+    const limit = zone.storage_mode === "directory" ? zone.max_items : zone.retain;
+    select.querySelector(".zone-count").textContent = limit == null
+      ? `${zone.images.length}`
+      : `${zone.images.length} / ${limit}`;
+    const warning = zone.blocked ? document.createElement("span") : null;
+    if (warning) {
+      warning.className = "zone-warning";
+      warning.textContent = "▲";
+      warning.setAttribute("role", "img");
+      warning.setAttribute("aria-label", zone.block_reason || "Writes are blocked for this zone");
+      warning.title = zone.block_reason || "Writes are blocked for this zone";
+    }
     const uploadButton = document.createElement("button");
     uploadButton.type = "button";
     uploadButton.className = "zone-upload-btn";
     uploadButton.textContent = "Add files";
     uploadButton.setAttribute("aria-label", `Add files to ${zone.label}`);
-    uploadButton.disabled = zone.busy || state.batchBusyZoneIds.has(zone.id);
+    uploadButton.disabled = zone.busy || zone.blocked || state.batchBusyZoneIds.has(zone.id);
+    if (zone.blocked) uploadButton.title = zone.block_reason || "Writes are blocked for this zone";
     uploadButton.addEventListener("click", event => {
       event.stopPropagation();
       setActive(zone.id);
       chooseFiles(zone.id);
     });
-    head.append(select, uploadButton);
+    if (warning) head.append(select, warning, uploadButton);
+    else head.append(select, uploadButton);
     el.appendChild(head);
+
+    if (zone.blocked) {
+      const blocked = document.createElement("div");
+      blocked.className = "zone-blocked";
+      blocked.setAttribute("role", "status");
+      blocked.textContent = zone.block_reason || "Writes are blocked; delete a file or free disk space to continue";
+      el.appendChild(blocked);
+    }
 
     if (zone.busy) {
       const busy = document.createElement("div");
@@ -1954,7 +1978,17 @@
     // A named drop can replace an existing stored name. Keep one history entry.
     zone.images = zone.images.filter(existing => existing.id !== item.id);
     zone.images.unshift(item);
-    if (zone.images.length > zone.retain) zone.images.length = zone.retain;
+    if (zone.storage_mode !== "directory" && zone.images.length > zone.retain) {
+      zone.images.length = zone.retain;
+    }
+    if (
+      zone.storage_mode === "directory"
+      && zone.max_items != null
+      && zone.images.length >= zone.max_items
+    ) {
+      zone.blocked = true;
+      zone.block_reason = `directory contains ${zone.images.length} regular files (maximum ${zone.max_items})`;
+    }
     rememberItem(zoneId, item);
   }
 
@@ -1974,6 +2008,7 @@
   function confirmRetention(zoneId, incomingCount) {
     const zone = state.zones.find(item => item.id === zoneId);
     if (!zone || incomingCount <= 0) return true;
+    if (zone.storage_mode === "directory") return true;
     const excess = zone.images.length + incomingCount - zone.retain;
     if (excess <= 0) return true;
     const itemLabel = excess === 1 ? "item" : "items";
@@ -2002,6 +2037,11 @@
     } = {},
   ) {
     if (!file) return;
+    const zone = state.zones.find(item => item.id === zoneId);
+    if (zone && zone.blocked) {
+      if (notify) toast(zone.block_reason || "Writes are blocked for this zone", "error");
+      return null;
+    }
     const zoneEl = grid.querySelector(`.zone[data-zone="${CSS.escape(zoneId)}"]`);
     if (zoneEl) zoneEl.classList.add("busy");
     refreshGeneration += 1;
@@ -2057,7 +2097,12 @@
         if (notify) toast("Content is too large for this server", "error");
       }
       else if (err.status === 507) {
-        if (notify) toast("Not enough disk space for this upload", "error");
+        if (notify) toast(
+          err.code === "storage_limit"
+            ? "This directory zone is full; delete a file before uploading"
+            : "Not enough disk space for this upload",
+          "error",
+        );
       }
       else if (
         err.code === "replacement_required"

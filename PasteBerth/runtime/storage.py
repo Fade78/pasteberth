@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import hashlib
 import logging
+import mimetypes
 import os  # Compatibility seam for tests that patch the process-wide os module.
 import re
 import secrets
@@ -19,11 +20,12 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any, cast
 
 from .config import LimitsConfig
+from .content import ContentInfo, classify
 from .images import (
     FORMATS,
-    ImageInfo,
     mime_for,
 )
 from .platformfs import (
@@ -31,7 +33,9 @@ from .platformfs import (
     DirectoryHandle,
     EntryChangedError,
     EntryExistsError,
+    FileIdentity,
     FileHandle,
+    PermissionSecurityError,
     UnsafeLinkError,
     UnsupportedFilesystemError,
     platform_fs,
@@ -278,6 +282,7 @@ class StoredImage:
     kind: str = "image"  # "image" | "text" | "binary"
     mime: str = "image/png"
     comment: str = ""
+    changed_at: datetime | None = None  # filesystem modification time when known
 
 
 @dataclass(frozen=True)
@@ -316,6 +321,17 @@ class StorageLowError(DestinationError):
         )
 
 
+class StorageLimitError(DestinationError):
+    """A directory destination has reached its non-destructive item limit."""
+
+    def __init__(self, count: int, maximum: int):
+        self.count = count
+        self.maximum = maximum
+        super().__init__(
+            f"directory contains {count} regular files (maximum {maximum})"
+        )
+
+
 class StorageConflictError(DestinationError):
     """The target exists without a coherent sidecar (foreign file)."""
 
@@ -339,7 +355,7 @@ class Destination(ABC):
     def save(
         self,
         data: bytes,
-        info: ImageInfo,
+        info: ContentInfo,
         filename: str | None = None,
         *,
         allow_replace: bool = False,
@@ -2877,7 +2893,7 @@ class LocalDestination(Destination):
     @staticmethod
     def _stored_item_and_meta(
         data: bytes,
-        info: ImageInfo,
+        info: ContentInfo,
         filename: str,
     ) -> tuple[StoredImage, dict]:
         created_at = datetime.now(timezone.utc)
@@ -2907,7 +2923,7 @@ class LocalDestination(Destination):
         self,
         directory_fd: DirectoryHandle,
         data: bytes,
-        info: ImageInfo,
+        info: ContentInfo,
         filename: str,
     ) -> StoredImage:
         """Add a sidecar for an existing file without rewriting its data."""
@@ -2976,7 +2992,7 @@ class LocalDestination(Destination):
         self,
         directory_fd: DirectoryHandle,
         data: bytes,
-        info: ImageInfo,
+        info: ContentInfo,
         filename: str,
         *,
         allow_replace: bool = False,
@@ -3284,7 +3300,7 @@ class LocalDestination(Destination):
     def save(
         self,
         data: bytes,
-        info: ImageInfo,
+        info: ContentInfo,
         filename: str | None = None,
         *,
         allow_replace: bool = False,
@@ -3786,3 +3802,620 @@ class LocalDestination(Destination):
         if failures:
             raise RetentionError(failures)
         return deleted
+
+
+class DirectoryDestination(LocalDestination):
+    """A flat, sidecar-free destination for externally managed directories."""
+
+    _ANNOTATION_KEYS = {"version", "comment", "fingerprint"}
+    _FILETIME_EPOCH = 116444736000000000
+    _CLASSIFY_READ_BYTES = 4 * 1024 * 1024
+
+    def __init__(
+        self,
+        directory: Path,
+        *,
+        limits: LimitsConfig | None = None,
+        max_image_pixels: int | None = None,
+        max_items: int,
+    ):
+        if isinstance(max_items, bool) or not isinstance(max_items, int) or max_items < 1:
+            raise DestinationError("max_items must be a positive integer")
+        self.max_items = max_items
+        super().__init__(
+            directory,
+            create_directory=False,
+            limits=limits,
+            max_image_pixels=max_image_pixels,
+        )
+
+    def reconcile(self) -> None:
+        """Directory contents are authoritative; no sidecar recovery applies."""
+
+    def _valid_filename(self, name: object) -> bool:
+        return super()._valid_filename(name) and name not in {"incoming", ".pasteberth"}
+
+    @contextmanager
+    def _metadata_directory(self, *, create: bool = False):
+        path = self.directory / ".pasteberth" / "meta"
+        directory = self._fs.open_directory(path, create=create, mode=0o700)
+        try:
+            yield directory
+        finally:
+            directory.close()
+
+    def _metadata_name(self, filename: str) -> str:
+        return f"pbmeta_{filename}.json"
+
+    def _publish_incoming(self) -> None:
+        """Publish completed incoming files without replacing root entries."""
+        try:
+            with self._directory_fd() as directory_fd:
+                try:
+                    incoming = self._fs.open_directory(
+                        self.directory / "incoming"
+                    )
+                except (
+                    FileNotFoundError,
+                    NotADirectoryError,
+                    OSError,
+                    PermissionSecurityError,
+                    UnsafeLinkError,
+                    UnsupportedFilesystemError,
+                ):
+                    return
+                try:
+                    entries = self._fs.entries(incoming)
+                    for entry in entries:
+                        if (
+                            not entry.is_regular
+                            or entry.is_symlink
+                            or entry.name.startswith("pbinc_")
+                            or not self._valid_filename(entry.name)
+                        ):
+                            continue
+                        if self._fs.entry_info(directory_fd, entry.name) is not None:
+                            continue
+                        try:
+                            self._fs.move_noreplace(
+                                incoming,
+                                entry.name,
+                                directory_fd,
+                                entry.name,
+                                expected=entry.identity,
+                            )
+                        except (FileNotFoundError, EntryChangedError, EntryExistsError):
+                            continue
+                        except (OSError, UnsupportedFilesystemError) as exc:
+                            log.warning(
+                                "incoming item not published, ignored for now: %s (%s)",
+                                entry.name,
+                                exc,
+                            )
+                            continue
+                        self._fs.flush_directory(incoming)
+                        self._fsync_directory(directory_fd)
+                finally:
+                    incoming.close()
+        except (
+            FileNotFoundError,
+            NotADirectoryError,
+            OSError,
+            PermissionSecurityError,
+            UnsafeLinkError,
+            UnsupportedFilesystemError,
+        ):
+            return
+
+    def _root_entries(self, directory_fd: DirectoryHandle):
+        try:
+            return tuple(sorted(self._fs.entries(directory_fd), key=lambda entry: entry.name))
+        except (OSError, UnsupportedFilesystemError) as exc:
+            raise DestinationError(f"cannot read {self.directory}: {exc}") from exc
+
+    def _regular_root_entries(self, directory_fd: DirectoryHandle):
+        return tuple(
+            entry
+            for entry in self._root_entries(directory_fd)
+            if entry.is_regular
+            and not entry.is_symlink
+            and entry.name not in {"incoming", ".pasteberth"}
+            and self._valid_filename(entry.name)
+        )
+
+    def _entry_datetime(self, value: int | None) -> datetime:
+        if value is None:
+            return datetime.now(timezone.utc)
+        # Windows exposes FILETIME ticks through the semantic backend.
+        if self._fs.backend_name == "windows":
+            value = (value - self._FILETIME_EPOCH) * 100
+        try:
+            return datetime.fromtimestamp(value / 1_000_000_000, timezone.utc)
+        except (OverflowError, OSError, ValueError):
+            return datetime.now(timezone.utc)
+
+    @staticmethod
+    def _fingerprint(entry) -> dict[str, int]:
+        return {
+            "volume": int(entry.identity.volume),
+            "file_id": int(entry.identity.file_id),
+            "size": int(entry.size),
+            "modified_ns": int(entry.modified_ns or 0),
+            "changed_ns": int(entry.changed_ns or 0),
+        }
+
+    def _classify_entry(
+        self,
+        directory_fd: DirectoryHandle,
+        entry,
+    ) -> ContentInfo | None:
+        limit = self.limits.max_image_raw_bytes
+        limit = self._CLASSIFY_READ_BYTES if limit is None else min(limit, self._CLASSIFY_READ_BYTES)
+        try:
+            with self._fs.open_existing(directory_fd, entry.name, mode="rb") as stream:
+                data = stream.read(limit + 1)
+            current = self._fs.entry_info(directory_fd, entry.name)
+        except (FileNotFoundError, UnsafeLinkError):
+            return None
+        except (OSError, UnsupportedFilesystemError) as exc:
+            log.warning("directory item unreadable, ignored: %s (%s)", entry.name, exc)
+            return None
+        if (
+            current is None
+            or current.identity != entry.identity
+            or current.size != entry.size
+            or current.modified_ns != entry.modified_ns
+            or current.changed_ns != entry.changed_ns
+        ):
+            log.warning("directory item changed while being inspected, ignored: %s", entry.name)
+            return None
+        declared = mimetypes.guess_type(entry.name)[0] or "application/octet-stream"
+        try:
+            return classify(
+                data,
+                declared,
+                entry.name,
+                max_pixels=self.max_image_pixels,
+                max_dimension=self.limits.max_image_dimension,
+                max_raw_bytes=self.limits.max_image_raw_bytes,
+                max_png_chunks=self.limits.max_png_chunks,
+                max_jpeg_segments=self.limits.max_jpeg_segments,
+                max_webp_chunks=self.limits.max_webp_chunks,
+            )
+        except Exception as exc:  # Classification must not hide an authoritative file.
+            log.warning("directory item classification failed, using binary: %s (%s)", entry.name, exc)
+            return ContentInfo(
+                kind="binary",
+                ext=".bin",
+                mime="application/octet-stream",
+            )
+
+    def _item_from_entry(
+        self,
+        entry,
+        info: ContentInfo,
+        comment: str = "",
+        *,
+        created_at: datetime | None = None,
+    ) -> StoredImage:
+        changed_at = self._entry_datetime(entry.modified_ns or entry.changed_ns)
+        return StoredImage(
+            filename=entry.name,
+            created_at=created_at or changed_at,
+            width=info.width,
+            height=info.height,
+            size=entry.size,
+            fmt=info.fmt,
+            kind=info.kind,
+            mime=info.mime,
+            comment=comment,
+            changed_at=changed_at,
+        )
+
+    def _read_annotation(
+        self,
+        metadata_directory: DirectoryHandle | None,
+        filename: str,
+        fingerprint: dict[str, int],
+    ) -> str:
+        if metadata_directory is None:
+            return ""
+        name = self._metadata_name(filename)
+        try:
+            info = self._fs.entry_info(metadata_directory, name)
+            if info is None or not info.is_regular or info.is_symlink:
+                return ""
+            with self._fs.open_existing(metadata_directory, name, mode="rb") as stream:
+                maximum = self.limits.max_metadata_bytes
+                encoded = stream.read(maximum + 1 if maximum is not None else -1)
+            current = self._fs.entry_info(metadata_directory, name)
+            if current is None or current.identity != info.identity:
+                return ""
+            if (
+                self.limits.max_metadata_bytes is not None
+                and len(encoded) > self.limits.max_metadata_bytes
+            ):
+                return ""
+            raw = json.loads(encoded.decode("utf-8"))
+            if (
+                not isinstance(raw, dict)
+                or set(raw) != self._ANNOTATION_KEYS
+                or raw.get("version") != 1
+                or raw.get("fingerprint") != fingerprint
+            ):
+                return ""
+            return validate_comment(
+                raw.get("comment"),
+                max_length=self.limits.max_comment_length,
+                max_bytes=self.limits.max_comment_bytes,
+            )
+        except (FileNotFoundError, OSError, UnsupportedFilesystemError, ValueError, TypeError, KeyError):
+            return ""
+
+    def _write_annotation(
+        self,
+        filename: str,
+        comment: str,
+        fingerprint: dict[str, int],
+    ) -> None:
+        comment = validate_comment(
+            comment,
+            max_length=self.limits.max_comment_length,
+            max_bytes=self.limits.max_comment_bytes,
+        )
+        payload = {
+            "version": 1,
+            "comment": comment,
+            "fingerprint": fingerprint,
+        }
+        target = self._metadata_name(filename)
+        with self._metadata_directory(create=True) as metadata_directory:
+            existing = self._fs.entry_info(metadata_directory, target)
+            if existing is not None and (not existing.is_regular or existing.is_symlink):
+                raise StorageConflictError(f"annotation target is not regular: {target!r}")
+            temporary = f".pbmeta-{secrets.token_hex(12)}.tmp"
+            handle = None
+            temporary_identity = None
+            published = False
+            try:
+                handle = self._fs.create_exclusive(
+                    metadata_directory,
+                    temporary,
+                    mode="w",
+                    permissions=0o600,
+                )
+                temporary_identity = handle.identity
+                with handle as stream:
+                    json.dump(
+                        payload,
+                        cast(Any, stream),
+                        ensure_ascii=False,
+                        separators=(",", ":"),
+                    )
+                    stream.sync()
+                if existing is None:
+                    self._fs.rename_noreplace(
+                        metadata_directory,
+                        temporary,
+                        target,
+                        expected=temporary_identity,
+                    )
+                else:
+                    self._fs.replace(
+                        metadata_directory,
+                        temporary,
+                        target,
+                        expected_source=temporary_identity,
+                        expected_target=existing.identity,
+                    )
+                published = True
+                self._fs.flush_directory(metadata_directory)
+            finally:
+                if not published and temporary_identity is not None:
+                    try:
+                        self._fs.remove_expected(
+                            metadata_directory,
+                            temporary,
+                            temporary_identity,
+                        )
+                    except (OSError, UnsupportedFilesystemError):
+                        pass
+
+    def _remove_annotation(self, filename: str) -> None:
+        try:
+            with self._metadata_directory() as metadata_directory:
+                name = self._metadata_name(filename)
+                info = self._fs.entry_info(metadata_directory, name)
+                if info is not None and info.is_regular and not info.is_symlink:
+                    self._fs.remove_expected(metadata_directory, name, info.identity)
+                    self._fs.flush_directory(metadata_directory)
+        except (FileNotFoundError, OSError, UnsupportedFilesystemError, DestinationError):
+            pass
+
+    def capacity_status(self, count: int, minimum_percent: float) -> tuple[bool, str | None]:
+        if count >= self.max_items:
+            return True, f"{count} regular files reach max_items={self.max_items}"
+        info = self.space_info()
+        required = _SPACE_MARGIN_BYTES
+        minimum_bytes = info.total_bytes * minimum_percent / 100.0
+        if info.available_bytes < required or info.available_bytes - required < minimum_bytes:
+            return (
+                True,
+                f"free space {info.available_percent:.2f}% is below "
+                f"min_free_percent={minimum_percent:.2f}%",
+            )
+        return False, None
+
+    def _ensure_capacity(self, directory_fd: DirectoryHandle, target_exists: bool) -> None:
+        count = len(self._regular_root_entries(directory_fd))
+        if count > self.max_items or (not target_exists and count >= self.max_items):
+            raise StorageLimitError(count, self.max_items)
+
+    def _save_directory_named(
+        self,
+        data: bytes,
+        info: ContentInfo,
+        filename: str,
+        *,
+        allow_replace: bool,
+        adopt_existing: bool,
+    ) -> StoredImage:
+        with self._directory_fd() as directory_fd:
+            target = self._fs.entry_info(directory_fd, filename)
+            if target is not None and (not target.is_regular or target.is_symlink):
+                raise StorageConflictError(f"target is not a regular file: {filename!r}")
+            if target is not None and not self._fs.is_owned(target):
+                raise StorageConflictError(f"target is not owned: {filename!r}")
+            if target is not None and adopt_existing:
+                try:
+                    with self._fs.open_existing(directory_fd, filename, mode="rb") as stream:
+                        existing_data = stream.read()
+                except (OSError, UnsupportedFilesystemError) as exc:
+                    raise StorageConflictError(f"cannot adopt existing file: {filename!r}") from exc
+                if existing_data != data:
+                    raise StorageConflictError(f"file changed during adoption: {filename!r}")
+                for item in self.list():
+                    if item.filename == filename:
+                        return item
+                raise StorageConflictError(f"cannot classify existing file: {filename!r}")
+            self._ensure_capacity(directory_fd, target is not None)
+            if target is not None and not allow_replace:
+                raise ReplacementRequiredError(
+                    f"explicit replacement required for {filename!r}"
+                )
+            temporary = self._write_data_temp(directory_fd, data)
+            temporary_identity = self._entry_identity(directory_fd, temporary)
+            if temporary_identity is None:
+                raise DestinationError(f"temporary file disappeared: {filename!r}")
+            temporary_identity = cast(FileIdentity, temporary_identity)
+            published = False
+            try:
+                if target is None:
+                    self._install_new(directory_fd, temporary, filename)
+                else:
+                    self._fs.replace(
+                        directory_fd,
+                        temporary,
+                        filename,
+                        expected_source=temporary_identity,
+                        expected_target=target.identity,
+                    )
+                published = True
+                self._fsync_directory(directory_fd)
+            except (
+                EntryChangedError,
+                EntryExistsError,
+                PermissionSecurityError,
+                UnsafeLinkError,
+            ) as exc:
+                raise StorageConflictError(f"file changed during save: {filename!r}") from exc
+            finally:
+                if not published:
+                    try:
+                        self._remove_expected(directory_fd, temporary, temporary_identity)
+                    except (DestinationError, OSError):
+                        pass
+            current = self._fs.entry_info(directory_fd, filename)
+            if current is None or not current.is_regular or current.is_symlink:
+                raise StorageConflictError(f"file disappeared after save: {filename!r}")
+            return self._item_from_entry(
+                current,
+                info,
+                created_at=datetime.now(timezone.utc),
+            )
+
+    def save(
+        self,
+        data: bytes,
+        info: ContentInfo,
+        filename: str | None = None,
+        *,
+        allow_replace: bool = False,
+        adopt_existing: bool = False,
+    ) -> StoredImage:
+        self._ensure_dir()
+        self._publish_incoming()
+        if filename is not None and not self._valid_filename(filename):
+            raise DestinationError(f"invalid filename: {filename!r}")
+        if filename is not None:
+            return self._save_directory_named(
+                data,
+                info,
+                filename,
+                allow_replace=allow_replace,
+                adopt_existing=adopt_existing,
+            )
+        last_exc: Exception | None = None
+        for _attempt in range(8):
+            generated = self._generate_name(info.ext)
+            try:
+                return self._save_directory_named(
+                    data,
+                    info,
+                    generated,
+                    allow_replace=False,
+                    adopt_existing=False,
+                )
+            except (StorageConflictError, ReplacementRequiredError) as exc:
+                last_exc = exc
+        raise DestinationError(f"repeated filename-generation collision ({last_exc})")
+
+    def list(self) -> list[StoredImage]:
+        self._ensure_dir()
+        self._publish_incoming()
+        items: list[StoredImage] = []
+        with self._directory_fd() as directory_fd:
+            entries = self._regular_root_entries(directory_fd)
+            metadata_directory = None
+            try:
+                metadata_directory = self._fs.open_directory(
+                    self.directory / ".pasteberth" / "meta"
+                )
+            except (FileNotFoundError, NotADirectoryError, OSError, UnsupportedFilesystemError):
+                pass
+            try:
+                for entry in entries:
+                    info = self._classify_entry(directory_fd, entry)
+                    if info is None:
+                        continue
+                    comment = self._read_annotation(
+                        metadata_directory,
+                        entry.name,
+                        self._fingerprint(entry),
+                    )
+                    items.append(self._item_from_entry(entry, info, comment))
+            finally:
+                if metadata_directory is not None:
+                    metadata_directory.close()
+        items.sort(
+            key=lambda item: (item.changed_at or item.created_at, item.filename),
+            reverse=True,
+        )
+        return items
+
+    def rename(self, source: str, target: str) -> StoredImage:
+        if not self._valid_filename(source) or not self._valid_filename(target):
+            raise DestinationError("invalid filename")
+        if source == target:
+            raise DestinationError("source and target names are identical")
+        self._publish_incoming()
+        with self._directory_fd() as directory_fd:
+            source_entry = self._fs.entry_info(directory_fd, source)
+            if source_entry is None or not source_entry.is_regular or source_entry.is_symlink:
+                raise UnknownImageError(f"unknown Pasteberth file: {source!r}")
+            target_entry = self._fs.entry_info(directory_fd, target)
+            if target_entry is not None:
+                raise StorageConflictError(f"target already exists: {target!r}")
+            info = self._classify_entry(directory_fd, source_entry)
+            if info is None:
+                raise UnknownImageError(f"unknown Pasteberth file: {source!r}")
+            item = self._item_from_entry(source_entry, info)
+            comment = ""
+            metadata_directory = None
+            try:
+                metadata_directory = self._fs.open_directory(
+                    self.directory / ".pasteberth" / "meta"
+                )
+                comment = self._read_annotation(
+                    metadata_directory,
+                    source,
+                    self._fingerprint(source_entry),
+                )
+            except (FileNotFoundError, NotADirectoryError, OSError, UnsupportedFilesystemError):
+                pass
+            finally:
+                if metadata_directory is not None:
+                    metadata_directory.close()
+            try:
+                self._fs.rename_noreplace(
+                    directory_fd,
+                    source,
+                    target,
+                    expected=source_entry.identity,
+                )
+                self._fsync_directory(directory_fd)
+            except EntryExistsError as exc:
+                raise StorageConflictError(f"target already exists: {target!r}") from exc
+            except EntryChangedError as exc:
+                raise StorageConflictError(f"source changed: {source!r}") from exc
+            new_entry = self._fs.entry_info(directory_fd, target)
+            if new_entry is None:
+                raise DestinationError(f"renamed file disappeared: {target!r}")
+            if comment:
+                try:
+                    self._write_annotation(target, comment, self._fingerprint(new_entry))
+                except (DestinationError, OSError) as exc:
+                    log.warning("cannot move annotation for %s: %s", target, exc)
+            self._remove_annotation(source)
+            return self._item_from_entry(
+                new_entry,
+                info,
+                comment,
+                created_at=item.created_at,
+            )
+
+    def update_comment(self, filename: str, comment: str) -> StoredImage:
+        if not self._valid_filename(filename):
+            raise DestinationError(f"invalid filename: {filename!r}")
+        self._publish_incoming()
+        with self._directory_fd() as directory_fd:
+            entry = self._fs.entry_info(directory_fd, filename)
+            if entry is None or not entry.is_regular or entry.is_symlink:
+                raise UnknownImageError(f"unknown Pasteberth file: {filename!r}")
+            info = self._classify_entry(directory_fd, entry)
+            if info is None:
+                raise UnknownImageError(f"unknown Pasteberth file: {filename!r}")
+            fingerprint = self._fingerprint(entry)
+            self._write_annotation(filename, comment, fingerprint)
+            return self._item_from_entry(entry, info, comment)
+
+    def delete(self, filename: str, *, allow_stale_sidecar: bool = False) -> None:
+        if not self._valid_filename(filename):
+            raise DestinationError(f"invalid filename: {filename!r}")
+        self._publish_incoming()
+        with self._directory_fd() as directory_fd:
+            entry = self._fs.entry_info(directory_fd, filename)
+            if entry is None or not entry.is_regular or entry.is_symlink:
+                raise UnknownImageError(f"unknown Pasteberth file: {filename!r}")
+            try:
+                removed = self._fs.remove_expected(directory_fd, filename, entry.identity)
+            except EntryChangedError as exc:
+                raise StorageConflictError(f"file changed during deletion: {filename!r}") from exc
+            if not removed:
+                raise StorageConflictError(f"file changed during deletion: {filename!r}")
+        self._remove_annotation(filename)
+
+    def read(self, filename: str) -> bytes:
+        if not self._valid_filename(filename):
+            raise UnknownImageError(f"unknown Pasteberth file: {filename!r}")
+        self._publish_incoming()
+        with self._directory_fd() as directory_fd:
+            entry = self._fs.entry_info(directory_fd, filename)
+            if entry is None or not entry.is_regular or entry.is_symlink:
+                raise UnknownImageError(f"unknown Pasteberth file: {filename!r}")
+            try:
+                with self._fs.open_existing(directory_fd, filename, mode="rb") as stream:
+                    return stream.read()
+            except FileNotFoundError as exc:
+                raise UnknownImageError(f"unknown Pasteberth file: {filename!r}") from exc
+
+    @contextmanager
+    def open_read(self, filename: str):
+        if not self._valid_filename(filename):
+            raise UnknownImageError(f"unknown Pasteberth file: {filename!r}")
+        self._publish_incoming()
+        with self._directory_fd() as directory_fd:
+            entry = self._fs.entry_info(directory_fd, filename)
+            if entry is None or not entry.is_regular or entry.is_symlink:
+                raise UnknownImageError(f"unknown Pasteberth file: {filename!r}")
+            try:
+                with self._fs.open_existing(directory_fd, filename, mode="rb") as stream:
+                    yield stream
+            except FileNotFoundError as exc:
+                raise UnknownImageError(f"unknown Pasteberth file: {filename!r}") from exc
+
+    def reference_path(self, filename: str) -> str:
+        return str(self.directory / filename)
+
+    def apply_retention(self, retain: int, protected_filename: str | None = None) -> list[str]:
+        return []

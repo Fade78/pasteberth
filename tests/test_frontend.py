@@ -269,6 +269,13 @@ class TestContratsFrontend(unittest.TestCase):
         self.assertIn('aria-label="Zone groups"', self.index_html)
         self.assertIn('aria-current", "page"', self.app_js)
 
+    def test_zone_directory_bloquee_sans_retention_automatique(self):
+        self.assertIn('zone.storage_mode === "directory"', self.app_js)
+        self.assertIn("zone.max_items", self.app_js)
+        self.assertIn("zone-warning", self.app_js)
+        self.assertIn("Writes are blocked", self.app_js)
+        self.assertIn('err.code === "storage_limit"', self.app_js)
+
 
 if __name__ == "__main__":
     unittest.main()

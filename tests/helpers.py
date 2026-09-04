@@ -253,6 +253,10 @@ def write_config(
         lines.append(f"type = {json.dumps(zone.get('type', 'local'))}")
         lines.append(f"directory = {json.dumps(str(zone['directory']))}")
         lines.append(f'retain = {zone.get("retain", 3)}')
+        if zone.get("storage_mode") is not None:
+            lines.append(f"storage_mode = {json.dumps(zone['storage_mode'])}")
+        if zone.get("max_items") is not None:
+            lines.append(f"max_items = {zone['max_items']}")
         lines.append(
             f"reference_prefix = {json.dumps(zone.get('reference_prefix', '@'))}"
         )

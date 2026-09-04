@@ -27,6 +27,7 @@ from pathlib import Path
 import socket
 
 from . import __version__
+from .autozone import discover_autozones, merge_autozone_groups
 from .auth import (
     LoginRateLimiter,
     SessionStore,
@@ -214,7 +215,11 @@ def _zone_for_directory(cfg, raw_directory: str):
     except (OSError, ValueError) as exc:
         raise ConfigError(f"invalid zone directory: {raw_directory!r} ({exc})") from exc
     normalized = Path(os.path.normpath(str(directory)))
-    for zone in cfg.zones.values():
+    zones = dict(cfg.zones)
+    candidates, _diagnostics = discover_autozones(cfg.autozones, cfg.zones)
+    for candidate in candidates:
+        zones.setdefault(candidate.zone.id, candidate.zone)
+    for zone in zones.values():
         if normalized == Path(os.path.normpath(str(zone.directory.resolve()))):
             return zone
     raise ConfigError(
@@ -418,6 +423,17 @@ allow_zip_download = true
 color = "#304237"
 create_directory = true
 min_free_percent = 2.0
+
+# Dynamic directory zones are optional. Discovery never creates directories.
+# [[autozone]]
+# base_directory = "/absolute/path/to/parent"
+# pattern = "^[^/]+/work/exchange$"
+# max_depth = 4
+# group = "Repositories"
+# label_mode = "git-or-relative"
+# storage_mode = "directory"
+# max_items = 1000
+# min_free_percent = 2.0
 
 # Optional group views. Omit the whole section to show all zones without tabs.
 # Patterns use Python regular expressions (re.search, case-sensitive).
@@ -756,10 +772,27 @@ def _network_warning(cfg) -> str | None:
     )
 
 
-def _audit_groups(cfg) -> list[str]:
+def _audit_groups(cfg, candidates=None, zones=None) -> list[str]:
     warnings: list[str] = []
-    all_groups = [group for group in cfg.groups if group.selection == "all"]
-    other_groups = [group for group in cfg.groups if group.selection == "other"]
+    if candidates is None:
+        candidates, diagnostics = discover_autozones(cfg.autozones, cfg.zones)
+    else:
+        diagnostics = ()
+    if zones is None:
+        zones = dict(cfg.zones)
+        for candidate in candidates:
+            zones.setdefault(candidate.zone.id, candidate.zone)
+    groups, group_diagnostics = merge_autozone_groups(
+        cfg.groups,
+        cfg.autozones,
+        zones,
+        candidates,
+    )
+    warnings.extend(diagnostics)
+    warnings.extend(group_diagnostics)
+
+    all_groups = [group for group in groups if group.selection == "all"]
+    other_groups = [group for group in groups if group.selection == "other"]
     if len(all_groups) > 1:
         warnings.append(
             "redundant selection='all' groups: "
@@ -775,17 +808,17 @@ def _audit_groups(cfg) -> list[str]:
             "selection='all' and selection='other' coexist; "
             "groups may overlap"
         )
-    for group in cfg.groups:
+    for group in groups:
         if group.selection in {"all", "other"} and group.pattern_defined:
             warnings.append(
                 f"group {group.name}: 'pattern' ignored with "
                 f"selection='{group.selection}'"
             )
 
-    memberships = resolve_group_zone_ids(cfg.groups, cfg.zones)
+    memberships = resolve_group_zone_ids(groups, zones)
     seen_pattern_memberships: dict[tuple[str, ...], str] = {}
     seen_effective_memberships: dict[tuple[str, ...], dict[str, str]] = {}
-    for group in cfg.groups:
+    for group in groups:
         zone_ids = memberships[group.name]
         if group.selection == "pattern":
             previous = seen_pattern_memberships.get(zone_ids)
@@ -887,10 +920,26 @@ def _cmd_audit(args: argparse.Namespace) -> int:
             "accept_bin, accept_img, and accept_doc are all false: "
             "the server will reject all content"
         )
-    warnings.extend(_audit_groups(cfg))
+    auto_candidates, auto_diagnostics = discover_autozones(cfg.autozones, cfg.zones)
+    warnings.extend(auto_diagnostics)
+    per_rule_counts = [0] * len(cfg.autozones)
+    for candidate in auto_candidates:
+        for rule_index in candidate.rule_indexes:
+            if 0 <= rule_index < len(per_rule_counts):
+                per_rule_counts[rule_index] += 1
+    for index, count in enumerate(per_rule_counts):
+        warnings.append(f"autozone #{index + 1}: {count} candidate(s) currently discovered")
+    auto_zones = dict(cfg.zones)
+    for candidate in auto_candidates:
+        auto_zones.setdefault(candidate.zone.id, candidate.zone)
+    warnings.extend(_audit_groups(cfg, auto_candidates, auto_zones))
 
     for zone in cfg.zones.values():
         zone_errors, zone_warnings = _audit_zone(cfg, zone)
+        errors.extend(zone_errors)
+        warnings.extend(zone_warnings)
+    for candidate in auto_candidates:
+        zone_errors, zone_warnings = _audit_zone(cfg, candidate.zone)
         errors.extend(zone_errors)
         warnings.extend(zone_warnings)
     try:
@@ -1016,7 +1065,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_drop = sub.add_parser(
         "drop",
-        help="drop or adopt files into a zone and create their sidecars",
+        help="drop or adopt files into a zone",
     )
     p_drop.add_argument("directory", help="exact directory of the configured zone")
     p_drop.add_argument("files", nargs="+", help="source files to copy")

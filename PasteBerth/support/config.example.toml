@@ -105,6 +105,8 @@ max_sessions = 4096               # use "unlimited" to disable FIFO eviction
 # color             : zone background (#RRGGBB); text contrast is calculated
 # create_directory  : create the directory if missing (default true)
 # min_free_percent  : minimum filesystem free space before upload (default 2 %)
+# storage_mode      : sidecar (default) or directory
+# max_items         : required for storage_mode = "directory"; blocks new files
 # Non-private modes produce an audit warning but do not prevent startup.
 # Mode 0700 is recommended.
 
@@ -123,6 +125,21 @@ reference_separator = ","
 allow_zip_download = true
 color = "#304237"
 min_free_percent = 2.0
+
+# ----------------------------------------------------------- dynamic zones
+# Discovery follows existing directories only and never creates candidates.
+# [[autozone]]
+# base_directory = "/home/me/Depots"
+# pattern = "^[^/]+/work/exchange$"
+# max_depth = 4
+# group = "Repositories"
+# label_mode = "git-or-relative"
+# storage_mode = "directory"
+# max_items = 1000
+# min_free_percent = 2.0
+# group_layout = "tab"
+# group_hide_empty = false
+# group_show_count = true
 
 # --------------------------------------------------------------- zone groups
 # A group selects zones and controls their layout. A zone can belong to several

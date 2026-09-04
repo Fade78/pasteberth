@@ -1013,5 +1013,43 @@ class TestFilesystemDrop(unittest.TestCase):
         self.assertTrue((self.zone / "report.txt").exists())
         self.assertEqual((self.zone / "target.txt").read_text(encoding="utf-8"), "foreign")
 
+class TestFilesystemDropAutozone(unittest.TestCase):
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.tmp = Path(self._tmp.name)
+        self.addCleanup(self._tmp.cleanup)
+        self.zone = self.tmp / "project" / "work" / "exchange"
+        self.zone.mkdir(parents=True)
+        self.cfg = self.tmp / "config.toml"
+        self.cfg.write_text(
+            f'''listen_address = "127.0.0.1"
+allowed_hosts = ["localhost"]
+allow_unauthenticated_local = true
+
+[[autozone]]
+base_directory = {str(self.tmp)!r}
+pattern = "^[^/]+/work/exchange$"
+group = "Repositories"
+max_items = 2
+''',
+            encoding="utf-8",
+        )
+
+    def test_drop_resout_une_zone_dynamique(self):
+        source = self.tmp / "published.txt"
+        source.write_text("published", encoding="utf-8")
+
+        proc = run_cli(
+            ["drop", "--config", str(self.cfg), str(self.zone), str(source)]
+        )
+
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertIn("@", proc.stdout)
+        self.assertEqual(
+            (self.zone / source.name).read_text(encoding="utf-8"),
+            "published",
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

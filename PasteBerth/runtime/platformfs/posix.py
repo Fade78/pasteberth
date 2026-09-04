@@ -372,6 +372,45 @@ class PosixPlatformFS(PlatformFS):
             expected=expected,
         )
 
+    def move_noreplace(
+        self,
+        source_directory: DirectoryHandle,
+        source: str,
+        target_directory: DirectoryHandle,
+        target: str,
+        *,
+        expected: FileIdentity | None = None,
+    ) -> None:
+        self.validate_component(source)
+        self.validate_component(target)
+        source_fd = self._native_fd(source_directory)
+        target_fd = self._native_fd(target_directory)
+        source_identity = self.identity(source_directory, source)
+        if source_identity is None:
+            raise FileNotFoundError(source)
+        if expected is not None and source_identity != expected:
+            raise EntryChangedError(f"source changed: {source!r}")
+        if self.entry_info(target_directory, target) is not None:
+            raise EntryExistsError(f"target already exists: {target!r}")
+        try:
+            os.link(
+                source,
+                target,
+                src_dir_fd=source_fd,
+                dst_dir_fd=target_fd,
+                follow_symlinks=False,
+            )
+        except FileExistsError as exc:
+            raise EntryExistsError(str(exc)) from exc
+        if self.identity(target_directory, target) != source_identity:
+            raise EntryChangedError(f"foreign target appeared: {target!r}")
+        if self.identity(source_directory, source) != source_identity:
+            raise EntryChangedError(f"source changed: {source!r}")
+        try:
+            os.unlink(source, dir_fd=source_fd)
+        except FileNotFoundError as exc:
+            raise EntryChangedError(f"source disappeared: {source!r}") from exc
+
     def remove_expected(
         self,
         directory: DirectoryHandle,

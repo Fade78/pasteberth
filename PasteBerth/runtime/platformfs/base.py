@@ -249,6 +249,18 @@ class PlatformFS:
     ) -> None:
         raise NotImplementedError
 
+    def move_noreplace(
+        self,
+        source_directory: DirectoryHandle,
+        source: str,
+        target_directory: DirectoryHandle,
+        target: str,
+        *,
+        expected: FileIdentity | None = None,
+    ) -> None:
+        """Move a regular entry between directories without replacing a target."""
+        raise NotImplementedError
+
     def remove_expected(
         self,
         directory: DirectoryHandle,

@@ -1,7 +1,7 @@
 # Pasteberth Operator Guide
 
 This guide is the detailed reference for installing, configuring, operating,
-and integrating Pasteberth 2.0.1. The short project overview is in
+and integrating Pasteberth 2.1.0. The short project overview is in
 [`README.md`](README.md); user-visible release history is in
 [`CHANGELOG.md`](CHANGELOG.md).
 
@@ -74,14 +74,14 @@ contexts:
 
 ## 2. Requirements and Support
 
-The 2.0.1 implementation requires:
+The 2.1.0 implementation requires:
 
 - Python 3.11 or newer;
 - a local filesystem supported by the active platform backend;
 - a modern browser for the Web UI;
 - no third-party Python runtime dependency.
 
-Linux is the current official and tested server platform for v2.0.1. The
+Linux is the current official and tested server platform for v2.1.0. The
 Windows backend has broad Wine coverage, but native Windows/NTFS validation is
 still outstanding and macOS support is not implemented. Do not infer support
 for every network or exotic filesystem from the operating system name.
@@ -93,7 +93,7 @@ Firefox when the corresponding Playwright browser is installed.
 
 ### 3.1 Deployable copy
 
-The supported v2.0.1 installation is the tracked `PasteBerth/` directory. It is
+The supported v2.1.0 installation is the tracked `PasteBerth/` directory. It is
 the complete code-only deployment unit: it needs no root access, installation
 script, Python package installation, or build step.
 
@@ -269,7 +269,7 @@ Each `[[zones]]` table defines one independent project area:
 |---|---:|---|
 | `id` | required | Lowercase API/UI identifier, up to 64 characters. |
 | `label` | `id` | Human-readable UI label. |
-| `type` | `local` | Only `local` is implemented in v2.0.1. |
+| `type` | `local` | Only `local` is implemented in v2.1.0. |
 | `directory` | required | Absolute path as seen by the server and the harness. |
 | `retain` | `10` | Number of managed items retained in the zone. |
 | `reference_prefix` | `@` | Text prepended to one returned reference. |
@@ -281,6 +281,8 @@ Each `[[zones]]` table defines one independent project area:
 | `color` | `#243447` | Six-digit zone background color. |
 | `create_directory` | `true` | Create a missing zone directory when safe. |
 | `min_free_percent` | `2.0` | Required free-space reserve on the zone filesystem. |
+| `storage_mode` | `sidecar` | `sidecar` for managed pairs, or `directory` for root-file authority. |
+| `max_items` | none | Required for `directory`; blocks new files without automatic deletion. |
 
 The directory is not a browser path. It is the exact server-side directory
 where the harness reads the stored content and where `drop` writes.
@@ -338,6 +340,20 @@ ignored patterns on `all`/`other`, and equivalent effective selections.
 The Group options menu can show or hide the left zone column for a `tab` group;
 that preference is kept separately for each group in the browser.
 
+### 4.6 Automatic zones
+
+Repeatable `[[autozone]]` rules expose existing directories below an absolute
+`base_directory` when their resolved relative path matches `pattern`. Discovery
+does not create directories or edit configuration, and a configuration may use
+autozones without any static `[[zones]]` entries. Each rule supplies a generated
+group and uses `storage_mode = "directory"` with a required `max_items` limit.
+
+Directory zones treat regular files at their root as managed items without
+requiring sidecars. The limit blocks new writes but never deletes files;
+previews, downloads, and explicit deletion remain available. The complete
+contract, including aliases, reserved directories, diagnostics, and lifecycle,
+is in [`docs/autozone-contract.md`](docs/autozone-contract.md).
+
 ## 5. Web UI
 
 The browser view is a persistent workspace organized by zones.
@@ -357,11 +373,13 @@ target. A direct drop always targets the zone under the pointer. Several files
 are uploaded sequentially as independent operations; one failed file does not
 cancel the others.
 
-The web UI asks for confirmation before an upload would exceed `retain`, because
-the oldest managed items will then be removed. The server remains authoritative:
-it saves the upload and applies retention under the zone lock. A successful upload
-that removed items includes their filenames in the `retention_deleted` response
-field; direct API clients should inspect it.
+For sidecar zones, the web UI asks for confirmation before an upload would
+exceed `retain`, because the oldest managed items will then be removed. Directory
+zones instead show a warning when `max_items` is reached and refuse new writes.
+The server remains authoritative and reports the current blocked state in the
+zone overview. A successful sidecar upload that removed items includes their
+filenames in the `retention_deleted` response field; direct API clients should
+inspect it.
 
 After an upload, Pasteberth tries to copy the exact returned reference to the
 clipboard. Clipboard permissions are controlled by the browser.
@@ -842,7 +860,10 @@ and previews. The prefix is a configured public path, not part of the browser
 
 `/api/zones/{id}/images` and its `images` response key cover images, UTF-8 text,
 and opaque binary content. Each zone reports `busy`, copied-list formatting
-settings, and whether ZIP download is enabled.
+settings, whether ZIP download is enabled, and its `storage_mode`. Directory
+zones also report `max_items`, `blocked`, and an optional `block_reason`.
+Each image may also include `changed_at`; it is `null` when the destination
+cannot provide a change timestamp.
 
 ### 11.2 Upload
 
@@ -859,7 +880,7 @@ curl -b cookies.txt \
 Without `preserve_name=1`, the server generates the filename. A managed name
 collision without `replace=1` returns `428 replacement_required`. A foreign
 file collision returns `409 storage_conflict`. Low free space returns
-`507 storage_low`.
+`507 storage_low`; a full directory zone returns `507 storage_limit`.
 
 API errors use a JSON object with this shape:
 
@@ -889,7 +910,7 @@ The main application error codes are:
 | `429` | `rate_limited` | Login attempts are temporarily throttled. |
 | `500` | `destination_error`, `internal` | The server could not complete a storage or internal operation. |
 | `503` | `retention_error` | Retention cleanup could not complete. |
-| `507` | `storage_low` | The zone's free-space reserve would be exceeded. |
+| `507` | `storage_low`, `storage_limit` | The free-space reserve or directory item limit would be exceeded. |
 
 The response includes fields such as:
 
@@ -905,6 +926,7 @@ The response includes fields such as:
   "kind": "image",
   "mime": "image/png",
   "comment": "Reference capture",
+  "changed_at": "2026-08-25T01:22:31.412000+00:00",
   "preview_url": "/previews/default/2026-08-25_01-22-31_a81c42.png",
   "reference": "@/home/user/.local/share/pasteberth/storage/default/2026-08-25_01-22-31_a81c42.png"
 }
@@ -1074,7 +1096,7 @@ restart the service.
 
 The next major platform goal is native Windows and macOS support with the same
 transaction and security guarantees. That work is intentionally separate from
-the v2.0.1 support matrix and must not be represented as already supported.
+the v2.1.0 support matrix and must not be represented as already supported.
 
 ## 16. License
 

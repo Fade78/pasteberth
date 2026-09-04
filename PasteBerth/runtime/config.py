@@ -36,6 +36,8 @@ _COLOR_RE = re.compile(r"^#[0-9a-fA-F]{6}$")
 _LOG_LEVELS = {"DEBUG", "INFO", "WARNING", "ERROR"}
 _GROUP_SELECTIONS = {"all", "pattern", "other"}
 _GROUP_LAYOUTS = {"area", "tab"}
+_STORAGE_MODES = {"directory", "sidecar"}
+_AUTOZONE_LABEL_MODES = {"git-or-relative", "relative"}
 _URL_PREFIX_RE = re.compile(r"/(?:[A-Za-z0-9._~-]+)(?:/[A-Za-z0-9._~-]+)*")
 
 DEFAULT_MAX_UPLOAD_BYTES = 20 * 1024**2
@@ -139,6 +141,30 @@ class ZoneConfig:
     color: str = "#243447"
     create_directory: bool = True
     min_free_percent: float = DEFAULT_MIN_FREE_PERCENT
+    storage_mode: str = "sidecar"
+    max_items: int | None = None
+
+
+@dataclass(frozen=True)
+class AutoZoneConfig:
+    base_directory: Path
+    pattern: str
+    max_depth: int
+    group: str
+    label_mode: str = "git-or-relative"
+    storage_mode: str = "directory"
+    max_items: int = 1
+    min_free_percent: float = DEFAULT_MIN_FREE_PERCENT
+    reference_prefix: str = "@"
+    reference_suffix: str = ""
+    reference_list_prefix: str = ""
+    reference_list_suffix: str = ""
+    reference_separator: str = ","
+    allow_zip_download: bool = True
+    color: str = "#243447"
+    group_layout: str = "area"
+    group_hide_empty: bool = False
+    group_show_count: bool = True
 
 
 @dataclass(frozen=True)
@@ -150,6 +176,7 @@ class GroupConfig:
     layout: str = "area"
     hide_empty: bool = False
     show_count: bool = True
+    members: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -210,6 +237,7 @@ class Config:
     auth: AuthConfig
     tls: TLSConfig
     zones: dict[str, ZoneConfig]
+    autozones: tuple[AutoZoneConfig, ...]
     groups: tuple[GroupConfig, ...]
     log_level: str
     config_path: Path
@@ -457,7 +485,8 @@ def _parse_zone(raw_zone: object, index: int, warnings: list[str]) -> ZoneConfig
     table = _expect_table(raw_zone, where)
     _warn_unknown(
         table,
-        {"id", "label", "type", "directory", "retain", "reference_prefix", "reference_suffix",
+        {"id", "label", "type", "directory", "retain", "storage_mode", "max_items",
+         "reference_prefix", "reference_suffix",
          "reference_list_prefix", "reference_list_suffix", "reference_separator",
          "allow_zip_download", "color", "create_directory", "min_free_percent"},
         where,
@@ -489,6 +518,22 @@ def _parse_zone(raw_zone: object, index: int, warnings: list[str]) -> ZoneConfig
     retain = table.get("retain", 10)
     if isinstance(retain, bool) or not isinstance(retain, int) or retain < 1:
         raise ConfigError(f"{where}: 'retain' must be a positive integer")
+    storage_mode = _get_str(table, "storage_mode", where, default="sidecar").lower()
+    if storage_mode not in _STORAGE_MODES:
+        raise ConfigError(
+            f"{where}: 'storage_mode' must be one of {sorted(_STORAGE_MODES)}"
+        )
+    max_items = table.get("max_items")
+    if max_items is not None and (
+        isinstance(max_items, bool) or not isinstance(max_items, int) or max_items < 1
+    ):
+        raise ConfigError(f"{where}: 'max_items' must be a positive integer")
+    if storage_mode == "directory" and max_items is None:
+        raise ConfigError(f"{where}: 'max_items' is required for directory storage")
+    if storage_mode == "directory" and "retain" in table:
+        warnings.append(f"{where}: 'retain' is ignored for directory storage")
+    if storage_mode == "sidecar" and max_items is not None:
+        warnings.append(f"{where}: 'max_items' is ignored for sidecar storage")
     prefix = _get_str(table, "reference_prefix", where, default="@", allow_empty=True)
     suffix = _get_str(table, "reference_suffix", where, default="", allow_empty=True)
     list_prefix = _get_str(
@@ -527,6 +572,113 @@ def _parse_zone(raw_zone: object, index: int, warnings: list[str]) -> ZoneConfig
         color=color,
         create_directory=create_dir,
         min_free_percent=min_free_percent,
+        storage_mode=storage_mode,
+        max_items=max_items,
+    )
+
+
+def _parse_autozone(raw_autozone: object, index: int, warnings: list[str]) -> AutoZoneConfig:
+    where = f"[[autozone]] #{index + 1}"
+    table = _expect_table(raw_autozone, where)
+    _warn_unknown(
+        table,
+        {
+            "base_directory", "pattern", "max_depth", "group", "label_mode",
+            "storage_mode", "max_items", "min_free_percent", "retain",
+            "reference_prefix", "reference_suffix", "reference_list_prefix",
+            "reference_list_suffix", "reference_separator", "allow_zip_download",
+            "color", "group_layout", "group_hide_empty", "group_show_count",
+        },
+        where,
+        warnings,
+    )
+    base_raw = _get_str(table, "base_directory", where)
+    if "\x00" in base_raw:
+        raise ConfigError(f"{where}: 'base_directory' contains a NUL character")
+    base_directory = Path(os.path.expanduser(base_raw))
+    if not base_directory.is_absolute():
+        raise ConfigError(
+            f"{where}: 'base_directory' must be an absolute path: {base_raw!r}"
+        )
+    base_directory = ensure_external_path(base_directory, f"{where} 'base_directory'")
+
+    pattern = _get_str(table, "pattern", where)
+    try:
+        re.compile(pattern)
+    except re.error as exc:
+        raise ConfigError(
+            f"{where}: invalid regular expression in 'pattern' {pattern!r} ({exc})"
+        ) from exc
+
+    max_depth = table.get("max_depth", 4)
+    if isinstance(max_depth, bool) or not isinstance(max_depth, int) or max_depth < 1:
+        raise ConfigError(f"{where}: 'max_depth' must be a positive integer")
+    group = _get_str(table, "group", where)
+    label_mode = _get_str(table, "label_mode", where, default="git-or-relative").lower()
+    if label_mode not in _AUTOZONE_LABEL_MODES:
+        raise ConfigError(
+            f"{where}: 'label_mode' must be one of {sorted(_AUTOZONE_LABEL_MODES)}"
+        )
+    storage_mode = _get_str(table, "storage_mode", where, default="directory").lower()
+    if storage_mode != "directory":
+        raise ConfigError(f"{where}: 'storage_mode' must be 'directory'")
+    max_items = table.get("max_items")
+    if isinstance(max_items, bool) or not isinstance(max_items, int) or max_items < 1:
+        raise ConfigError(
+            f"{where}: 'max_items' must be a positive integer for directory storage"
+        )
+    if "retain" in table:
+        warnings.append(f"{where}: 'retain' is ignored for directory storage")
+
+    min_free_percent = _get_percent(
+        table, "min_free_percent", where, DEFAULT_MIN_FREE_PERCENT
+    )
+    prefix = _get_str(table, "reference_prefix", where, default="@", allow_empty=True)
+    suffix = _get_str(table, "reference_suffix", where, default="", allow_empty=True)
+    list_prefix = _get_str(
+        table, "reference_list_prefix", where, default="", allow_empty=True
+    )
+    list_suffix = _get_str(
+        table, "reference_list_suffix", where, default="", allow_empty=True
+    )
+    separator = _get_str(
+        table, "reference_separator", where, default=",", allow_empty=True
+    )
+    allow_zip_download = _get_bool(table, "allow_zip_download", where, default=True)
+    color = _get_str(table, "color", where, default="#243447")
+    if not _COLOR_RE.fullmatch(color):
+        raise ConfigError(f"{where}: 'color' must use #RRGGBB format: {color!r}")
+    color = color.lower()
+    if _best_contrast(color) < 4.5:
+        raise ConfigError(
+            f"{where}: 'color' does not provide sufficient text contrast: {color!r}"
+        )
+    group_layout = _get_str(table, "group_layout", where, default="area").lower()
+    if group_layout not in _GROUP_LAYOUTS:
+        raise ConfigError(
+            f"{where}: 'group_layout' must be one of {sorted(_GROUP_LAYOUTS)}"
+        )
+    group_hide_empty = _get_bool(table, "group_hide_empty", where, default=False)
+    group_show_count = _get_bool(table, "group_show_count", where, default=True)
+    return AutoZoneConfig(
+        base_directory=base_directory,
+        pattern=pattern,
+        max_depth=max_depth,
+        group=group,
+        label_mode=label_mode,
+        storage_mode=storage_mode,
+        max_items=max_items,
+        min_free_percent=min_free_percent,
+        reference_prefix=prefix,
+        reference_suffix=suffix,
+        reference_list_prefix=list_prefix,
+        reference_list_suffix=list_suffix,
+        reference_separator=separator,
+        allow_zip_download=allow_zip_download,
+        color=color,
+        group_layout=group_layout,
+        group_hide_empty=group_hide_empty,
+        group_show_count=group_show_count,
     )
 
 
@@ -602,23 +754,34 @@ def resolve_group_zone_ids(
     pattern_zone_ids: set[str] = set()
     resolved: dict[str, tuple[str, ...]] = {}
     for group in groups:
+        explicit_zone_ids = set(group.members)
         if group.selection == "all":
             resolved[group.name] = ordered_zone_ids
+        elif group.selection == "autozone":
+            resolved[group.name] = tuple(
+                zid for zid in ordered_zone_ids if zid in explicit_zone_ids
+            )
         elif group.selection == "pattern":
             expressions = tuple(re.compile(pattern) for pattern in group.pattern)
             matching = tuple(
                 zid
                 for zid in ordered_zone_ids
-                if any(expression.search(zid) for expression in expressions)
+                if zid in explicit_zone_ids
+                or any(expression.search(zid) for expression in expressions)
             )
             resolved[group.name] = matching
-            pattern_zone_ids.update(matching)
-    other_zone_ids = tuple(
-        zid for zid in ordered_zone_ids if zid not in pattern_zone_ids
-    )
+            pattern_zone_ids.update(
+                zid
+                for zid in matching
+                if any(expression.search(zid) for expression in expressions)
+            )
     for group in groups:
         if group.selection == "other":
-            resolved[group.name] = other_zone_ids
+            explicit_zone_ids = set(group.members)
+            resolved[group.name] = tuple(
+                zid for zid in ordered_zone_ids
+                if zid in explicit_zone_ids or zid not in pattern_zone_ids
+            )
     return resolved
 
 
@@ -713,7 +876,7 @@ def load_config(path: Path) -> Config:
           "show_full_path", "allow_unauthenticated_local", "allow_unauthenticated_remote",
          "allow_insecure_http_remote", "accept_bin", "accept_img", "accept_doc",
          "auth", "tls",
-         "zones", "groups", "log_level"},
+         "zones", "autozone", "groups", "log_level"},
         "config",
         warnings,
     )
@@ -759,15 +922,25 @@ def load_config(path: Path) -> Config:
     if log_level not in _LOG_LEVELS:
         raise ConfigError(f"'log_level' must be one of {sorted(_LOG_LEVELS)}")
 
-    raw_zones = data.get("zones")
-    if not isinstance(raw_zones, list) or not raw_zones:
-        raise ConfigError("'zones' must be a non-empty list ([[zones]])")
+    raw_zones = data.get("zones", [])
+    if not isinstance(raw_zones, list):
+        raise ConfigError("'zones' must be a list of tables")
     zones: dict[str, ZoneConfig] = {}
     for i, raw_zone in enumerate(raw_zones):
         zone = _parse_zone(raw_zone, i, warnings)
         if zone.id in zones:
             raise ConfigError(f"duplicate zone ID: {zone.id!r}")
         zones[zone.id] = zone
+
+    raw_autozones = data.get("autozone", [])
+    if not isinstance(raw_autozones, list):
+        raise ConfigError("'autozone' must be a list of tables")
+    autozones = tuple(
+        _parse_autozone(raw_autozone, index, warnings)
+        for index, raw_autozone in enumerate(raw_autozones)
+    )
+    if not zones and not autozones:
+        raise ConfigError("configuration must define [[zones]] or [[autozone]]")
 
     groups = _parse_groups(data.get("groups"), warnings)
 
@@ -790,6 +963,7 @@ def load_config(path: Path) -> Config:
         auth=auth,
         tls=tls,
         zones=zones,
+        autozones=autozones,
         groups=groups,
         log_level=log_level,
         config_path=path,
@@ -927,6 +1101,7 @@ def build_default_config() -> Config:
                 color="#304237",
             )
         },
+        autozones=(),
         groups=(),
         log_level="INFO",
         config_path=config_path,

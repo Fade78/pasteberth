@@ -28,16 +28,17 @@ Pasteberth is the small, targeted handoff layer between those two sides:
 - the harness receives the exact path created by the server;
 - scripts can use `drop` to publish files back to the Web UI.
 
-A zone is a directory on the machine running Pasteberth, with a JSON sidecar
-for metadata and ownership. The browser never needs to access the returned
-filesystem path.
+A zone is a directory on the machine running Pasteberth. Static zones use JSON
+sidecars for metadata and ownership; dynamic `[[autozone]]` zones can expose
+existing directories with sidecar-free storage. The browser never needs to
+access the returned filesystem path.
 
 Pasteberth is not a public file host, CDN, cloud drive, or synchronization
 service between independent servers.
 
 ## Quick Start
 
-The current public release is `2.0.1`. The documented v2.0.1 server runs on
+The current public release is `2.1.0`. The documented v2.1.0 server runs on
 Linux, requires Python 3.11 or newer, and has no third-party
 Python runtime dependency. A native Windows backend is included but has only
 been validated under Wine; macOS and native Windows remain outside the official
@@ -90,6 +91,8 @@ only, without `/paste`.
 
 - Paste images, text, or files with `Ctrl+V`/`Command+V` or drag and drop.
 - Keep independent zones per project with configurable retention.
+- Discover repository directories dynamically with repeatable `[[autozone]]` rules.
+- Use sidecar-free directory zones with non-destructive item limits.
 - Return exact filesystem references such as
   `@/srv/workspaces/project/captures/example.png`.
 - Preserve valid dropped filenames when requested, while protecting foreign
@@ -102,6 +105,7 @@ only, without `/paste`.
 - Hover the selected file or a history icon to see complete, untruncated item
   details.
 - Publish files from scripts or agents with `drop`.
+- Resolve dynamic zone directories from the CLI without editing configuration.
 - Rename or delete managed files while keeping data and sidecars consistent.
 - Run behind an HTTPS reverse proxy or terminate TLS directly.
 
@@ -137,12 +141,12 @@ pasteberth drop --config config.toml \
   /srv/workspaces/project/captures /tmp/report.pdf /tmp/screenshot.png
 ```
 
-The source files remain unchanged. Pasteberth creates managed data/sidecar
-pairs and prints one reference for each successful source. Use `rename` and
-`delete` for managed operations; foreign files are never overwritten or
-removed. When a source is already the exact file in the destination zone,
-`drop` validates it and creates its missing sidecar without rewriting the data
-file.
+The source files remain unchanged. In a sidecar zone, Pasteberth creates a
+managed data/sidecar pair and protects foreign files; when a source is already
+the exact file in that zone, `drop` validates it and creates its missing
+sidecar without rewriting the data file. In a directory zone, regular root
+files are managed by presence and can be explicitly renamed or deleted.
+`drop` prints one reference for each successful source.
 
 ## Documentation
 
@@ -154,6 +158,7 @@ covers:
 - every CLI command, its syntax, and its exit codes;
 - Bash completion in [`PasteBerth/support/completions/pasteberth.bash`](PasteBerth/support/completions/pasteberth.bash);
 - filesystem layout, sidecars, retention, backup, and recovery;
+- automatic-zone discovery, directory storage, limits, and diagnostics;
 - systemd, Caddy, nginx, TLS, authentication, and security boundaries;
 - the HTTP API, batch operations, errors, and troubleshooting;
 - tests, current support limits, and the future multiplatform direction.
@@ -166,7 +171,7 @@ template is [`PasteBerth/support/deploy/pasteberth.service`](PasteBerth/support/
 
 ## Support Status
 
-| Area | v2.0.1 status |
+| Area | v2.1.0 status |
 |---|---|
 | Python | 3.11 or newer |
 | Server | Linux, officially tested |

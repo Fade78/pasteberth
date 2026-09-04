@@ -2,6 +2,18 @@
 
 This file records user-visible changes to Pasteberth.
 
+## [2.1.0] - 2026-09-04
+
+### Dynamic Zones and Directory Storage
+
+- discover existing repository directories through repeatable `[[autozone]]`
+  rules without editing configuration or creating candidates;
+- expose discovered zones through the service, HTTP API, CLI, groups, and Web UI;
+- treat regular root files as managed directory-zone items with optional comment
+  annotations, non-destructive `max_items` limits, and `incoming/` publication;
+- report changed timestamps, blocked zones, capacity reasons, and `storage_limit`
+  HTTP 507 errors.
+
 ## [2.0.1] - 2026-09-03
 
 ### Uploads and Retention

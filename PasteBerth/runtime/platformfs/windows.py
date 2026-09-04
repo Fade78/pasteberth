@@ -1329,6 +1329,36 @@ class WindowsPlatformFS(PlatformFS):
             expected_target=None,
         )
 
+    def move_noreplace(
+        self,
+        source_directory: DirectoryHandle,
+        source: str,
+        target_directory: DirectoryHandle,
+        target: str,
+        *,
+        expected: FileIdentity | None = None,
+    ) -> None:
+        self.validate_component(source)
+        self.validate_component(target)
+        handle, raw = self._entry_native(
+            source_directory,
+            source,
+            desired_access=_GENERIC_READ | _READ_CONTROL | _DELETE | _SYNCHRONIZE,
+            require_regular=True,
+        )
+        try:
+            source_identity = raw["identity"]
+            if expected is not None and source_identity != expected:
+                raise EntryChangedError(f"source changed: {source!r}")
+            if self.entry_info(target_directory, target) is not None:
+                raise EntryExistsError(f"target already exists: {target!r}")
+            self._rename_native(handle, target_directory, target, replace=False)
+            self._directory_stable(target_directory)
+            if self.identity(target_directory, target) != source_identity:
+                raise EntryChangedError(f"foreign target appeared: {target!r}")
+        finally:
+            self._close_native(handle)
+
     def replace(
         self,
         directory: DirectoryHandle,

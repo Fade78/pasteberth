@@ -58,6 +58,10 @@ class Base(unittest.TestCase):
                 ("secondary", self.zones_dirs["secondary"], 2, "#26394a"),
             ]
         ]
+        if self.config_kwargs.get("storage_mode") is not None:
+            for zone in zones:
+                zone["storage_mode"] = self.config_kwargs["storage_mode"]
+                zone["max_items"] = self.config_kwargs.get("max_items", 1)
         cfg_path = write_config(
             tmp,
             zones=zones,
@@ -143,6 +147,51 @@ class TestLimiteUpload(Base):
         )
         self.assertEqual(status, 413)
         self.assertEqual(json_of(response)["error"]["code"], "too_large")
+
+
+class TestDirectoryZone(Base):
+    config_kwargs = {"storage_mode": "directory", "max_items": 1}
+
+    def test_overview_and_upload_report_directory_limit(self):
+        status, _, response = self.req("GET", "/api/zones")
+        self.assertEqual(status, 200)
+        zone = next(item for item in json_of(response)["zones"] if item["id"] == "default")
+        self.assertEqual(zone["storage_mode"], "directory")
+        self.assertFalse(zone["blocked"])
+
+        body, content_type = build_multipart(
+            filename="one.txt",
+            data=b"one",
+            content_type="text/plain",
+            extra_fields={"preserve_name": "1"},
+        )
+        status, _, response = self.req(
+            "POST",
+            "/api/zones/default/images",
+            body=body,
+            headers={"Content-Type": content_type},
+        )
+        self.assertEqual(status, 201, response)
+
+        status, _, response = self.req("GET", "/api/zones")
+        self.assertEqual(status, 200)
+        zone = next(item for item in json_of(response)["zones"] if item["id"] == "default")
+        self.assertTrue(zone["blocked"])
+
+        body, content_type = build_multipart(
+            filename="two.txt",
+            data=b"two",
+            content_type="text/plain",
+            extra_fields={"preserve_name": "1"},
+        )
+        status, _, response = self.req(
+            "POST",
+            "/api/zones/default/images",
+            body=body,
+            headers={"Content-Type": content_type},
+        )
+        self.assertEqual(status, 507)
+        self.assertEqual(json_of(response)["error"]["code"], "storage_limit")
 
 
 class TestLimiteNomFichier(Base):
