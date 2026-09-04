@@ -2,6 +2,7 @@
 import json
 import multiprocessing
 import os
+import shutil
 import stat
 import tempfile
 import time
@@ -1911,6 +1912,15 @@ class TestDotfiles(Base):
 
 
 class TestOwnership(Base):
+    def test_copie_directe_sans_sidecar_reste_invisible(self):
+        source = self.dir.parent / "direct-source.txt"
+        source.write_text("copied directly", encoding="utf-8")
+        shutil.copyfile(source, self.dir / "copied.txt")
+
+        self.assertEqual(self.dest.list(), [])
+        with self.assertRaises(DestinationError):
+            self.dest.read("copied.txt")
+
     def test_fichier_etranger_jamais_touche(self):
         stranger = self.dir / "vacation_photo.png"
         stranger.write_bytes(b"not pasteberth data")

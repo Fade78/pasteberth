@@ -2,6 +2,8 @@ import tempfile
 import unittest
 from pathlib import Path
 import shutil
+from dataclasses import replace
+from unittest import mock
 
 from PasteBerth.runtime.autozone import discover_autozones, merge_autozone_groups
 from PasteBerth.runtime.config import (
@@ -157,7 +159,10 @@ class TestDirectoryDestination(unittest.TestCase):
         self.info = ContentInfo(kind="text", ext=".txt", mime="text/plain")
 
     def test_root_files_are_visible_without_sidecars(self):
-        (self.tmp / "external.txt").write_text("hello", encoding="utf-8")
+        source = self.tmp.with_name(f"{self.tmp.name}-source.txt")
+        source.write_text("hello", encoding="utf-8")
+        self.addCleanup(source.unlink)
+        shutil.copyfile(source, self.tmp / "external.txt")
 
         items = self.destination.list()
 
@@ -232,6 +237,86 @@ class TestDirectoryDestination(unittest.TestCase):
 
         self.assertTrue((self.tmp / "published.txt").exists())
         self.assertFalse((self.tmp / "third.txt").exists())
+
+    def test_pbinc_masque_une_copie_progressive_puis_publie_apres_renommage(self):
+        incoming = self.tmp / "incoming"
+        incoming.mkdir()
+        partial = incoming / "pbinc_report.txt"
+        published = incoming / "report.txt"
+        data = b"first line\nsecond line\n"
+
+        with partial.open("wb") as stream:
+            stream.write(data[:6])
+            stream.flush()
+            self.assertEqual(self.destination.list(), [])
+        self.assertTrue(partial.exists())
+
+        with partial.open("ab") as stream:
+            stream.write(data[6:])
+            stream.flush()
+        partial.rename(published)
+
+        items = self.destination.list()
+        self.assertEqual([item.filename for item in items], ["report.txt"])
+        self.assertEqual((self.tmp / "report.txt").read_bytes(), data)
+        self.assertFalse(published.exists())
+
+    def test_publication_incoming_ne_depasse_pas_max_items(self):
+        incoming = self.tmp / "incoming"
+        incoming.mkdir()
+        (self.tmp / "one.txt").write_text("one", encoding="utf-8")
+        (self.tmp / "two.txt").write_text("two", encoding="utf-8")
+        pending = incoming / "three.txt"
+        pending.write_text("three", encoding="utf-8")
+
+        items = self.destination.list()
+
+        self.assertEqual(
+            {item.filename for item in items},
+            {"one.txt", "two.txt"},
+        )
+        self.assertTrue(pending.exists())
+        self.assertFalse((self.tmp / "three.txt").exists())
+
+        self.destination.delete("one.txt")
+        items = self.destination.list()
+        self.assertEqual([item.filename for item in items], ["three.txt", "two.txt"])
+        self.assertFalse(pending.exists())
+
+    def test_classification_ignore_fichier_modifie_pendant_inspection(self):
+        target = self.tmp / "copied.txt"
+        target.write_text("copied", encoding="utf-8")
+
+        with self.destination._directory_fd() as directory_fd:
+            entry = next(
+                item
+                for item in self.destination._regular_root_entries(directory_fd)
+                if item.name == target.name
+            )
+            original_entry_info = self.destination._fs.entry_info
+
+            def changed_entry_info(directory, name):
+                current = original_entry_info(directory, name)
+                if name == target.name and current is not None:
+                    return replace(
+                        current,
+                        modified_ns=(current.modified_ns or 0) + 1,
+                    )
+                return current
+
+            with mock.patch.object(
+                self.destination._fs,
+                "entry_info",
+                side_effect=changed_entry_info,
+            ):
+                self.assertIsNone(
+                    self.destination._classify_entry(directory_fd, entry)
+                )
+
+        self.assertEqual(
+            [item.filename for item in self.destination.list()],
+            [target.name],
+        )
 
 
 class TestDynamicService(unittest.TestCase):

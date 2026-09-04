@@ -264,6 +264,9 @@ class PosixPlatformFS(PlatformFS):
 
     def entries(self, directory: DirectoryHandle) -> tuple[EntryInfo, ...]:
         directory_fd = self._native_fd(directory)
+        # A directory opened before a concurrent create can retain an EOF
+        # position on filesystems that expose directory streams this way.
+        os.lseek(directory_fd, 0, os.SEEK_SET)
         result: list[EntryInfo] = []
         with os.scandir(directory_fd) as scan:
             for entry in scan:

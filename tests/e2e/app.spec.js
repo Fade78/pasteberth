@@ -298,6 +298,7 @@ test("la confirmation de remplacement commence par Cancel et restaure le focus",
   await openApp(page);
   const defaultZone = page.locator('[data-zone="default"]');
   await dispatchBinaryDrop(page, ".zone[data-zone=\"default\"]");
+  await expect(defaultZone.locator(".thumb-wrap")).toHaveCount(1);
   await defaultZone.locator(".zone-select").focus();
   await dispatchBinaryDrop(page, ".zone[data-zone=\"default\"]");
   await expect(page.locator("#replace")).toBeVisible();
@@ -312,6 +313,18 @@ test("la confirmation de remplacement commence par Cancel et restaure le focus",
   await dispatchPaste(page);
   await expect(defaultZone.locator(".thumb-wrap")).toHaveCount(1);
   await expect(defaultZone.locator(".zone-select")).toHaveAttribute("aria-current", "true");
+
+  const originalZoneSelect = await defaultZone.locator(".zone-select").elementHandle();
+  const refreshDone = page.waitForResponse((response) => (
+    response.request().method() === "GET"
+      && response.url().endsWith("/api/zones/secondary/images")
+  ));
+  await Promise.all([
+    refreshDone,
+    page.evaluate(() => document.dispatchEvent(new Event("visibilitychange"))),
+  ]);
+  await expect.poll(() => originalZoneSelect.evaluate((element) => element.isConnected))
+    .toBe(false);
 
   await page.keyboard.press("Enter");
   await expect(page.locator("#replace")).toBeHidden();
@@ -896,10 +909,11 @@ test("utilise le fallback du dialogue de remplacement sans API native", async ({
     Object.defineProperty(HTMLDialogElement.prototype, "close", { value: undefined });
   });
   await openApp(page);
-  const defaultZone = page.locator('[data-zone="default"]');
+  const defaultZone = page.locator('.zone[data-zone="default"]');
 
   await dispatchBinaryDrop(page, '.zone[data-zone="default"]');
   await expect(defaultZone.locator(".fname")).toHaveText("archive.zip");
+  await expect(defaultZone).not.toHaveClass(/busy/);
   await dispatchBinaryDrop(page, '.zone[data-zone="default"]');
   await expect(page.locator("#replace")).toBeVisible();
   await expect(page.locator("#replace")).toHaveClass(/dialog-fallback/);
@@ -912,10 +926,16 @@ test("utilise le fallback du dialogue de remplacement sans API native", async ({
     .toHaveAttribute("aria-current", "true");
   await expect(page.locator("#replace")).toBeVisible();
   await dispatchBinaryDrop(page, '.zone[data-zone="default"]');
+  const confirmedUpload = page.waitForResponse((response) => (
+    response.request().method() === "POST"
+      && response.url().endsWith("/api/zones/default/images")
+  ));
   await page.locator("#replace-confirm").click();
   await expect(page.locator("#replace")).toBeVisible();
+  await confirmedUpload;
   await page.keyboard.press("Escape");
   await expect(page.locator("#replace")).toBeHidden();
+  await expect(defaultZone).not.toHaveClass(/busy/);
 
   await dispatchBinaryDrop(page, '.zone[data-zone="default"]');
   await expect(page.locator("#replace")).toBeVisible();
@@ -926,6 +946,7 @@ test("utilise le fallback du dialogue de remplacement sans API native", async ({
   await expect(page.locator("#replace-confirm")).toBeFocused();
   await page.locator("#replace-cancel").click();
   await expect(defaultZone.locator(".thumb-wrap")).toHaveCount(1);
+  await expect(defaultZone).not.toHaveClass(/busy/);
 
   await dispatchBinaryDrop(page, '.zone[data-zone="default"]');
   await page.locator("#replace-confirm").click();

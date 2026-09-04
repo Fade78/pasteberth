@@ -2,6 +2,16 @@
 
 This file records user-visible changes to Pasteberth.
 
+## [2.1.1] - 2026-09-04
+
+### Storage and Web UI Corrections
+
+- publish incoming directory files without exceeding the configured `max_items`
+  limit;
+- keep direct filesystem copies and progressive incoming copies consistent with
+  the directory storage contract;
+- preserve the dialog invoker focus when a background refresh rebuilds the UI.
+
 ## [2.1.0] - 2026-09-04
 
 ### Dynamic Zones and Directory Storage

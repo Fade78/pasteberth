@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "pasteberth"
-version = "2.1.0"
+version = "2.1.1"
 description = "Clipboard-to-filesystem bridge for remote CLI/TUI harnesses (OpenCode and friends)"
 readme = "README.md"
 requires-python = ">=3.11"

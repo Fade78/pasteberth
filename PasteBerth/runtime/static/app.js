@@ -1508,6 +1508,30 @@
     return isDialogOpen(pv) || isDialogOpen(replacementDialog);
   }
 
+  function dialogInvokerSelector(candidate) {
+    if (candidate.id) return `#${CSS.escape(candidate.id)}`;
+    const classes = [...candidate.classList]
+      .map(className => `.${CSS.escape(className)}`)
+      .join("");
+    const target = `${candidate.tagName.toLowerCase()}${classes}`;
+    const zone = candidate.closest(".zone");
+    const item = candidate.closest("[data-item-id]");
+    const zoneSelector = zone?.dataset.zone
+      ? `.zone[data-zone="${CSS.escape(zone.dataset.zone)}"] `
+      : "";
+    if (item?.dataset.itemId) {
+      const itemSelector = `[data-item-id="${CSS.escape(item.dataset.itemId)}"]`;
+      return item === candidate
+        ? `${zoneSelector}${itemSelector}${classes}`
+        : `${zoneSelector}${itemSelector} ${target}`;
+    }
+    if (candidate.classList.contains("tab-zone-link") && candidate.dataset.zone) {
+      return `.tab-zone-link[data-zone="${CSS.escape(candidate.dataset.zone)}"]`;
+    }
+    if (zone?.dataset.zone) return `${zoneSelector}${target}`;
+    return null;
+  }
+
   function dialogFocusable(dialog) {
     return [...dialog.querySelectorAll(
       "button, [href], input, select, textarea, [tabindex]:not([tabindex='-1'])",
@@ -1518,13 +1542,23 @@
     const candidate = invoker && typeof invoker.focus === "function"
       ? invoker
       : document.activeElement;
-    if (candidate && candidate !== dialog) dialogInvokers.set(dialog, candidate);
+    if (candidate && candidate !== dialog) {
+      dialogInvokers.set(dialog, {
+        element: candidate,
+        selector: dialogInvokerSelector(candidate),
+      });
+    }
   }
 
   function restoreDialogInvoker(dialog) {
-    const invoker = dialogInvokers.get(dialog);
+    const record = dialogInvokers.get(dialog);
     dialogInvokers.delete(dialog);
-    if (invoker && invoker.isConnected && !invoker.disabled) invoker.focus();
+    const invoker = record?.element?.isConnected
+      ? record.element
+      : record?.selector
+        ? document.querySelector(record.selector)
+        : null;
+    if (invoker && !invoker.disabled) invoker.focus();
   }
 
   function focusDialog(dialog) {

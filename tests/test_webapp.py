@@ -4,6 +4,7 @@ import json
 import io
 import logging
 import re
+import shutil
 import tempfile
 import threading
 import time
@@ -151,6 +152,31 @@ class TestLimiteUpload(Base):
 
 class TestDirectoryZone(Base):
     config_kwargs = {"storage_mode": "directory", "max_items": 1}
+
+    def test_copie_externe_est_visible_via_http_preview_et_delete(self):
+        source = self.tmp / "external-source.txt"
+        source.write_text("copied outside Pasteberth\n", encoding="utf-8")
+        target = self.zones_dirs["default"] / "copied.txt"
+        shutil.copyfile(source, target)
+
+        status, _, response = self.req("GET", "/api/zones/default/images")
+        self.assertEqual(status, 200)
+        items = json_of(response)["images"]
+        self.assertEqual([item["filename"] for item in items], ["copied.txt"])
+
+        status, headers, data = self.req("GET", items[0]["preview_url"])
+        self.assertEqual(status, 200)
+        self.assertEqual(headers["content-type"], "text/plain")
+        self.assertEqual(data, source.read_bytes())
+
+        status, _, response = self.req(
+            "DELETE",
+            "/api/zones/default/images/copied.txt",
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(json_of(response), {"deleted": "copied.txt"})
+        self.assertFalse(target.exists())
+        self.assertTrue(source.exists())
 
     def test_overview_and_upload_report_directory_limit(self):
         status, _, response = self.req("GET", "/api/zones")

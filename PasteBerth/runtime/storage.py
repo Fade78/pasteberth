@@ -3876,6 +3876,8 @@ class DirectoryDestination(LocalDestination):
                             continue
                         if self._fs.entry_info(directory_fd, entry.name) is not None:
                             continue
+                        if len(self._regular_root_entries(directory_fd)) >= self.max_items:
+                            break
                         try:
                             self._fs.move_noreplace(
                                 incoming,
