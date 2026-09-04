@@ -105,6 +105,8 @@ class TestContratsFrontend(unittest.TestCase):
     def test_refresh_ordonne_et_actions_clavier(self):
         self.assertIn("AbortController", self.app_js)
         self.assertIn("refreshGeneration", self.app_js)
+        self.assertIn("let bootInFlight = false;", self.app_js)
+        self.assertIn("if (bootInFlight) return;", self.app_js)
         self.assertIn("REFRESH_INTERVAL_MS = 10_000", self.app_js)
         self.assertIn("updateNewItemState", self.app_js)
         self.assertIn("newItemIdsByZone", self.app_js)

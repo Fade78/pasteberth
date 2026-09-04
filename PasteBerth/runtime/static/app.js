@@ -46,6 +46,7 @@
 
   let refreshGeneration = 0;
   let activeRefreshController = null;
+  let bootInFlight = false;
   let previewGeneration = 0;
   let activePreviewController = null;
   let groupOptionsClose = null;
@@ -1994,6 +1995,9 @@
   }
 
   async function boot(silent = false) {
+    // Directory-backed refreshes can take longer than the polling interval.
+    if (bootInFlight) return;
+    bootInFlight = true;
     try {
       await refresh();
     } catch (err) {
@@ -2001,6 +2005,8 @@
       if (!silent) renderAll();
       if (err.message === "network unreachable") scheduleRetry();
       else if (!silent) toast(err.message, "error");
+    } finally {
+      bootInFlight = false;
     }
   }
 

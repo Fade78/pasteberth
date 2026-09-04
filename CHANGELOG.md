@@ -2,6 +2,15 @@
 
 This file records user-visible changes to Pasteberth.
 
+## [2.1.2] - 2026-09-05
+
+### Web UI Synchronization
+
+- prevent the 10-second background poll from cancelling a refresh that is still
+  reading directory-backed zones;
+- allow slow initial refreshes to finish so newly discovered zones and their
+  existing files reach the browser.
+
 ## [2.1.1] - 2026-09-04
 
 ### Storage and Web UI Corrections
