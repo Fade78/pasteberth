@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import errno
 import multiprocessing
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -189,6 +190,19 @@ class LinuxPlatformFSBehavior(unittest.TestCase):
                 self.fs._filesystem_type(Path("/mnt/c/zone")),
                 "drvfs",
             )
+
+    def test_opens_through_a_search_only_parent(self):
+        if not hasattr(os, "O_PATH"):
+            self.skipTest("Linux O_PATH is unavailable")
+        parent = Path(self.tmp.name) / "search-only"
+        target = parent / "zone"
+        target.mkdir(parents=True)
+        parent.chmod(0o311)
+        try:
+            with self.fs.open_directory(target) as directory:
+                self.assertIsInstance(directory.identity, FileIdentity)
+        finally:
+            parent.chmod(0o700)
 
     def test_shared_filesystem_uses_the_no_replace_fallback(self):
         directory_path = Path(self.tmp.name) / "shared"

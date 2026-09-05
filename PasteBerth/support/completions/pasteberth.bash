@@ -69,7 +69,7 @@ _pasteberth_complete() {
             values=(DEBUG INFO WARNING ERROR)
             ;;
         drop)
-            options=(-h --help --config --replace)
+            options=(-h --help --config --server --zone --replace --password-stdin --insecure)
             values=()
             ;;
         rename)
@@ -104,8 +104,8 @@ _pasteberth_complete() {
         return
     fi
 
-    # Directory, source-file, and managed-name arguments all benefit from the
-    # shell's ordinary filesystem completion. The command validates the final
+    # Source-file, directory, and managed-name arguments all benefit from the
+    # shell's ordinary filesystem completion. Each command validates its final
     # path/name against the configured zone and its safety rules.
     if (( command_index >= 0 )); then
         _pasteberth_complete_path

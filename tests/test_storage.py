@@ -1,5 +1,6 @@
 """Tests du stockage : noms uniques, sidecars, rétention, ownership."""
 import json
+import grp
 import multiprocessing
 import os
 import shutil
@@ -83,6 +84,21 @@ class TestSauvegarde(Base):
         else:
             self.assertEqual(stat.S_IMODE((self.dir / stored.filename).stat().st_mode), 0o600)
             self.assertEqual(stat.S_IMODE((self.dir / (stored.filename + ".json")).stat().st_mode), 0o600)
+
+    def test_fichier_et_sidecar_recoivent_le_groupe_configure(self):
+        if platform_fs().backend_name != "posix":
+            self.skipTest("les groupes système sont une capacité POSIX")
+        group = grp.getgrgid(os.getgid()).gr_name
+        destination = LocalDestination(self.dir.parent / "grouped", file_group=group)
+
+        stored = destination.save(make_png(), INFO())
+
+        for path in (
+            destination.directory / stored.filename,
+            destination.directory / (stored.filename + ".json"),
+        ):
+            self.assertEqual(path.stat().st_gid, os.getgid())
+            self.assertEqual(stat.S_IMODE(path.stat().st_mode), 0o660)
 
     def test_noms_uniques_rapides(self):
         names = {s.filename for s in self.save(20)}

@@ -28,10 +28,11 @@ Pasteberth is the small, targeted handoff layer between those two sides:
 - the harness receives the exact path created by the server;
 - scripts can use `drop` to publish files back to the Web UI.
 
-A zone is a directory on the machine running Pasteberth. Static zones use JSON
-sidecars for metadata and ownership; dynamic `[[autozone]]` zones can expose
-existing directories with sidecar-free storage. The browser never needs to
-access the returned filesystem path.
+A zone is a directory on the machine running Pasteberth. Every zone uses a
+managed data file plus a JSON sidecar for metadata and ownership; dynamic
+`[[autozone]]` rules only discover the directories. Files copied or moved into a
+zone outside Pasteberth remain foreign and are ignored. The browser never
+needs to access the returned filesystem path.
 
 Pasteberth is not a public file host, CDN, cloud drive, or synchronization
 service between independent servers.
@@ -91,8 +92,8 @@ only, without `/paste`.
 
 - Paste images, text, or files with `Ctrl+V`/`Command+V` or drag and drop.
 - Keep independent zones per project with configurable retention.
-- Discover repository directories dynamically with repeatable `[[autozone]]` rules.
-- Use sidecar-free directory zones with non-destructive item limits.
+- Discover repository directories dynamically with repeatable `[[autozone]]`
+  rules while keeping the sidecar storage contract.
 - Return exact filesystem references such as
   `@/srv/workspaces/project/captures/example.png`.
 - Preserve valid dropped filenames when requested, while protecting foreign
@@ -131,22 +132,23 @@ are displayed in the Web UI. It defaults to `true` for compatibility; set it to
 `false` when server-side paths contain sensitive information. The API still
 returns the exact reference needed by the harness and copy actions.
 
-## Filesystem Handoff
+## Server Handoff
 
-The filesystem client targets the exact absolute directory configured for a
-zone, not its UI label or identifier:
+The CLI client uploads through the Pasteberth server. Use `--zone` with a zone
+ID and `--server` when the server is not described by the local configuration:
 
 ```sh
 pasteberth drop --config config.toml \
-  /srv/workspaces/project/captures /tmp/report.pdf /tmp/screenshot.png
+  --server https://pasteberth.example.internal \
+  --zone project-alpha /tmp/report.pdf /tmp/screenshot.png
 ```
 
-The source files remain unchanged. In a sidecar zone, Pasteberth creates a
-managed data/sidecar pair and protects foreign files; when a source is already
-the exact file in that zone, `drop` validates it and creates its missing
-sidecar without rewriting the data file. In a directory zone, regular root
-files are managed by presence and can be explicitly renamed or deleted.
-`drop` prints one reference for each successful source.
+The source files remain unchanged. Pasteberth creates the managed data/sidecar
+pair on the server and protects foreign files; a file copied directly into the
+zone is never adopted by `drop`, renamed, or deleted. Authentication is reused
+from the server session, with `PASTEBERTH_PASSWORD` or `--password-stdin`
+available for non-interactive use. `drop` prints one reference for each
+successful source.
 
 ## Documentation
 
@@ -158,7 +160,7 @@ covers:
 - every CLI command, its syntax, and its exit codes;
 - Bash completion in [`PasteBerth/support/completions/pasteberth.bash`](PasteBerth/support/completions/pasteberth.bash);
 - filesystem layout, sidecars, retention, backup, and recovery;
-- automatic-zone discovery, directory storage, limits, and diagnostics;
+- automatic-zone discovery, sidecar storage, permissions, and diagnostics;
 - systemd, Caddy, nginx, TLS, authentication, and security boundaries;
 - the HTTP API, batch operations, errors, and troubleshooting;
 - tests, current support limits, and the future multiplatform direction.

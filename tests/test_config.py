@@ -285,6 +285,19 @@ class TestParsing(unittest.TestCase):
         self.assertEqual(cfg.zones["default"].color, "#304237")
         self.assertEqual(cfg.zones["secondary"].label, "secondary")
 
+    def test_groupe_systeme_des_fichiers_charge(self):
+        cfg = make_cfg(
+            self.tmp,
+            zones=[
+                {
+                    "id": "default",
+                    "directory": str(self.tmp / "p"),
+                    "file_group": "pasteberth",
+                },
+            ],
+        )
+        self.assertEqual(cfg.zones["default"].file_group, "pasteberth")
+
     def test_groupes_charges_et_valides(self):
         cfg = make_cfg(
             self.tmp,

@@ -2,24 +2,18 @@ import tempfile
 import unittest
 from pathlib import Path
 import shutil
-from dataclasses import replace
 from unittest import mock
 
+from PasteBerth.runtime import autozone as autozone_module
 from PasteBerth.runtime.autozone import discover_autozones, merge_autozone_groups
 from PasteBerth.runtime.config import (
     AutoZoneConfig,
-    ConfigError,
     GroupConfig,
     ZoneConfig,
     load_config,
     resolve_group_zone_ids,
 )
-from PasteBerth.runtime.content import ContentInfo
-from PasteBerth.runtime.service import PasteService, ServiceError
-from PasteBerth.runtime.storage import (
-    DirectoryDestination,
-    StorageLimitError,
-)
+from PasteBerth.runtime.service import PasteService
 
 
 def rule(base: Path, pattern: str = r"^[^/]+/work/exchange$") -> AutoZoneConfig:
@@ -28,7 +22,7 @@ def rule(base: Path, pattern: str = r"^[^/]+/work/exchange$") -> AutoZoneConfig:
         pattern=pattern,
         max_depth=4,
         group="Repositories",
-        max_items=2,
+        retain=2,
     )
 
 
@@ -50,6 +44,22 @@ class TestAutozoneDiscovery(unittest.TestCase):
             "accepted-work-exchange",
         ])
         self.assertTrue(any("user subdirectory" in message for message in diagnostics))
+
+    def test_directory_illisible_est_ignoire_avec_un_diagnostic(self):
+        candidate = self.tmp / "unreadable" / "work" / "exchange"
+        candidate.mkdir(parents=True)
+        original_scandir = autozone_module.os.scandir
+
+        def scandir(path):
+            if Path(path) == candidate:
+                raise PermissionError("permission denied")
+            return original_scandir(path)
+
+        with mock.patch.object(autozone_module.os, "scandir", side_effect=scandir):
+            candidates, diagnostics = discover_autozones((rule(self.tmp),))
+
+        self.assertEqual(candidates, [])
+        self.assertTrue(any("cannot inspect subtree" in message for message in diagnostics))
 
     def test_static_id_and_directory_take_precedence(self):
         candidate_path = self.tmp / "repo" / "work" / "exchange"
@@ -128,195 +138,24 @@ max_items = 4
         self.assertEqual(cfg.zones, {})
         self.assertEqual(len(cfg.autozones), 1)
 
-    def test_autozone_exige_max_items_et_refuse_sidecar(self):
+    def test_autozone_est_sidecar_et_convertit_ancienne_limite(self):
         common = f"""listen_address = \"127.0.0.1\"
 allowed_hosts = [\"localhost\"]
 allow_unauthenticated_local = true
 base_directory = {str(self.tmp)!r}
 """
-        for extra in (
-            "storage_mode = \"directory\"\n",
-            "storage_mode = \"sidecar\"\nmax_items = 2\n",
-        ):
-            with self.subTest(extra=extra):
-                with self.assertRaises(ConfigError):
-                    self._load(
-                        common
-                        + "\n[[autozone]]\n"
-                        + "base_directory = " + repr(str(self.tmp)) + "\n"
-                        + "pattern = \"^[^/]+$\"\n"
-                        + "group = \"Repositories\"\n"
-                        + extra
-                    )
-
-
-class TestDirectoryDestination(unittest.TestCase):
-    def setUp(self):
-        self._tmp = tempfile.TemporaryDirectory()
-        self.tmp = Path(self._tmp.name)
-        self.addCleanup(self._tmp.cleanup)
-        self.destination = DirectoryDestination(self.tmp, max_items=2)
-        self.info = ContentInfo(kind="text", ext=".txt", mime="text/plain")
-
-    def test_root_files_are_visible_without_sidecars(self):
-        source = self.tmp.with_name(f"{self.tmp.name}-source.txt")
-        source.write_text("hello", encoding="utf-8")
-        self.addCleanup(source.unlink)
-        shutil.copyfile(source, self.tmp / "external.txt")
-
-        items = self.destination.list()
-
-        self.assertEqual([item.filename for item in items], ["external.txt"])
-        self.assertEqual(items[0].comment, "")
-        self.assertIsNotNone(items[0].changed_at)
-        self.assertFalse((self.tmp / "external.txt.json").exists())
-
-    def test_comment_is_optional_and_stale_annotations_do_not_hide_data(self):
-        (self.tmp / "external.txt").write_text("hello", encoding="utf-8")
-        self.destination.update_comment("external.txt", "memo")
-        self.assertEqual(self.destination.list()[0].comment, "memo")
-
-        (self.tmp / "external.txt").write_text("changed", encoding="utf-8")
-
-        items = self.destination.list()
-        self.assertEqual(items[0].filename, "external.txt")
-        self.assertEqual(items[0].comment, "")
-
-    def test_limit_blocks_new_file_but_delete_remains_available(self):
-        (self.tmp / "one.txt").write_text("one", encoding="utf-8")
-        (self.tmp / "two.txt").write_text("two", encoding="utf-8")
-        with self.assertRaises(StorageLimitError):
-            self.destination.save(b"three", self.info, filename="three.txt")
-
-        self.destination.delete("one.txt")
-        stored = self.destination.save(b"three", self.info, filename="three.txt")
-        self.assertEqual(stored.filename, "three.txt")
-
-    def test_rename_and_delete_preserve_external_file_semantics(self):
-        (self.tmp / "source.txt").write_text("source", encoding="utf-8")
-
-        renamed = self.destination.rename("source.txt", "target.txt")
-
-        self.assertEqual(renamed.filename, "target.txt")
-        self.assertTrue((self.tmp / "target.txt").is_file())
-        self.destination.delete("target.txt")
-        self.assertFalse((self.tmp / "target.txt").exists())
-
-    def test_completed_incoming_file_is_published_on_list(self):
-        incoming = self.tmp / "incoming"
-        incoming.mkdir()
-        (incoming / "published.txt").write_text("published", encoding="utf-8")
-        (incoming / "pbinc_partial.txt").write_text("partial", encoding="utf-8")
-
-        items = self.destination.list()
-
-        self.assertEqual([item.filename for item in items], ["published.txt"])
-        self.assertEqual((self.tmp / "published.txt").read_text(encoding="utf-8"), "published")
-        self.assertFalse((incoming / "published.txt").exists())
-        self.assertTrue((incoming / "pbinc_partial.txt").exists())
-
-    def test_incoming_collision_is_not_allowed_to_replace_root_file(self):
-        incoming = self.tmp / "incoming"
-        incoming.mkdir()
-        (self.tmp / "same.txt").write_text("root", encoding="utf-8")
-        (incoming / "same.txt").write_text("incoming", encoding="utf-8")
-
-        self.destination.list()
-
-        self.assertEqual((self.tmp / "same.txt").read_text(encoding="utf-8"), "root")
-        self.assertEqual((incoming / "same.txt").read_text(encoding="utf-8"), "incoming")
-
-    def test_incoming_file_counts_before_a_new_save(self):
-        incoming = self.tmp / "incoming"
-        incoming.mkdir()
-        (incoming / "published.txt").write_text("published", encoding="utf-8")
-        (self.tmp / "existing.txt").write_text("existing", encoding="utf-8")
-
-        with self.assertRaises(StorageLimitError):
-            self.destination.save(b"third", self.info, filename="third.txt")
-
-        self.assertTrue((self.tmp / "published.txt").exists())
-        self.assertFalse((self.tmp / "third.txt").exists())
-
-    def test_pbinc_masque_une_copie_progressive_puis_publie_apres_renommage(self):
-        incoming = self.tmp / "incoming"
-        incoming.mkdir()
-        partial = incoming / "pbinc_report.txt"
-        published = incoming / "report.txt"
-        data = b"first line\nsecond line\n"
-
-        with partial.open("wb") as stream:
-            stream.write(data[:6])
-            stream.flush()
-            self.assertEqual(self.destination.list(), [])
-        self.assertTrue(partial.exists())
-
-        with partial.open("ab") as stream:
-            stream.write(data[6:])
-            stream.flush()
-        partial.rename(published)
-
-        items = self.destination.list()
-        self.assertEqual([item.filename for item in items], ["report.txt"])
-        self.assertEqual((self.tmp / "report.txt").read_bytes(), data)
-        self.assertFalse(published.exists())
-
-    def test_publication_incoming_ne_depasse_pas_max_items(self):
-        incoming = self.tmp / "incoming"
-        incoming.mkdir()
-        (self.tmp / "one.txt").write_text("one", encoding="utf-8")
-        (self.tmp / "two.txt").write_text("two", encoding="utf-8")
-        pending = incoming / "three.txt"
-        pending.write_text("three", encoding="utf-8")
-
-        items = self.destination.list()
-
-        self.assertEqual(
-            {item.filename for item in items},
-            {"one.txt", "two.txt"},
+        cfg = self._load(
+            common
+            + "\n[[autozone]]\n"
+            + "base_directory = " + repr(str(self.tmp)) + "\n"
+            + "pattern = \"^[^/]+$\"\n"
+            + "group = \"Repositories\"\n"
+            + "storage_mode = \"directory\"\n"
+            + "max_items = 2\n"
         )
-        self.assertTrue(pending.exists())
-        self.assertFalse((self.tmp / "three.txt").exists())
-
-        self.destination.delete("one.txt")
-        items = self.destination.list()
-        self.assertEqual([item.filename for item in items], ["three.txt", "two.txt"])
-        self.assertFalse(pending.exists())
-
-    def test_classification_ignore_fichier_modifie_pendant_inspection(self):
-        target = self.tmp / "copied.txt"
-        target.write_text("copied", encoding="utf-8")
-
-        with self.destination._directory_fd() as directory_fd:
-            entry = next(
-                item
-                for item in self.destination._regular_root_entries(directory_fd)
-                if item.name == target.name
-            )
-            original_entry_info = self.destination._fs.entry_info
-
-            def changed_entry_info(directory, name):
-                current = original_entry_info(directory, name)
-                if name == target.name and current is not None:
-                    return replace(
-                        current,
-                        modified_ns=(current.modified_ns or 0) + 1,
-                    )
-                return current
-
-            with mock.patch.object(
-                self.destination._fs,
-                "entry_info",
-                side_effect=changed_entry_info,
-            ):
-                self.assertIsNone(
-                    self.destination._classify_entry(directory_fd, entry)
-                )
-
-        self.assertEqual(
-            [item.filename for item in self.destination.list()],
-            [target.name],
-        )
+        self.assertEqual(cfg.autozones[0].storage_mode, "sidecar")
+        self.assertEqual(cfg.autozones[0].retain, 2)
+        self.assertTrue(any("using sidecar storage" in warning for warning in cfg.warnings))
 
 
 class TestDynamicService(unittest.TestCase):
@@ -336,29 +175,28 @@ allow_unauthenticated_local = true
 base_directory = {str(self.tmp)!r}
 pattern = \"^[^/]+/work/exchange$\"
 group = \"Repositories\"
-max_items = 2
+retain = 2
 """,
             encoding="utf-8",
         )
         self.service = PasteService(load_config(config))
 
-    def test_dynamic_lifecycle_and_limit_error(self):
+    def test_dynamic_lifecycle_ignores_direct_files_and_retains_uploads(self):
         zone_id = "repo-work-exchange"
         self.assertTrue(self.service.has_zone(zone_id))
         self.assertEqual(self.service.group_overview()[0]["selection"], "autozone")
 
         (self.candidate / "external.txt").write_text("external", encoding="utf-8")
         history = self.service.history(zone_id)
-        self.assertEqual(history[0]["filename"], "external.txt")
+        self.assertEqual(history, [])
 
         self.service.upload(zone_id, b"second", "text/plain")
         overview = self.service.overview()
         dynamic = overview["zones"][0]
-        self.assertTrue(dynamic["blocked"])
-        self.assertEqual(dynamic["max_items"], 2)
-        with self.assertRaises(ServiceError) as context:
-            self.service.upload(zone_id, b"third", "text/plain")
-        self.assertEqual(context.exception.code, "storage_limit")
+        self.assertEqual(dynamic["retain"], 2)
+        self.assertEqual(dynamic["storage_mode"], "sidecar")
+        self.service.upload(zone_id, b"third", "text/plain")
+        self.assertEqual(len(self.service.history(zone_id)), 2)
 
         shutil.rmtree(self.candidate)
         self.assertFalse(self.service.has_zone(zone_id))

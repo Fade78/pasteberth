@@ -281,8 +281,9 @@ Each `[[zones]]` table defines one independent project area:
 | `color` | `#243447` | Six-digit zone background color. |
 | `create_directory` | `true` | Create a missing zone directory when safe. |
 | `min_free_percent` | `2.0` | Required free-space reserve on the zone filesystem. |
-| `storage_mode` | `sidecar` | `sidecar` for managed pairs, or `directory` for root-file authority. |
-| `max_items` | none | Required for `directory`; blocks new files without automatic deletion. |
+| `storage_mode` | `sidecar` | The managed-pair contract. Legacy `directory` values are normalized to `sidecar` with a warning. |
+| `max_items` | none | Legacy setting; ignored after normalization unless used to populate `retain`. |
+| `file_group` | none | Optional POSIX group name or numeric GID for files created by Pasteberth. The server account must be allowed to use the group. |
 
 The directory is not a browser path. It is the exact server-side directory
 where the harness reads the stored content and where `drop` writes.
@@ -346,13 +347,15 @@ Repeatable `[[autozone]]` rules expose existing directories below an absolute
 `base_directory` when their resolved relative path matches `pattern`. Discovery
 does not create directories or edit configuration, and a configuration may use
 autozones without any static `[[zones]]` entries. Each rule supplies a generated
-group and uses `storage_mode = "directory"` with a required `max_items` limit.
+group and creates a sidecar-backed zone. The discovered directory must already
+be readable and traversable by the server account; discovery never changes its
+ownership or permissions.
 
-Directory zones treat regular files at their root as managed items without
-requiring sidecars. The limit blocks new writes but never deletes files;
-previews, downloads, and explicit deletion remain available. The complete
-contract, including aliases, reserved directories, diagnostics, and lifecycle,
-is in [`docs/autozone-contract.md`](docs/autozone-contract.md).
+Regular files copied or moved directly into an autozone have no coherent
+sidecar, so they remain foreign and are ignored. Uploads through the browser,
+API, or CLI create the data/sidecar pair. The complete discovery contract,
+including aliases, diagnostics, permissions, and lifecycle, is in
+[`docs/autozone-contract.md`](docs/autozone-contract.md).
 
 ## 5. Web UI
 
@@ -373,13 +376,10 @@ target. A direct drop always targets the zone under the pointer. Several files
 are uploaded sequentially as independent operations; one failed file does not
 cancel the others.
 
-For sidecar zones, the web UI asks for confirmation before an upload would
-exceed `retain`, because the oldest managed items will then be removed. Directory
-zones instead show a warning when `max_items` is reached and refuse new writes.
-The server remains authoritative and reports the current blocked state in the
-zone overview. A successful sidecar upload that removed items includes their
-filenames in the `retention_deleted` response field; direct API clients should
-inspect it.
+The web UI asks for confirmation before an upload would exceed `retain`, because
+the oldest managed items will then be removed. The server remains authoritative.
+A successful upload that removed items includes their filenames in the
+`retention_deleted` response field; direct API clients should inspect it.
 
 After an upload, Pasteberth tries to copy the exact returned reference to the
 clipboard. Clipboard permissions are controlled by the browser.
@@ -520,26 +520,26 @@ Exit codes are:
 Warnings include broad zone permissions, wildcard host checks, and other
 conditions that may be intentional but deserve review.
 
-### 6.5 Filesystem drop
+### 6.5 Server-backed drop
 
 ```sh
-pasteberth drop [--config PATH] [--replace] \
-  /absolute/path/to/configured/zone /path/to/report.pdf /path/to/screen.png
+pasteberth drop [--config PATH] [--server URL] [--zone ID] [--replace] \
+  /path/to/report.pdf /path/to/screen.png
 ```
 
-The first positional argument is the exact absolute directory configured for a
-zone. It is not the zone ID or UI label. One or more regular source files are
-accepted. Sources remain unchanged and the command prints one returned
-reference per successful source. The initial implementation is flat: each
-source basename is stored directly in the zone, never in a source subdirectory.
-If a source is already the exact file in the destination zone and has no
-sidecar, Pasteberth adopts it by validating the content and creating only its
-sidecar; the existing data file is not rewritten. A source outside the zone
-with the same basename still cannot overwrite a foreign file.
+`drop` uploads through the Pasteberth HTTP API. Use `--zone ID` to select the
+destination and `--server URL` for a remote server; when omitted, both can be
+derived from the local configuration and a configured zone directory. One or
+more regular source files are accepted, remain unchanged, and produce one
+returned reference per successful upload. The server creates the managed
+data/sidecar pair. A file already present in the destination without a coherent
+sidecar is foreign and is never adopted or overwritten.
 
 Without `--replace`, an existing managed filename is refused. With
 `--replace`, only a coherent Pasteberth-managed pair may be replaced. A foreign
-file is never overwritten, even with `--replace`.
+file is never overwritten, even with `--replace`. Authentication prompts for a
+password after a `401`; `PASTEBERTH_PASSWORD` and `--password-stdin` support
+non-interactive calls.
 
 ### 6.6 Filesystem rename
 
@@ -860,8 +860,9 @@ and previews. The prefix is a configured public path, not part of the browser
 
 `/api/zones/{id}/images` and its `images` response key cover images, UTF-8 text,
 and opaque binary content. Each zone reports `busy`, copied-list formatting
-settings, whether ZIP download is enabled, and its `storage_mode`. Directory
-zones also report `max_items`, `blocked`, and an optional `block_reason`.
+settings, whether ZIP download is enabled, and its sidecar `retain` setting.
+The server account owns files it creates; configure `file_group` and matching
+directory group permissions when other system users must read them.
 Each image may also include `changed_at`; it is `null` when the destination
 cannot provide a change timestamp.
 
@@ -880,7 +881,7 @@ curl -b cookies.txt \
 Without `preserve_name=1`, the server generates the filename. A managed name
 collision without `replace=1` returns `428 replacement_required`. A foreign
 file collision returns `409 storage_conflict`. Low free space returns
-`507 storage_low`; a full directory zone returns `507 storage_limit`.
+`507 storage_low`.
 
 API errors use a JSON object with this shape:
 
@@ -910,7 +911,7 @@ The main application error codes are:
 | `429` | `rate_limited` | Login attempts are temporarily throttled. |
 | `500` | `destination_error`, `internal` | The server could not complete a storage or internal operation. |
 | `503` | `retention_error` | Retention cleanup could not complete. |
-| `507` | `storage_low`, `storage_limit` | The free-space reserve or directory item limit would be exceeded. |
+| `507` | `storage_low` | The configured free-space reserve would be exceeded. |
 
 The response includes fields such as:
 

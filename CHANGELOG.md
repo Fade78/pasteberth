@@ -2,6 +2,19 @@
 
 This file records user-visible changes to Pasteberth.
 
+## [2.1.3] - 2026-09-05
+
+### Sidecar Storage and Server Drop
+
+- keep static and dynamically discovered zones on the managed data/sidecar
+  contract, with legacy directory settings normalized at configuration load;
+- add filesystem group ownership support for files created by Pasteberth and
+  report unreadable or unusable group settings during audit;
+- upload CLI `drop` sources through the Pasteberth HTTP API, including remote
+  zone selection, authentication, and TLS verification controls;
+- remove the obsolete sidecar-free directory storage, incoming publication, and
+  blocked-zone API/UI paths.
+
 ## [2.1.2] - 2026-09-05
 
 ### Web UI Synchronization

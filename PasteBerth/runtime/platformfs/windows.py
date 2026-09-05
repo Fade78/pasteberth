@@ -1092,6 +1092,16 @@ class WindowsPlatformFS(PlatformFS):
                 self._close_native(handle)
             raise
 
+    def set_group(self, handle, group: str) -> None:
+        raise UnsupportedFilesystemError(
+            "system file groups are not supported by the Windows backend"
+        )
+
+    def validate_group(self, group: str) -> None:
+        raise UnsupportedFilesystemError(
+            "system file groups are not supported by the Windows backend"
+        )
+
     def entry_info(self, directory: DirectoryHandle, name: str) -> EntryInfo | None:
         try:
             handle, raw = self._entry_native(

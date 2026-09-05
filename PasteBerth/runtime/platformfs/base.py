@@ -215,6 +215,14 @@ class PlatformFS:
     ) -> FileHandle:
         raise NotImplementedError
 
+    def set_group(self, handle: DirectoryHandle | FileHandle, group: str) -> None:
+        """Set the owning system group on a created filesystem object."""
+        raise NotImplementedError
+
+    def validate_group(self, group: str) -> None:
+        """Validate that a configured system group can be resolved."""
+        raise NotImplementedError
+
     def entries(self, directory: DirectoryHandle) -> tuple[EntryInfo, ...]:
         raise NotImplementedError
 

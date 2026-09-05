@@ -38,6 +38,7 @@ _GROUP_SELECTIONS = {"all", "pattern", "other"}
 _GROUP_LAYOUTS = {"area", "tab"}
 _STORAGE_MODES = {"directory", "sidecar"}
 _AUTOZONE_LABEL_MODES = {"git-or-relative", "relative"}
+_FILE_GROUP_RE = re.compile(r"^[A-Za-z0-9_.@+-]{1,128}$")
 _URL_PREFIX_RE = re.compile(r"/(?:[A-Za-z0-9._~-]+)(?:/[A-Za-z0-9._~-]+)*")
 
 DEFAULT_MAX_UPLOAD_BYTES = 20 * 1024**2
@@ -142,7 +143,7 @@ class ZoneConfig:
     create_directory: bool = True
     min_free_percent: float = DEFAULT_MIN_FREE_PERCENT
     storage_mode: str = "sidecar"
-    max_items: int | None = None
+    file_group: str | None = None
 
 
 @dataclass(frozen=True)
@@ -152,8 +153,9 @@ class AutoZoneConfig:
     max_depth: int
     group: str
     label_mode: str = "git-or-relative"
-    storage_mode: str = "directory"
-    max_items: int = 1
+    storage_mode: str = "sidecar"
+    retain: int = 10
+    file_group: str | None = None
     min_free_percent: float = DEFAULT_MIN_FREE_PERCENT
     reference_prefix: str = "@"
     reference_suffix: str = ""
@@ -264,6 +266,17 @@ def _get_str(table: dict, key: str, where: str, *, default: str | None = None,
     value = table[key]
     if not isinstance(value, str) or (not allow_empty and not value.strip()):
         raise ConfigError(f"{where}: '{key}' must be a non-empty string")
+    return value
+
+
+def _get_file_group(table: dict, where: str) -> str | None:
+    value = table.get("file_group")
+    if value is None:
+        return None
+    if not isinstance(value, str) or not _FILE_GROUP_RE.fullmatch(value):
+        raise ConfigError(
+            f"{where}: 'file_group' must be a simple system group name or numeric GID"
+        )
     return value
 
 
@@ -485,7 +498,7 @@ def _parse_zone(raw_zone: object, index: int, warnings: list[str]) -> ZoneConfig
     table = _expect_table(raw_zone, where)
     _warn_unknown(
         table,
-        {"id", "label", "type", "directory", "retain", "storage_mode", "max_items",
+        {"id", "label", "type", "directory", "retain", "storage_mode", "max_items", "file_group",
          "reference_prefix", "reference_suffix",
          "reference_list_prefix", "reference_list_suffix", "reference_separator",
          "allow_zip_download", "color", "create_directory", "min_free_percent"},
@@ -515,11 +528,12 @@ def _parse_zone(raw_zone: object, index: int, warnings: list[str]) -> ZoneConfig
     if "\x00" in directory_raw:
         raise ConfigError(f"{where}: 'directory' contains a NUL character")
     directory = ensure_external_path(directory, f"{where} 'directory'")
+    file_group = _get_file_group(table, where)
     retain = table.get("retain", 10)
     if isinstance(retain, bool) or not isinstance(retain, int) or retain < 1:
         raise ConfigError(f"{where}: 'retain' must be a positive integer")
-    storage_mode = _get_str(table, "storage_mode", where, default="sidecar").lower()
-    if storage_mode not in _STORAGE_MODES:
+    requested_storage_mode = _get_str(table, "storage_mode", where, default="sidecar").lower()
+    if requested_storage_mode not in _STORAGE_MODES:
         raise ConfigError(
             f"{where}: 'storage_mode' must be one of {sorted(_STORAGE_MODES)}"
         )
@@ -528,11 +542,17 @@ def _parse_zone(raw_zone: object, index: int, warnings: list[str]) -> ZoneConfig
         isinstance(max_items, bool) or not isinstance(max_items, int) or max_items < 1
     ):
         raise ConfigError(f"{where}: 'max_items' must be a positive integer")
-    if storage_mode == "directory" and max_items is None:
-        raise ConfigError(f"{where}: 'max_items' is required for directory storage")
-    if storage_mode == "directory" and "retain" in table:
-        warnings.append(f"{where}: 'retain' is ignored for directory storage")
-    if storage_mode == "sidecar" and max_items is not None:
+    storage_mode = "sidecar"
+    legacy_max_items_used = False
+    if requested_storage_mode == "directory":
+        warnings.append(
+            f"{where}: directory storage is no longer supported; using sidecar storage"
+        )
+        if "retain" not in table and max_items is not None:
+            retain = max_items
+            legacy_max_items_used = True
+            warnings.append(f"{where}: 'max_items' is deprecated; using it as 'retain'")
+    if storage_mode == "sidecar" and max_items is not None and not legacy_max_items_used:
         warnings.append(f"{where}: 'max_items' is ignored for sidecar storage")
     prefix = _get_str(table, "reference_prefix", where, default="@", allow_empty=True)
     suffix = _get_str(table, "reference_suffix", where, default="", allow_empty=True)
@@ -573,7 +593,7 @@ def _parse_zone(raw_zone: object, index: int, warnings: list[str]) -> ZoneConfig
         create_directory=create_dir,
         min_free_percent=min_free_percent,
         storage_mode=storage_mode,
-        max_items=max_items,
+        file_group=file_group,
     )
 
 
@@ -584,7 +604,7 @@ def _parse_autozone(raw_autozone: object, index: int, warnings: list[str]) -> Au
         table,
         {
             "base_directory", "pattern", "max_depth", "group", "label_mode",
-            "storage_mode", "max_items", "min_free_percent", "retain",
+            "storage_mode", "max_items", "min_free_percent", "retain", "file_group",
             "reference_prefix", "reference_suffix", "reference_list_prefix",
             "reference_list_suffix", "reference_separator", "allow_zip_download",
             "color", "group_layout", "group_hide_empty", "group_show_count",
@@ -614,21 +634,35 @@ def _parse_autozone(raw_autozone: object, index: int, warnings: list[str]) -> Au
     if isinstance(max_depth, bool) or not isinstance(max_depth, int) or max_depth < 1:
         raise ConfigError(f"{where}: 'max_depth' must be a positive integer")
     group = _get_str(table, "group", where)
+    file_group = _get_file_group(table, where)
     label_mode = _get_str(table, "label_mode", where, default="git-or-relative").lower()
     if label_mode not in _AUTOZONE_LABEL_MODES:
         raise ConfigError(
             f"{where}: 'label_mode' must be one of {sorted(_AUTOZONE_LABEL_MODES)}"
         )
-    storage_mode = _get_str(table, "storage_mode", where, default="directory").lower()
-    if storage_mode != "directory":
-        raise ConfigError(f"{where}: 'storage_mode' must be 'directory'")
-    max_items = table.get("max_items")
-    if isinstance(max_items, bool) or not isinstance(max_items, int) or max_items < 1:
+    requested_storage_mode = _get_str(table, "storage_mode", where, default="sidecar").lower()
+    if requested_storage_mode not in _STORAGE_MODES:
         raise ConfigError(
-            f"{where}: 'max_items' must be a positive integer for directory storage"
+            f"{where}: 'storage_mode' must be one of {sorted(_STORAGE_MODES)}"
         )
-    if "retain" in table:
-        warnings.append(f"{where}: 'retain' is ignored for directory storage")
+    storage_mode = "sidecar"
+    if requested_storage_mode == "directory":
+        warnings.append(
+            f"{where}: directory storage is no longer supported for autozones; "
+            "using sidecar storage"
+        )
+    retain_value = table.get("retain")
+    legacy_max_items = table.get("max_items")
+    if retain_value is None and legacy_max_items is not None:
+        retain_value = legacy_max_items
+        warnings.append(
+            f"{where}: 'max_items' is deprecated for autozones; using it as 'retain'"
+        )
+    retain = 10 if retain_value is None else retain_value
+    if isinstance(retain, bool) or not isinstance(retain, int) or retain < 1:
+        raise ConfigError(f"{where}: 'retain' must be a positive integer")
+    if retain_value is not None and "retain" in table and legacy_max_items is not None:
+        warnings.append(f"{where}: 'max_items' is ignored because 'retain' is set")
 
     min_free_percent = _get_percent(
         table, "min_free_percent", where, DEFAULT_MIN_FREE_PERCENT
@@ -667,7 +701,8 @@ def _parse_autozone(raw_autozone: object, index: int, warnings: list[str]) -> Au
         group=group,
         label_mode=label_mode,
         storage_mode=storage_mode,
-        max_items=max_items,
+        retain=retain,
+        file_group=file_group,
         min_free_percent=min_free_percent,
         reference_prefix=prefix,
         reference_suffix=suffix,
@@ -1197,9 +1232,9 @@ def prepare_directories(cfg: Config) -> None:
             raise ConfigError(
                 f"zone '{zone.id}': cannot inspect {zone.directory} ({exc})"
             ) from exc
-        if not fs.check_access(directory_path, write=True, execute=True):
+        if not fs.check_access(directory_path, read=True, write=True, execute=True):
             raise ConfigError(
-                f"zone '{zone.id}': directory is not writable: {directory_path}"
+                f"zone '{zone.id}': directory is not readable and writable: {directory_path}"
             )
         previous = seen.get(identity)
         if previous is not None:

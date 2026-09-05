@@ -46,7 +46,8 @@ class Base(unittest.TestCase):
             "secondary": tmp / "secondary-images",
         }
         zones = [
-            {"id": zid, "label": zid.upper(), "retain": retain,
+            {"id": zid, "label": zid.upper(),
+             "retain": self.config_kwargs.get("retain", retain),
              "color": color, "directory": str(path),
              "reference_prefix": self.config_kwargs.get("reference_prefix", "@"),
              "reference_suffix": self.config_kwargs.get("reference_suffix", ""),
@@ -150,10 +151,11 @@ class TestLimiteUpload(Base):
         self.assertEqual(json_of(response)["error"]["code"], "too_large")
 
 
-class TestDirectoryZone(Base):
-    config_kwargs = {"storage_mode": "directory", "max_items": 1}
+class TestSidecarZone(Base):
+    # Legacy directory settings are normalized to the sidecar contract.
+    config_kwargs = {"storage_mode": "directory", "max_items": 1, "retain": 1}
 
-    def test_copie_externe_est_visible_via_http_preview_et_delete(self):
+    def test_copie_externe_reste_invisible_et_preservee(self):
         source = self.tmp / "external-source.txt"
         source.write_text("copied outside Pasteberth\n", encoding="utf-8")
         target = self.zones_dirs["default"] / "copied.txt"
@@ -162,28 +164,21 @@ class TestDirectoryZone(Base):
         status, _, response = self.req("GET", "/api/zones/default/images")
         self.assertEqual(status, 200)
         items = json_of(response)["images"]
-        self.assertEqual([item["filename"] for item in items], ["copied.txt"])
-
-        status, headers, data = self.req("GET", items[0]["preview_url"])
-        self.assertEqual(status, 200)
-        self.assertEqual(headers["content-type"], "text/plain")
-        self.assertEqual(data, source.read_bytes())
+        self.assertEqual(items, [])
 
         status, _, response = self.req(
             "DELETE",
             "/api/zones/default/images/copied.txt",
         )
-        self.assertEqual(status, 200)
-        self.assertEqual(json_of(response), {"deleted": "copied.txt"})
-        self.assertFalse(target.exists())
+        self.assertEqual(status, 404)
+        self.assertTrue(target.exists())
         self.assertTrue(source.exists())
 
-    def test_overview_and_upload_report_directory_limit(self):
+    def test_overview_and_upload_report_sidecar_retention(self):
         status, _, response = self.req("GET", "/api/zones")
         self.assertEqual(status, 200)
         zone = next(item for item in json_of(response)["zones"] if item["id"] == "default")
-        self.assertEqual(zone["storage_mode"], "directory")
-        self.assertFalse(zone["blocked"])
+        self.assertEqual(zone["storage_mode"], "sidecar")
 
         body, content_type = build_multipart(
             filename="one.txt",
@@ -202,7 +197,7 @@ class TestDirectoryZone(Base):
         status, _, response = self.req("GET", "/api/zones")
         self.assertEqual(status, 200)
         zone = next(item for item in json_of(response)["zones"] if item["id"] == "default")
-        self.assertTrue(zone["blocked"])
+        self.assertEqual(zone["count"], 1)
 
         body, content_type = build_multipart(
             filename="two.txt",
@@ -216,8 +211,7 @@ class TestDirectoryZone(Base):
             body=body,
             headers={"Content-Type": content_type},
         )
-        self.assertEqual(status, 507)
-        self.assertEqual(json_of(response)["error"]["code"], "storage_limit")
+        self.assertEqual(status, 201, response)
 
 
 class TestLimiteNomFichier(Base):

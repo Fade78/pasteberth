@@ -257,6 +257,8 @@ def write_config(
             lines.append(f"storage_mode = {json.dumps(zone['storage_mode'])}")
         if zone.get("max_items") is not None:
             lines.append(f"max_items = {zone['max_items']}")
+        if zone.get("file_group") is not None:
+            lines.append(f"file_group = {json.dumps(zone['file_group'])}")
         lines.append(
             f"reference_prefix = {json.dumps(zone.get('reference_prefix', '@'))}"
         )

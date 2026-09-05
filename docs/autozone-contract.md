@@ -1,7 +1,7 @@
 # Pasteberth Autozone Contract
 
 Status: implemented contract. This document describes the `[[autozone]]`
-feature and the sidecar-free directory storage used by discovered zones.
+feature and the sidecar storage used by discovered zones.
 
 ## 1. Purpose
 
@@ -40,8 +40,8 @@ group = "Repositories"
 label_mode = "git-or-relative"
 
 # Zone template.
-storage_mode = "directory"
-max_items = 1000
+retain = 10
+file_group = "pasteberth"
 min_free_percent = 2.0
 reference_prefix = "@"
 reference_suffix = ""
@@ -66,8 +66,9 @@ group_show_count = true
 | `max_depth` | `4` | Maximum number of path components in the candidate path relative to `base_directory`, after path resolution. It is a traversal bound, not a filesystem quota. |
 | `group` | required | Name of the group to which every candidate from this rule is added. |
 | `label_mode` | `git-or-relative` | `git-or-relative` uses the nearest Git worktree directory name when found; `relative` always uses the normalized relative path. |
-| `storage_mode` | `directory` | Storage contract applied to every discovered zone. `directory` is the sidecar-free mode defined in section 6. The existing `sidecar` mode may be supported by a later implementation, but is not implied by this contract. |
-| `max_items` | required for `directory` | Positive maximum number of regular files at the zone root. Exceeding it blocks Pasteberth writes; it never causes automatic deletion. |
+| `storage_mode` | `sidecar` | Legacy `directory` values are normalized to sidecar storage with a warning. |
+| `retain` | `10` | Number of managed pairs retained; older pairs are removed after a successful upload. |
+| `file_group` | none | Optional POSIX group name or numeric GID for files created by Pasteberth. |
 | `min_free_percent` | `2.0` | Minimum free-space reserve on the filesystem. It uses the same meaning as the static-zone setting. |
 | `reference_prefix` | `@` | Prefix for one returned filesystem reference. |
 | `reference_suffix` | empty | Suffix for one returned filesystem reference. |
@@ -80,9 +81,13 @@ group_show_count = true
 | `group_hide_empty` | `false` | Empty-group visibility for a generated group only. |
 | `group_show_count` | `true` | Zone-count visibility for a generated group only. |
 
-`retain` is not used by `storage_mode = "directory"`. A directory zone uses
-`max_items` as a blocking limit and never evicts files automatically. Supplying
-both is an audit warning and does not restore destructive retention semantics.
+`max_items` is a legacy setting. It is ignored after normalization when an
+explicit `retain` is present; otherwise its value is used as the migration
+value for `retain`. New configurations should use `retain` only.
+
+The server process must have read and execute permission on an autozone
+directory. `file_group` affects files created by Pasteberth, but cannot grant
+access to a parent directory or make an unreadable candidate discoverable.
 
 The ordinary global and zone validation rules still apply: NUL characters,
 relative paths, invalid colors, invalid percentages, invalid regular
@@ -118,9 +123,9 @@ Each rule is evaluated independently.
    `base_directory`.
 6. A candidate must be an existing, accessible directory. Discovery never
    creates a missing candidate.
-7. A candidate is accepted only when its subtree contains no user-created
-   subdirectory other than the reserved Pasteberth directories for its storage
-   mode. Regular files are allowed at the zone root.
+7. A candidate is accepted only when its subtree contains no subdirectory.
+   Regular files are allowed at the zone root but are not managed without a
+   sidecar.
 
 A resolved target that cannot be represented as a relative path below the
 resolved `base_directory` is not a match for this relative-path rule. This is
@@ -131,21 +136,13 @@ The scan must not follow file symlinks as content. Directory links are followed
 for discovery; content entries are still subject to the existing regular-file
 and no-follow safety rules.
 
-### 3.1 Reserved directories
+### 3.1 Candidate contents
 
-For `storage_mode = "directory"`, the only directories allowed below a
-candidate are:
-
-```text
-incoming/
-.pasteberth/
-```
-
-The contents of those directories are Pasteberth internal state and are not
-zone content. A user directory beside them, or below them where the storage
-contract does not permit it, makes the candidate ineligible. The scanner keeps
-the candidate out of the public zone list and reports the reason through
-`audit` or a diagnostic log.
+There are no reserved subdirectories in the sidecar contract. Pasteberth's
+managed pairs and transaction files live at the candidate root; any directory
+below the candidate makes it ineligible. The scanner keeps the candidate out
+of the public zone list and reports the reason through `audit` or a diagnostic
+log.
 
 ## 4. Zone identity and labels
 
@@ -222,66 +219,49 @@ Autozone membership is also included when resolving `other`: the existing
 group semantics determine the ordinary members, and the explicit autozone
 membership is added rather than silently discarded.
 
-## 6. Sidecar-free directory storage
+## 6. Sidecar storage
 
-An autozone using `storage_mode = "directory"` has this layout:
+An autozone uses the same layout and ownership contract as a static zone:
 
 ```text
 zone/
-  report.pdf                         # managed because it is at the root
-  incoming/
-    pbinc_report.pdf                 # incomplete construction file
-  .pasteberth/
-    meta/
-      pbmeta_report.pdf.json         # optional comment annotation
+  report.pdf
+  report.pdf.json
 ```
 
-The presence of a regular file at the zone root is the sole authority that the
-file is managed. No metadata file is required for visibility, ownership, URL
-generation, preview, deletion, or download.
+The data file and its matching JSON sidecar form one managed item. Pasteberth
+creates both through the server API, validates the pair before reads,
+replacements, renames, and deletions, and preserves foreign files. A regular
+root file without a coherent sidecar is not visible in the API and cannot be
+adopted, previewed, replaced, renamed, or deleted by Pasteberth.
 
-`pbinc_<name>` is a data filename, not a metadata JSON file. It is reserved in
-`incoming/` to signal that a producer is still constructing the file. The
-producer publishes a completed cross-filesystem copy by renaming it from
-`pbinc_<name>` to `<name>` inside `incoming/`, after which Pasteberth can move
-`<name>` atomically to the zone root. When the source and destination are on the
-same filesystem, the producer may move directly into the zone root; the atomic
-`mv` is the publication event.
+Temporary files and transaction markers are private implementation details.
+They are reconciled on startup and must not be edited or published by an
+external producer. Comments are stored in the managed JSON sidecar.
 
-A normal external `mv` may replace an existing root filename. This cannot be
-confirmed in advance by Pasteberth, so the replacement is accepted. The next
-poll identifies the changed item and marks it `NEW`; an old annotation is not
-applicable when its file fingerprint no longer matches the content.
+When `file_group` is configured on POSIX, the data file, sidecar, and internal
+files created by Pasteberth receive that group and group-readable/writeable
+permissions. The configured group does not change permissions on the zone or
+its parents; the operator must provide directory read and execute access.
 
-`pbmeta_<name>.json` is an optional comment file. Its absence means no
-comment. It contains only the comment, a format version, and a portable file
-fingerprint sufficient to reject an annotation after an external replacement.
-An invalid, missing, stale, or orphaned annotation never hides or deletes the
-root data file.
+## 7. Retention and filesystem permissions
 
-The root reader ignores `incoming/`, `.pasteberth/`, reserved internal names,
-links, and non-regular entries. A regular root file with no annotation is still
-a complete managed item.
+`retain` counts coherent managed pairs. After an accepted upload, Pasteberth
+removes the oldest managed pairs beyond the configured count. Foreign files,
+orphan sidecars, malformed sidecars, and transaction remnants are preserved.
 
-## 7. Limits and blocked zones
+`min_free_percent` still protects the filesystem from uploads when the free
+space reserve is exhausted. A low-space response is not a retention limit and
+does not authorize deletion of foreign files.
 
-For a directory zone, `max_items` counts regular managed files at the root;
-internal files and `pbinc_*` files do not count. The existing
-`min_free_percent` reserve also applies.
+If the server account cannot read or traverse a candidate directory, discovery
+records a diagnostic and leaves that candidate out of the dynamic registry.
+If access is lost after discovery, the corresponding operation returns a
+destination error rather than bypassing operating-system permissions.
 
-When either limit is exceeded:
-
-- the zone is reported as `blocked` in the overview;
-- the Web UI displays a warning triangle;
-- Pasteberth refuses new Web uploads and controlled publications;
-- reads, previews, archives, and explicit deletions remain available where
-  the filesystem permits them;
-- no file is deleted automatically.
-
-An external process can still bypass Pasteberth and move a file into the root.
-The next poll counts it and keeps the zone blocked. The blocking state is an
-application response to observed state; it is not a replacement for filesystem
-quotas.
+An external process can still copy or move a regular file into the root. It
+remains foreign until a server upload creates a coherent pair; there is no
+filesystem drop/adoption protocol.
 
 ## 8. Refresh and lifecycle
 
@@ -301,7 +281,8 @@ continues using its snapshot; a later request resolves the current registry.
 Dynamic zones use the same API shape as static zones:
 
 - `GET /api/zones` includes discovered zones and their current group IDs;
-- `GET /api/zones/{id}/images` reads the current candidate directory;
+- `GET /api/zones/{id}/images` reads coherent sidecar pairs in the current
+  candidate directory;
 - upload, comment, delete, preview, archive, and CLI directory resolution use
   the current dynamic registry;
 - a zone that disappeared between two requests returns the normal unknown-zone
@@ -319,7 +300,7 @@ files. It reports:
 - invalid, overlong, or colliding generated IDs;
 - static-zone precedence over an autozone candidate;
 - conflicting generated-group options;
-- use of `retain` with directory storage;
+- invalid or unusable `file_group` settings and unreadable candidate paths;
 - the number of currently discovered candidates per rule.
 
 An individual bad candidate must not hide otherwise valid candidates from the
@@ -329,11 +310,11 @@ out of the registry until a later poll succeeds.
 
 ## 10. Non-goals
 
-This contract does not add migration of existing sidecar zones. A static zone
-continues using its current sidecar contract until an explicit future migration
-feature is designed.
+Legacy directory settings are normalized to sidecar storage at configuration
+load time. Existing root files without sidecars are intentionally not migrated
+or adopted.
 
 It does not make arbitrary nested project trees into recursive Pasteberth zones:
-an accepted candidate is itself a zone and may contain only its reserved
-Pasteberth directories. It does not provide cross-server synchronization,
+an accepted candidate is itself a zone and may not contain subdirectories. It
+does not provide cross-server synchronization,
 filesystem quotas, or a persistent database of discovered zones.

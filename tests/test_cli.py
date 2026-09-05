@@ -1,6 +1,5 @@
 """Tests CLI (sous-processus) : --version, erreurs de config, politique de
 démarrage, commande passwd."""
-import json
 import os
 import shutil
 import stat
@@ -18,7 +17,7 @@ from PasteBerth.runtime.cli import _audit_tls, _network_warning, _read_drop_sour
 from PasteBerth.runtime.config import load_config
 from PasteBerth.runtime.platformfs import platform_fs
 
-from tests.helpers import REPO_ROOT, running_under_wine, write_config
+from tests.helpers import LiveServer, REPO_ROOT, running_under_wine, write_config
 
 ENV = {**os.environ, "PYTHONPATH": str(REPO_ROOT)}
 
@@ -581,6 +580,27 @@ class TestConfigurationDepot(unittest.TestCase):
         self.assertIn("permissions are not private", proc.stdout)
         self.assertIn("Audit ready with", proc.stdout)
 
+    def test_audit_refuse_un_groupe_de_fichiers_inconnu(self):
+        with socket.socket() as probe:
+            probe.bind(("127.0.0.1", 0))
+            port = probe.getsockname()[1]
+        cfg = write_config(
+            self.tmp,
+            port=port,
+            zones=[
+                {
+                    "id": "grouped",
+                    "directory": str(self.tmp / "grouped"),
+                    "file_group": "__pasteberth_missing_group__",
+                },
+            ],
+        )
+
+        proc = run_cli(["audit", "--config", str(cfg)])
+
+        self.assertEqual(proc.returncode, 2)
+        self.assertIn("file_group", proc.stdout)
+
     def test_audit_permissions_group_writable_avertit_aussi(self):
         # Feature: un mode group-writable (0o775) avertit mais n'échoue pas,
         # sinon l'opérateur contourne la protection (chmod 777, stockage hors zone).
@@ -836,12 +856,22 @@ class TestFilesystemDrop(unittest.TestCase):
         self.addCleanup(self._tmp.cleanup)
         self.cfg = write_config(self.tmp)
         self.zone = self.tmp / "default-images"
+        self.server = LiveServer(self.cfg)
+        self.addCleanup(self.server.stop)
 
     def _run_drop(self, *sources, replace=False):
-        args = ["drop", "--config", str(self.cfg)]
+        args = [
+            "drop",
+            "--config",
+            str(self.cfg),
+            "--server",
+            f"http://127.0.0.1:{self.server.port}",
+            "--zone",
+            "default",
+        ]
         if replace:
             args.append("--replace")
-        args.extend([str(self.zone), *(str(source) for source in sources)])
+        args.extend(str(source) for source in sources)
         return run_cli(args)
 
     def _run_rename(self, source, target):
@@ -904,7 +934,7 @@ class TestFilesystemDrop(unittest.TestCase):
 
     def test_fichier_etranger_jamais_ecrase_meme_avec_replace(self):
         foreign = self.zone / "foreign.txt"
-        self.zone.mkdir(parents=True)
+        self.zone.mkdir(parents=True, exist_ok=True)
         foreign.write_text("foreign\n", encoding="utf-8")
         source = self.tmp / "foreign-source.txt"
         source.write_text("replacement\n", encoding="utf-8")
@@ -916,22 +946,17 @@ class TestFilesystemDrop(unittest.TestCase):
         self.assertIn("foreign file", proc.stderr)
         self.assertEqual(foreign.read_text(encoding="utf-8"), "foreign\n")
 
-    def test_adopte_un_fichier_deja_dans_la_zone(self):
+    def test_drop_refuse_un_fichier_deja_present_sans_sidecar(self):
         target = self.zone / "already.txt"
-        self.zone.mkdir(parents=True)
+        self.zone.mkdir(parents=True, exist_ok=True)
         target.write_text("already here\n", encoding="utf-8")
 
         proc = self._run_drop(target)
 
-        self.assertEqual(proc.returncode, 0, proc.stderr)
-        self.assertIn("@", proc.stdout)
+        self.assertEqual(proc.returncode, 1, proc.stderr)
+        self.assertIn("foreign file", proc.stderr)
         self.assertEqual(target.read_text(encoding="utf-8"), "already here\n")
-        metadata = json.loads(
-            (self.zone / (target.name + ".json")).read_text(encoding="utf-8")
-        )
-        self.assertEqual(metadata["filename"], target.name)
-        self.assertEqual(metadata["size"], len(b"already here\n"))
-        self.assertEqual(metadata["kind"], "text")
+        self.assertFalse((self.zone / (target.name + ".json")).exists())
 
     def test_plusieurs_sources_sont_traitees_individuellement(self):
         first = self.tmp / "first.txt"
@@ -1023,24 +1048,38 @@ class TestFilesystemDropAutozone(unittest.TestCase):
         self.cfg = self.tmp / "config.toml"
         self.cfg.write_text(
             f'''listen_address = "127.0.0.1"
-allowed_hosts = ["localhost"]
+allowed_hosts = ["localhost", "127.0.0.1"]
 allow_unauthenticated_local = true
+
+[auth]
+enabled = false
 
 [[autozone]]
 base_directory = {str(self.tmp)!r}
 pattern = "^[^/]+/work/exchange$"
 group = "Repositories"
-max_items = 2
+retain = 2
 ''',
             encoding="utf-8",
         )
+        self.server = LiveServer(self.cfg)
+        self.addCleanup(self.server.stop)
 
     def test_drop_resout_une_zone_dynamique(self):
         source = self.tmp / "published.txt"
         source.write_text("published", encoding="utf-8")
 
         proc = run_cli(
-            ["drop", "--config", str(self.cfg), str(self.zone), str(source)]
+            [
+                "drop",
+                "--config",
+                str(self.cfg),
+                "--server",
+                f"http://127.0.0.1:{self.server.port}",
+                "--zone",
+                "project-work-exchange",
+                str(source),
+            ]
         )
 
         self.assertEqual(proc.returncode, 0, proc.stderr)
@@ -1049,6 +1088,43 @@ max_items = 2
             (self.zone / source.name).read_text(encoding="utf-8"),
             "published",
         )
+
+
+class TestServerBackedDropAuth(unittest.TestCase):
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.tmp = Path(self._tmp.name)
+        self.addCleanup(self._tmp.cleanup)
+        self.cfg = write_config(
+            self.tmp,
+            auth_enabled=True,
+            password="drop-password",
+        )
+        self.server = LiveServer(self.cfg)
+        self.addCleanup(self.server.stop)
+
+    def test_drop_lit_le_mot_de_passe_sur_stdin_apres_une_reponse_401(self):
+        source = self.tmp / "authenticated.txt"
+        source.write_text("authenticated", encoding="utf-8")
+
+        proc = run_cli(
+            [
+                "drop",
+                "--config",
+                str(self.cfg),
+                "--server",
+                f"http://127.0.0.1:{self.server.port}",
+                "--zone",
+                "default",
+                "--password-stdin",
+                str(source),
+            ],
+            input_text="drop-password\n",
+        )
+
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertIn("@", proc.stdout)
+        self.assertTrue((self.tmp / "default-images" / source.name).exists())
 
 
 if __name__ == "__main__":

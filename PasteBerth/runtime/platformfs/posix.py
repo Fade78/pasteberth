@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import errno
 import fcntl
+import grp
 import os
 import stat
 from contextlib import contextmanager
@@ -28,6 +29,7 @@ from .base import (
 
 _O_DIRECTORY = getattr(os, "O_DIRECTORY", 0)
 _O_NOFOLLOW = getattr(os, "O_NOFOLLOW", 0)
+_O_PATH = getattr(os, "O_PATH", 0)
 _O_NONBLOCK = getattr(os, "O_NONBLOCK", 0)
 _O_CLOEXEC = getattr(os, "O_CLOEXEC", 0)
 
@@ -131,6 +133,17 @@ class PosixPlatformFS(PlatformFS):
                         next_fd = os.open(
                             part,
                             os.O_RDONLY | _O_DIRECTORY | _O_NOFOLLOW | _O_CLOEXEC,
+                            dir_fd=fd,
+                        )
+                    except PermissionError:
+                        # A parent may deliberately grant search permission
+                        # without directory listing permission. Linux O_PATH
+                        # keeps that safe descriptor walk possible.
+                        if not _O_PATH:
+                            raise
+                        next_fd = os.open(
+                            part,
+                            _O_PATH | _O_DIRECTORY | _O_NOFOLLOW | _O_CLOEXEC,
                             dir_fd=fd,
                         )
                     except FileNotFoundError:
@@ -238,6 +251,32 @@ class PosixPlatformFS(PlatformFS):
             return self._regular_handle(fd, name, mode)
         except FileExistsError as exc:
             raise EntryExistsError(str(exc)) from exc
+
+    @staticmethod
+    def _group_id(group: str) -> int:
+        try:
+            if group.isdecimal():
+                gid = int(group, 10)
+            else:
+                gid = grp.getgrnam(group).gr_gid
+        except (KeyError, ValueError) as exc:
+            raise PermissionSecurityError(f"unknown system group: {group!r}") from exc
+        if gid < 0:
+            raise PermissionSecurityError(f"invalid system group: {group!r}")
+        return gid
+
+    def set_group(self, handle: DirectoryHandle | FileHandle, group: str) -> None:
+        if not isinstance(handle, (PosixDirectoryHandle, PosixFileHandle)):
+            raise TypeError("POSIX handle expected")
+        try:
+            os.fchown(handle.fd, -1, self._group_id(group))
+        except PermissionError as exc:
+            raise PermissionSecurityError(
+                f"cannot assign system group {group!r}: {exc}"
+            ) from exc
+
+    def validate_group(self, group: str) -> None:
+        self._group_id(group)
 
     @staticmethod
     def _entry_info_from_stat(name: str, info: os.stat_result) -> EntryInfo:

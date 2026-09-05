@@ -1,4 +1,4 @@
-"""Read-only discovery of directory-backed dynamic zones."""
+"""Read-only discovery of sidecar-backed dynamic zones."""
 from __future__ import annotations
 
 import logging
@@ -13,7 +13,6 @@ from .config import AutoZoneConfig, GroupConfig, ZoneConfig
 
 log = logging.getLogger("pasteberth.autozone")
 
-_RESERVED_DIRECTORIES = frozenset({"incoming", ".pasteberth"})
 _ZONE_ID_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
 
 
@@ -61,43 +60,17 @@ def _git_label(path: Path, relative: str) -> str:
 
 
 def _candidate_subtree_ok(path: Path) -> tuple[bool, str | None]:
-    """Reject user directories while allowing the two Pasteberth subtrees."""
-    root_key = _directory_key(path)
-    stack: list[tuple[Path, bool, frozenset[object]]] = [(path, False, frozenset({root_key}))]
-    while stack:
-        current, inside_reserved, ancestors = stack.pop()
+    """Reject candidates containing any subdirectory."""
+    try:
+        entries = sorted(os.scandir(path), key=lambda entry: entry.name)
+    except OSError as exc:
+        return False, f"cannot inspect subtree {path}: {exc}"
+    for entry in entries:
         try:
-            entries = sorted(os.scandir(current), key=lambda entry: entry.name)
-        except OSError as exc:
-            return False, f"cannot inspect subtree {current}: {exc}"
-        for entry in entries:
-            try:
-                if not entry.is_dir(follow_symlinks=True):
-                    continue
-            except OSError as exc:
-                return False, f"cannot inspect directory entry {entry.name!r}: {exc}"
-            allowed = inside_reserved or entry.name in _RESERVED_DIRECTORIES
-            if not allowed:
+            if entry.is_dir(follow_symlinks=True):
                 return False, f"contains user subdirectory {entry.name!r}"
-            child = Path(entry.path)
-            try:
-                resolved = child.resolve(strict=True)
-            except (OSError, RuntimeError, ValueError) as exc:
-                return False, f"cannot resolve directory {child}: {exc}"
-            try:
-                resolved.relative_to(path)
-            except ValueError:
-                return False, f"reserved directory escapes candidate: {child}"
-            child_key = _directory_key(resolved)
-            if child_key in ancestors:
-                continue
-            stack.append(
-                (
-                    resolved,
-                    inside_reserved or entry.name in _RESERVED_DIRECTORIES,
-                    ancestors | {child_key},
-                )
-            )
+        except OSError as exc:
+            return False, f"cannot inspect directory entry {entry.name!r}: {exc}"
     return True, None
 
 
@@ -180,7 +153,7 @@ def _zone_from_candidate(rule: AutoZoneConfig, path: Path, relative: str) -> Zon
         id=zone_id,
         label=label,
         directory=path,
-        retain=rule.max_items,
+        retain=rule.retain,
         reference_prefix=rule.reference_prefix,
         reference_suffix=rule.reference_suffix,
         reference_list_prefix=rule.reference_list_prefix,
@@ -190,8 +163,8 @@ def _zone_from_candidate(rule: AutoZoneConfig, path: Path, relative: str) -> Zon
         color=rule.color,
         create_directory=False,
         min_free_percent=rule.min_free_percent,
-        storage_mode=rule.storage_mode,
-        max_items=rule.max_items,
+        storage_mode="sidecar",
+        file_group=rule.file_group,
     )
 
 

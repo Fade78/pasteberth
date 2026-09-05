@@ -2,7 +2,7 @@
 
     pasteberth                         # start with local default values
     pasteberth serve   [--config PATH] [--log-level LEVEL]
-    pasteberth drop [--config PATH] [--replace] DIRECTORY FILE...
+    pasteberth drop [--config PATH] [--server URL] [--zone ID] [--replace] [ZONE_DIRECTORY] FILE...
     pasteberth rename [--config PATH] DIRECTORY SOURCE TARGET
     pasteberth delete [--config PATH] [--force] DIRECTORY FILE...
     pasteberth passwd  [--config PATH]
@@ -18,6 +18,7 @@ import getpass
 import logging
 import mimetypes
 import os
+import re
 import secrets
 import ssl
 import stat
@@ -28,6 +29,7 @@ import socket
 
 from . import __version__
 from .autozone import discover_autozones, merge_autozone_groups
+from .client import ClientError, PasteberthClient, api_error
 from .auth import (
     LoginRateLimiter,
     SessionStore,
@@ -290,42 +292,93 @@ def _cmd_delete(args: argparse.Namespace) -> int:
     return 1 if failures else 0
 
 
+_DROP_ZONE_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
+
+
+def _drop_server_url(cfg, explicit: str | None) -> str:
+    if explicit:
+        return explicit
+    host = cfg.listen_address
+    if host in {"0.0.0.0", "::", ""}:
+        host = "127.0.0.1"
+    elif ":" in host and not host.startswith("["):
+        host = f"[{host}]"
+    scheme = "https" if cfg.tls.enabled else "http"
+    return f"{scheme}://{host}:{cfg.port}{cfg.url_prefix}"
+
+
+def _drop_password(args: argparse.Namespace) -> str:
+    if args.password_stdin:
+        return sys.stdin.read().rstrip("\r\n")
+    from_environment = os.environ.get("PASTEBERTH_PASSWORD")
+    if from_environment is not None:
+        return from_environment
+    return getpass.getpass("Pasteberth password: ")
+
+
 def _cmd_drop(args: argparse.Namespace) -> int:
-    loaded = _load_command_service(args)
-    if loaded is None:
-        return 2
-    cfg, service = loaded
+    config_path = find_config_path(_config_arg(args))
     try:
-        zone = _zone_for_directory(cfg, args.directory)
-    except ConfigError as exc:
+        cfg = build_default_config() if config_path is None else load_config(config_path)
+        if args.zone_id is not None:
+            if not _DROP_ZONE_RE.fullmatch(args.zone_id):
+                raise ConfigError(f"invalid zone ID: {args.zone_id!r}")
+            sources = ([args.directory] if args.directory is not None else []) + args.files
+            zone_id = args.zone_id
+        else:
+            if args.directory is None or not args.files:
+                raise ConfigError("drop requires a zone directory and at least one source file")
+            zone_id = _zone_for_directory(cfg, args.directory).id
+            sources = args.files
+        if not sources:
+            raise ConfigError("drop requires at least one source file")
+        client = PasteberthClient(
+            _drop_server_url(cfg, args.server_url),
+            timeout=cfg.limits.http_request_timeout_seconds,
+            insecure=args.insecure,
+        )
+    except (ConfigError, ClientError) as exc:
         print(f"pasteberth: configuration error\n  {exc}", file=sys.stderr)
         return 2
 
     failures = 0
-    for raw_source in args.files:
+    cookie = None
+    password = None
+    for raw_source in sources:
         try:
             source = _command_path(raw_source)
             data = _read_drop_source(source, cfg.max_upload_bytes)
             declared_mime = mimetypes.guess_type(source.name)[0] or "application/octet-stream"
-            source_directory = os.path.normcase(os.path.normpath(str(source.parent)))
-            zone_directory = os.path.normcase(
-                os.path.normpath(str(zone.directory.resolve()))
-            )
-            source_is_target = source_directory == zone_directory
-            item = service.upload(
-                zone.id,
+            response = client.upload(
+                zone_id,
                 data,
-                declared_mime,
                 source.name,
-                preserve_filename=True,
-                allow_replace=args.replace,
-                adopt_existing=source_is_target,
+                declared_mime,
+                replace=args.replace,
+                cookie=cookie,
             )
-        except (OSError, ValueError, ServiceError) as exc:
+            if response.status == 401:
+                if password is None:
+                    password = _drop_password(args)
+                cookie = client.login(password)
+                response = client.upload(
+                    zone_id,
+                    data,
+                    source.name,
+                    declared_mime,
+                    replace=args.replace,
+                    cookie=cookie,
+                )
+            if response.status != 201:
+                raise api_error(response)
+            payload = response.json()
+            if not isinstance(payload, dict) or not isinstance(payload.get("reference"), str):
+                raise ClientError("server returned an invalid upload response", status=response.status)
+        except (EOFError, OSError, ValueError, ClientError) as exc:
             failures += 1
             print(f"pasteberth: {raw_source}: {exc}", file=sys.stderr)
             continue
-        print(item["reference"])
+        print(payload["reference"])
     return 1 if failures else 0
 
 
@@ -424,15 +477,15 @@ color = "#304237"
 create_directory = true
 min_free_percent = 2.0
 
-# Dynamic directory zones are optional. Discovery never creates directories.
+# Dynamic sidecar zones are optional. Discovery never creates directories.
 # [[autozone]]
 # base_directory = "/absolute/path/to/parent"
 # pattern = "^[^/]+/work/exchange$"
 # max_depth = 4
 # group = "Repositories"
 # label_mode = "git-or-relative"
-# storage_mode = "directory"
-# max_items = 1000
+# retain = 10
+# file_group = "pasteberth"
 # min_free_percent = 2.0
 
 # Optional group views. Omit the whole section to show all zones without tabs.
@@ -537,6 +590,13 @@ def _audit_zone(cfg, zone) -> tuple[list[str], list[str]]:
     configured_path = zone.directory
     path = configured_path.resolve()
     fs = platform_fs()
+    if zone.file_group is not None:
+        try:
+            fs.validate_group(zone.file_group)
+        except (OSError, UnsupportedFilesystemError) as exc:
+            errors.append(
+                f"zone {zone.id}: file_group {zone.file_group!r} is unusable ({exc})"
+            )
     if path != configured_path:
         warnings.append(f"zone {zone.id}: symbolic link accepted: {configured_path}")
     if not path.exists():
@@ -570,8 +630,8 @@ def _audit_zone(cfg, zone) -> tuple[list[str], list[str]]:
             )
     except (OSError, UnsupportedFilesystemError) as exc:
         errors.append(f"zone {zone.id}: inspection failed ({exc})")
-    if not fs.check_access(path, write=True, execute=True):
-        errors.append(f"zone {zone.id}: directory is not writable: {path}")
+    if not fs.check_access(path, read=True, write=True, execute=True):
+        errors.append(f"zone {zone.id}: directory is not readable and writable: {path}")
     lock_path = path / ".pasteberth.lock"
     try:
         with fs.open_directory(path) as directory:
@@ -920,6 +980,16 @@ def _cmd_audit(args: argparse.Namespace) -> int:
             "accept_bin, accept_img, and accept_doc are all false: "
             "the server will reject all content"
         )
+    fs = platform_fs()
+    for index, rule in enumerate(cfg.autozones, start=1):
+        if rule.file_group is None:
+            continue
+        try:
+            fs.validate_group(rule.file_group)
+        except (OSError, UnsupportedFilesystemError) as exc:
+            errors.append(
+                f"autozone #{index}: file_group {rule.file_group!r} is unusable ({exc})"
+            )
     auto_candidates, auto_diagnostics = discover_autozones(cfg.autozones, cfg.zones)
     warnings.extend(auto_diagnostics)
     per_rule_counts = [0] * len(cfg.autozones)
@@ -1065,12 +1135,36 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_drop = sub.add_parser(
         "drop",
-        help="drop or adopt files into a zone",
+        help="upload files to a zone through the Pasteberth server",
     )
-    p_drop.add_argument("directory", help="exact directory of the configured zone")
-    p_drop.add_argument("files", nargs="+", help="source files to copy")
+    p_drop.add_argument(
+        "directory",
+        nargs="?",
+        help="exact zone directory, or the first source when --zone is used",
+    )
+    p_drop.add_argument("files", nargs="*", help="source files to upload")
+    p_drop.add_argument(
+        "--server",
+        dest="server_url",
+        help="Pasteberth server URL (derived from config when omitted)",
+    )
+    p_drop.add_argument(
+        "--zone",
+        dest="zone_id",
+        help="zone ID; avoids requiring filesystem access to the target directory",
+    )
     p_drop.add_argument("--replace", action="store_true",
                         help="allow explicit replacement of a managed name")
+    p_drop.add_argument(
+        "--password-stdin",
+        action="store_true",
+        help="read the server password from standard input after an authentication challenge",
+    )
+    p_drop.add_argument(
+        "--insecure",
+        action="store_true",
+        help="disable TLS certificate verification for the server call",
+    )
     p_drop.add_argument("--config", default=argparse.SUPPRESS, help="path to config.toml")
     p_drop.set_defaults(func=_cmd_drop)
 

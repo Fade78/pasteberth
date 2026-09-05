@@ -27,12 +27,10 @@ from .platformfs import platform_fs
 from .storage import (
     DestinationError,
     DestinationBusyError,
-    DirectoryDestination,
     LocalDestination,
     ReplacementRequiredError,
     RetentionError,
     StorageConflictError,
-    StorageLimitError,
     StorageLowError,
     StoredImage,
     UnknownImageError,
@@ -82,7 +80,6 @@ class ServiceError(Exception):
         "unsupported_media_type": 415,
         "too_large": 413,
         "storage_low": 507,
-        "storage_limit": 507,
         "retention_error": 503,
         "storage_conflict": 409,
         "replacement_required": 428,
@@ -118,17 +115,8 @@ class PasteService:
         common = {
             "limits": self.cfg.limits,
             "max_image_pixels": self.cfg.max_image_pixels,
+            "file_group": zone.file_group,
         }
-        if zone.storage_mode == "directory":
-            if zone.max_items is None:
-                raise DestinationError(
-                    f"directory zone {zone.id!r} has no max_items limit"
-                )
-            return DirectoryDestination(
-                zone.directory,
-                max_items=zone.max_items,
-                **common,
-            )
         return LocalDestination(
             zone.directory,
             create_directory=zone.create_directory,
@@ -139,14 +127,7 @@ class PasteService:
     def _destination_matches(destination: LocalDestination, zone: ZoneConfig) -> bool:
         if getattr(destination, "directory", None) != zone.directory.resolve():
             return False
-        if zone.storage_mode == "directory":
-            return (
-                isinstance(destination, DirectoryDestination)
-                and destination.max_items == zone.max_items
-            )
-        return isinstance(destination, LocalDestination) and not isinstance(
-            destination, DirectoryDestination
-        )
+        return isinstance(destination, LocalDestination)
 
     def _effective_groups(
         self,
@@ -283,11 +264,8 @@ class PasteService:
             raise ServiceError("zone_busy", f"zone {zid!r} is busy")
         try:
             try:
-                # Directory publication may promote files from ``incoming`` while listing.
-                # Serialize those reads with writers so publication remains a single operation.
-                directory_exclusive = isinstance(destination, DirectoryDestination)
                 with destination.operation_lock(
-                    exclusive=exclusive or directory_exclusive,
+                    exclusive=exclusive,
                     blocking=blocking,
                 ):
                     with self._operation_state_lock:
@@ -427,8 +405,6 @@ class PasteService:
                 retention_deleted = destination.apply_retention(zone.retain, stored.filename)
         except StorageLowError as exc:
             raise ServiceError("storage_low", str(exc)) from exc
-        except StorageLimitError as exc:
-            raise ServiceError("storage_limit", str(exc)) from exc
         except RetentionError as exc:
             raise ServiceError("retention_error", str(exc)) from exc
         except ReplacementRequiredError as exc:
@@ -508,15 +484,6 @@ class PasteService:
                 items = []
             except (DestinationError, OSError) as exc:
                 raise ServiceError("destination_error", str(exc)) from exc
-            blocked = False
-            block_reason = None
-            if not busy and isinstance(destination, DirectoryDestination):
-                try:
-                    blocked, block_reason = destination.capacity_status(
-                        len(items), zone.min_free_percent
-                    )
-                except (DestinationError, OSError) as exc:
-                    block_reason = f"capacity unavailable: {exc}"
             zones.append(
                 {
                     "id": zid,
@@ -527,9 +494,6 @@ class PasteService:
                     "groups": list(groups),
                     "busy": busy,
                     "storage_mode": zone.storage_mode,
-                    "max_items": zone.max_items,
-                    "blocked": blocked,
-                    "block_reason": block_reason,
                     "reference_prefix": zone.reference_prefix,
                     "reference_suffix": zone.reference_suffix,
                     "reference_list_prefix": zone.reference_list_prefix,
