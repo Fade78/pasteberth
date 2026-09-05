@@ -164,6 +164,34 @@ class PasteberthClient:
             cookie=cookie,
         )
 
+    def regularize(
+        self,
+        zone_id: str,
+        stage_name: str,
+        filename: str,
+        declared_mime: str,
+        *,
+        replace: bool = False,
+        cookie: str | None = None,
+    ) -> ClientResponse:
+        body = json.dumps(
+            {
+                "stage": stage_name,
+                "filename": filename,
+                "mime": declared_mime,
+                "replace": replace,
+            },
+            separators=(",", ":"),
+        ).encode("utf-8")
+        path = "/api/zones/" + urllib.parse.quote(zone_id, safe="") + "/images/regularize"
+        return self.request(
+            "POST",
+            path,
+            body=body,
+            content_type="application/json",
+            cookie=cookie,
+        )
+
 
 def api_error(response: ClientResponse, fallback: str = "server request failed") -> ClientError:
     try:

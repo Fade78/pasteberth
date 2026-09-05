@@ -55,6 +55,7 @@ _ROUTES: tuple[tuple[str, re.Pattern, str], ...] = tuple(
         ("GET", r"^/api/groups$", "h_groups"),
         ("GET", rf"^/api/zones/{_ZONE_RE}/images$", "h_zone_images"),
         ("PATCH", rf"^/api/zones/{_ZONE_RE}/images/{_FILENAME_RE}/comment$", "h_zone_comment"),
+        ("POST", rf"^/api/zones/{_ZONE_RE}/images/regularize$", "h_zone_regularize"),
         ("POST", rf"^/api/zones/{_ZONE_RE}/images$", "h_zone_upload"),
         ("POST", rf"^/api/zones/{_ZONE_RE}/images/batch-delete$", "h_zone_delete_batch"),
         ("POST", rf"^/api/zones/{_ZONE_RE}/images/archive$", "h_zone_archive"),
@@ -957,6 +958,23 @@ def make_handler(cfg: Config, service: PasteService, sessions: SessionStore,
             )
             return False
 
+        def _require_direct_drop_auth(self) -> bool:
+            if self._is_authenticated():
+                return True
+            try:
+                local_peer = ipaddress.ip_address(self._peer_ip()).is_loopback
+            except ValueError:
+                local_peer = False
+            if local_peer:
+                # The service still requires a random staging file in the zone;
+                # loopback alone is not sufficient authorization.
+                return True
+            self._json(
+                401,
+                {"error": {"code": "unauthorized", "message": "authentication required"}},
+            )
+            return False
+
         def _h_zones(self) -> None:
             if not self._require_auth_api():
                 return
@@ -981,6 +999,54 @@ def make_handler(cfg: Config, service: PasteService, sessions: SessionStore,
                 self._service_error(exc)
                 return
             self._json(200, {"zone": zid, "images": items})
+
+        def _h_zone_regularize(self, zid: str) -> None:
+            if not self._require_direct_drop_auth():
+                return
+            ctype = (self.headers.get("Content-Type") or "").split(";", 1)[0].strip().lower()
+            if ctype != "application/json":
+                self._error(415, "unsupported_media_type", "Content-Type must be application/json")
+                return
+            try:
+                body, _ = self._read_body(max_bytes=cfg.limits.max_batch_body_bytes)
+            except BodyTooLarge:
+                self.close_connection = True
+                self._error(413, "too_large", "request body is too large")
+                return
+            except ClientAbort:
+                raise
+            try:
+                payload = json.loads(body.decode("utf-8"))
+            except (UnicodeDecodeError, json.JSONDecodeError):
+                self._error(400, "invalid_request", "invalid JSON")
+                return
+            if not isinstance(payload, dict):
+                self._error(400, "invalid_request", "JSON object expected")
+                return
+            stage_name = payload.get("stage")
+            filename = payload.get("filename")
+            declared_mime = payload.get("mime")
+            replace = payload.get("replace", False)
+            if (
+                not isinstance(stage_name, str)
+                or not isinstance(filename, str)
+                or not isinstance(declared_mime, str)
+                or not isinstance(replace, bool)
+            ):
+                self._error(400, "invalid_request", "invalid direct-drop request")
+                return
+            try:
+                item = service.regularize_staged_upload(
+                    zid,
+                    stage_name,
+                    filename,
+                    declared_mime,
+                    allow_replace=replace,
+                )
+            except ServiceError as exc:
+                self._service_error(exc)
+                return
+            self._json(201, item)
 
         def _h_zone_upload(self, zid: str) -> None:
             if not self._require_auth_api():

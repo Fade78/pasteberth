@@ -553,6 +553,59 @@ class PasteService:
             payload["retention_deleted"] = retention_deleted
         return payload
 
+    def regularize_staged_upload(
+        self,
+        zid: str,
+        stage_name: str,
+        filename: str,
+        declared_mime: str | None,
+        *,
+        allow_replace: bool = False,
+        blocking: bool = True,
+    ) -> dict:
+        """Turn a locally staged file into a managed data/sidecar pair."""
+        if not self.has_zone(zid):
+            raise ServiceError("unknown_zone", f"unknown zone: {zid}")
+        with self.zone_operation(
+            zid, kind="upload", exclusive=True, blocking=blocking
+        ) as (zone, destination):
+            try:
+                data, stage_identity = destination.read_direct_drop(
+                    stage_name,
+                    self.cfg.max_upload_bytes,
+                )
+                info, target_filename = self._prepare_upload(
+                    data,
+                    declared_mime,
+                    filename,
+                    preserve_filename=True,
+                )
+                stored, retention_deleted = self._store_prepared_upload(
+                    zid,
+                    zone,
+                    destination,
+                    data,
+                    info,
+                    target_filename,
+                    allow_replace,
+                    False,
+                )
+                destination.discard_direct_drop(stage_name, stage_identity)
+            except StorageLowError as exc:
+                raise ServiceError("storage_low", str(exc)) from exc
+            except RetentionError as exc:
+                raise ServiceError("retention_error", str(exc)) from exc
+            except ReplacementRequiredError as exc:
+                raise ServiceError("replacement_required", str(exc)) from exc
+            except StorageConflictError as exc:
+                raise ServiceError("storage_conflict", str(exc)) from exc
+            except (DestinationError, OSError) as exc:
+                raise ServiceError("destination_error", str(exc)) from exc
+        payload = self.item_payload(zid, stored, zone=zone, destination=destination)
+        if retention_deleted:
+            payload["retention_deleted"] = retention_deleted
+        return payload
+
     # ------------------------------------------------------------ historique
 
     def history(

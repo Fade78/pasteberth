@@ -260,8 +260,11 @@ If access is lost after discovery, the corresponding operation returns a
 destination error rather than bypassing operating-system permissions.
 
 An external process can still copy or move a regular file into the root. It
-remains foreign until a server upload creates a coherent pair; there is no
-filesystem drop/adoption protocol.
+remains foreign until a server upload creates a coherent pair; arbitrary
+filesystem files are never implicitly adopted. The `drop` CLI's direct path is
+explicit: it stages source bytes in a private `.pbdrop-*.tmp` file and asks the
+loopback regularization endpoint to create a new managed pair. It does not adopt
+an existing foreign filename.
 
 ## 8. Refresh and lifecycle
 

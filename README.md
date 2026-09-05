@@ -39,7 +39,7 @@ service between independent servers.
 
 ## Quick Start
 
-The current public release is `2.1.0`. The documented v2.1.0 server runs on
+The current public release is `2.1.4`. The documented v2.1.4 server runs on
 Linux, requires Python 3.11 or newer, and has no third-party
 Python runtime dependency. A native Windows backend is included but has only
 been validated under Wine; macOS and native Windows remain outside the official
@@ -143,12 +143,13 @@ pasteberth drop --config config.toml \
   --zone project-alpha /tmp/report.pdf /tmp/screenshot.png
 ```
 
-The source files remain unchanged. Pasteberth creates the managed data/sidecar
-pair on the server and protects foreign files; a file copied directly into the
-zone is never adopted by `drop`, renamed, or deleted. Authentication is reused
-from the server session, with `PASTEBERTH_PASSWORD` or `--password-stdin`
-available for non-interactive use. `drop` prints one reference for each
-successful source.
+The source files remain unchanged. With a loopback server and a writable local
+zone, `drop` stages the data there and asks the daemon to create the managed
+data/sidecar pair; otherwise it uploads through HTTP. Foreign files remain
+protected and are never adopted, renamed, or deleted by `drop`. Remote or
+unwritable HTTP drops use the server session, with `PASTEBERTH_PASSWORD` or
+`--password-stdin` available for non-interactive use. `drop` prints one
+reference for each successful source.
 
 ## Documentation
 
@@ -173,7 +174,7 @@ template is [`PasteBerth/support/deploy/pasteberth.service`](PasteBerth/support/
 
 ## Support Status
 
-| Area | v2.1.0 status |
+| Area | v2.1.4 status |
 |---|---|
 | Python | 3.11 or newer |
 | Server | Linux, officially tested |

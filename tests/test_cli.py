@@ -1090,6 +1090,43 @@ retain = 2
         )
 
 
+class TestFilesystemDropWithWritableZone(unittest.TestCase):
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.tmp = Path(self._tmp.name)
+        self.addCleanup(self._tmp.cleanup)
+        self.cfg = write_config(
+            self.tmp,
+            auth_enabled=True,
+            password="drop-password",
+        )
+        self.server = LiveServer(self.cfg)
+        self.addCleanup(self.server.stop)
+
+    def test_drop_utilise_le_droit_fichier_sans_demander_le_mot_de_passe(self):
+        source = self.tmp / "direct.txt"
+        source.write_text("direct", encoding="utf-8")
+
+        proc = run_cli(
+            [
+                "drop",
+                "--config",
+                str(self.cfg),
+                "--server",
+                f"http://127.0.0.1:{self.server.port}",
+                "--zone",
+                "default",
+                str(source),
+            ],
+            input_text="",
+        )
+
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual((self.tmp / "default-images" / source.name).read_text(), "direct")
+        self.assertTrue((self.tmp / "default-images" / (source.name + ".json")).is_file())
+        self.assertEqual(list((self.tmp / "default-images").glob(".pbdrop-*.tmp")), [])
+
+
 class TestServerBackedDropAuth(unittest.TestCase):
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()

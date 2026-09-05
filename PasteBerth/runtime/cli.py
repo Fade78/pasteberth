@@ -54,7 +54,7 @@ from .config import (
 )
 from .platformfs import UnsafeLinkError, UnsupportedFilesystemError, platform_fs
 from .service import PasteService, ServiceError
-from .storage import DestinationError
+from .storage import DestinationError, LocalDestination
 
 
 def _setup_logging(level: str) -> None:
@@ -229,6 +229,17 @@ def _zone_for_directory(cfg, raw_directory: str):
     )
 
 
+def _zone_for_id(cfg, zone_id: str):
+    zone = cfg.zones.get(zone_id)
+    if zone is not None:
+        return zone
+    candidates, _diagnostics = discover_autozones(cfg.autozones, cfg.zones)
+    for candidate in candidates:
+        if candidate.zone.id == zone_id:
+            return candidate.zone
+    return None
+
+
 def _read_drop_source(path: Path, max_bytes: int | None) -> bytes:
     path = Path(path).expanduser().resolve()
     fs = platform_fs()
@@ -316,19 +327,66 @@ def _drop_password(args: argparse.Namespace) -> str:
     return getpass.getpass("Pasteberth password: ")
 
 
+def _try_direct_drop(
+    destination: LocalDestination | None,
+    client: PasteberthClient,
+    zone_id: str,
+    source: Path,
+    data: bytes,
+    declared_mime: str,
+    *,
+    replace: bool,
+) -> dict | None:
+    if destination is None:
+        return None
+    try:
+        stage_name = destination.stage_direct_drop(data)
+    except (DestinationError, OSError, UnsupportedFilesystemError):
+        return None
+    try:
+        response = client.regularize(
+            zone_id,
+            stage_name,
+            source.name,
+            declared_mime,
+            replace=replace,
+        )
+        if response.status in {401, 404, 405}:
+            destination.discard_direct_drop(stage_name)
+            return None
+        if response.status != 201:
+            raise api_error(response)
+        payload = response.json()
+        if not isinstance(payload, dict) or not isinstance(payload.get("reference"), str):
+            raise ClientError(
+                "server returned an invalid regularization response",
+                status=response.status,
+            )
+        return payload
+    except BaseException:
+        try:
+            destination.discard_direct_drop(stage_name)
+        except (DestinationError, OSError):
+            pass
+        raise
+
+
 def _cmd_drop(args: argparse.Namespace) -> int:
     config_path = find_config_path(_config_arg(args))
     try:
         cfg = build_default_config() if config_path is None else load_config(config_path)
+        local_zone = None
         if args.zone_id is not None:
             if not _DROP_ZONE_RE.fullmatch(args.zone_id):
                 raise ConfigError(f"invalid zone ID: {args.zone_id!r}")
+            local_zone = _zone_for_id(cfg, args.zone_id)
             sources = ([args.directory] if args.directory is not None else []) + args.files
             zone_id = args.zone_id
         else:
             if args.directory is None or not args.files:
                 raise ConfigError("drop requires a zone directory and at least one source file")
-            zone_id = _zone_for_directory(cfg, args.directory).id
+            local_zone = _zone_for_directory(cfg, args.directory)
+            zone_id = local_zone.id
             sources = args.files
         if not sources:
             raise ConfigError("drop requires at least one source file")
@@ -337,6 +395,19 @@ def _cmd_drop(args: argparse.Namespace) -> int:
             timeout=cfg.limits.http_request_timeout_seconds,
             insecure=args.insecure,
         )
+        local_destination = None
+        if local_zone is not None:
+            try:
+                local_endpoint = is_loopback_address(client.host)
+            except ConfigError:
+                local_endpoint = False
+            if local_endpoint:
+                local_destination = LocalDestination(
+                    local_zone.directory,
+                    create_directory=local_zone.create_directory,
+                    limits=cfg.limits,
+                    max_image_pixels=cfg.max_image_pixels,
+                )
     except (ConfigError, ClientError) as exc:
         print(f"pasteberth: configuration error\n  {exc}", file=sys.stderr)
         return 2
@@ -349,6 +420,18 @@ def _cmd_drop(args: argparse.Namespace) -> int:
             source = _command_path(raw_source)
             data = _read_drop_source(source, cfg.max_upload_bytes)
             declared_mime = mimetypes.guess_type(source.name)[0] or "application/octet-stream"
+            payload = _try_direct_drop(
+                local_destination,
+                client,
+                zone_id,
+                source,
+                data,
+                declared_mime,
+                replace=args.replace,
+            )
+            if payload is not None:
+                print(payload["reference"])
+                continue
             response = client.upload(
                 zone_id,
                 data,
@@ -1135,7 +1218,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_drop = sub.add_parser(
         "drop",
-        help="upload files to a zone through the Pasteberth server",
+        help="drop files directly when possible, otherwise through the server",
     )
     p_drop.add_argument(
         "directory",

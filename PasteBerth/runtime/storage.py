@@ -110,7 +110,9 @@ _RENAME_META_BACKUP_GUARD_RE = re.compile(
 )
 _RENAME_META_GUARD_RE = re.compile(r"^\.pbrename-guard-[0-9a-f]{24}\.json$")
 _TRASH_RE = re.compile(r"^\.pbtrash-[0-9a-f]{24}\.(?:data|json)$")
+_DROP_STAGE_RE = re.compile(r"^\.pbdrop-([0-9a-f]{24})\.tmp$")
 _INTERNAL_RESERVED_PREFIXES = (
+    ".pbdrop-",
     ".pbmeta-",
     ".pbdata-",
     ".pbbackup-",
@@ -2881,6 +2883,97 @@ class LocalDestination(Destination):
                     pass
             raise
 
+    def stage_direct_drop(self, data: bytes) -> str:
+        """Stage a file that the daemon can regularize through the local API."""
+        self._ensure_dir()
+        with self._directory_fd() as directory_fd:
+            for _attempt in range(8):
+                name = f".pbdrop-{secrets.token_hex(12)}.tmp"
+                file_handle = None
+                identity = None
+                try:
+                    file_handle = self._fs.create_exclusive(
+                        directory_fd,
+                        name,
+                        mode="wb",
+                        permissions=0o660,
+                    )
+                    identity = file_handle.identity
+                    with file_handle as stream:
+                        stream.write(data)
+                        stream.sync()
+                    self._fsync_directory(directory_fd)
+                    return name
+                except EntryExistsError:
+                    continue
+                except BaseException:
+                    if file_handle is not None and not file_handle.closed:
+                        try:
+                            file_handle.close()
+                        except OSError:
+                            pass
+                    if identity is not None:
+                        try:
+                            self._remove_expected(directory_fd, name, identity)
+                        except (DestinationError, OSError):
+                            pass
+                    raise
+        raise DestinationError("could not allocate a direct-drop staging name")
+
+    def read_direct_drop(
+        self,
+        name: str,
+        max_bytes: int | None,
+    ) -> tuple[bytes, FileIdentity]:
+        if not _DROP_STAGE_RE.fullmatch(name):
+            raise DestinationError(f"invalid direct-drop staging name: {name!r}")
+        with self._directory_fd() as directory_fd:
+            entry = self._fs.entry_info(directory_fd, name)
+            if entry is None:
+                raise DestinationError(f"direct-drop staging file is missing: {name!r}")
+            if not entry.is_regular or entry.is_symlink:
+                raise StorageConflictError(f"direct-drop staging file is not regular: {name!r}")
+            try:
+                with self._fs.open_existing(directory_fd, name, mode="rb") as stream:
+                    data = stream.read(max_bytes + 1) if max_bytes is not None else stream.read()
+            except (OSError, UnsupportedFilesystemError) as exc:
+                raise DestinationError(f"cannot read direct-drop staging file: {exc}") from exc
+            current = self._fs.entry_info(directory_fd, name)
+            size_matches = (
+                current is not None
+                and current.size == (
+                    entry.size
+                    if max_bytes is not None and entry.size > max_bytes
+                    else len(data)
+                )
+            )
+            if (
+                current is None
+                or current.identity != entry.identity
+                or not size_matches
+            ):
+                raise StorageConflictError(f"direct-drop staging file changed: {name!r}")
+            return data, entry.identity
+
+    def discard_direct_drop(
+        self,
+        name: str,
+        expected: FileIdentity | None = None,
+    ) -> None:
+        if not _DROP_STAGE_RE.fullmatch(name):
+            raise DestinationError(f"invalid direct-drop staging name: {name!r}")
+        with self._directory_fd() as directory_fd:
+            entry = self._fs.entry_info(directory_fd, name)
+            if entry is None:
+                return
+            if not entry.is_regular or entry.is_symlink:
+                raise StorageConflictError(f"direct-drop staging file is not regular: {name!r}")
+            if expected is not None and entry.identity != expected:
+                raise StorageConflictError(f"direct-drop staging file changed: {name!r}")
+            if not self._fs.remove_expected(directory_fd, name, entry.identity):
+                raise StorageConflictError(f"direct-drop staging file changed: {name!r}")
+            self._fsync_directory(directory_fd)
+
     def _install_new(
         self,
         directory_fd: DirectoryHandle,
@@ -3315,6 +3408,7 @@ class LocalDestination(Destination):
                     or _RENAME_DATA_GUARD_RE.fullmatch(entry.name)
                     or _RENAME_META_BACKUP_GUARD_RE.fullmatch(entry.name)
                     or _RENAME_META_GUARD_RE.fullmatch(entry.name)
+                    or _DROP_STAGE_RE.fullmatch(entry.name)
                 ):
                     continue
                 log.warning(

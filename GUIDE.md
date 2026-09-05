@@ -1,7 +1,7 @@
 # Pasteberth Operator Guide
 
 This guide is the detailed reference for installing, configuring, operating,
-and integrating Pasteberth 2.1.0. The short project overview is in
+and integrating Pasteberth 2.1.4. The short project overview is in
 [`README.md`](README.md); user-visible release history is in
 [`CHANGELOG.md`](CHANGELOG.md).
 
@@ -74,14 +74,14 @@ contexts:
 
 ## 2. Requirements and Support
 
-The 2.1.0 implementation requires:
+The 2.1.4 implementation requires:
 
 - Python 3.11 or newer;
 - a local filesystem supported by the active platform backend;
 - a modern browser for the Web UI;
 - no third-party Python runtime dependency.
 
-Linux is the current official and tested server platform for v2.1.0. The
+Linux is the current official and tested server platform for v2.1.4. The
 Windows backend has broad Wine coverage, but native Windows/NTFS validation is
 still outstanding and macOS support is not implemented. Do not infer support
 for every network or exotic filesystem from the operating system name.
@@ -93,7 +93,7 @@ Firefox when the corresponding Playwright browser is installed.
 
 ### 3.1 Deployable copy
 
-The supported v2.1.0 installation is the tracked `PasteBerth/` directory. It is
+The supported v2.1.4 installation is the tracked `PasteBerth/` directory. It is
 the complete code-only deployment unit: it needs no root access, installation
 script, Python package installation, or build step.
 
@@ -269,7 +269,7 @@ Each `[[zones]]` table defines one independent project area:
 |---|---:|---|
 | `id` | required | Lowercase API/UI identifier, up to 64 characters. |
 | `label` | `id` | Human-readable UI label. |
-| `type` | `local` | Only `local` is implemented in v2.1.0. |
+| `type` | `local` | Only `local` is implemented in v2.1.4. |
 | `directory` | required | Absolute path as seen by the server and the harness. |
 | `retain` | `10` | Number of managed items retained in the zone. |
 | `reference_prefix` | `@` | Text prepended to one returned reference. |
@@ -520,20 +520,23 @@ Exit codes are:
 Warnings include broad zone permissions, wildcard host checks, and other
 conditions that may be intentional but deserve review.
 
-### 6.5 Server-backed drop
+### 6.5 Filesystem drop
 
 ```sh
 pasteberth drop [--config PATH] [--server URL] [--zone ID] [--replace] \
   /path/to/report.pdf /path/to/screen.png
 ```
 
-`drop` uploads through the Pasteberth HTTP API. Use `--zone ID` to select the
-destination and `--server URL` for a remote server; when omitted, both can be
-derived from the local configuration and a configured zone directory. One or
-more regular source files are accepted, remain unchanged, and produce one
-returned reference per successful upload. The server creates the managed
-data/sidecar pair. A file already present in the destination without a coherent
-sidecar is foreign and is never adopted or overwritten.
+`drop` first stages each source in a private `.pbdrop-*.tmp` file when it is
+using a loopback daemon and the configured local zone is writable. It then asks
+the daemon to validate the staged data and create the managed data/sidecar pair.
+If direct staging is unavailable, it falls back to the HTTP API. Use `--zone ID`
+to select the destination and `--server URL` for a remote server; when omitted,
+both can be derived from the local configuration and a configured zone
+directory. One or more regular source files are accepted, remain unchanged, and
+produce one returned reference per successful upload. A file already present in
+the destination without a coherent sidecar is foreign and is never adopted or
+overwritten.
 
 Without `--replace`, an existing managed filename is refused. With
 `--replace`, only a coherent Pasteberth-managed pair may be replaced. A foreign
@@ -627,9 +630,10 @@ zone/
 The sidecar records metadata such as `filename`, `created_at`, `size`,
 `width`, `height`, `format`, `kind`, and `mime`. Older valid sidecar schemas
 remain readable. Pasteberth recognizes an item only when the data file and
-sidecar are coherent. The `drop` command may make the exact source
-file in its destination zone managed by creating that missing sidecar after
-validation. Other foreign files remain outside managed operations.
+sidecar are coherent. For a direct local `drop`, the source bytes pass through
+a private staging file; the daemon validates them and creates a new managed
+pair before removing the staging file. Other foreign files remain outside
+managed operations.
 
 Generated names use the form:
 
@@ -650,6 +654,7 @@ service may be operating:
 .pasteberth.lock
 .pbmeta-*
 .pbdata-*
+.pbdrop-*
 .pbbackup-*
 .pbtxn-*
 .pbtrash-*
@@ -849,6 +854,7 @@ and previews. The prefix is a configured public path, not part of the browser
 | `GET` | `/api/groups` | session | Group definitions and matching zone IDs. |
 | `GET` | `/api/zones/{id}/images` | session | Complete zone history, newest first. |
 | `POST` | `/api/zones/{id}/images` | session | Upload multipart content. |
+| `POST` | `/api/zones/{id}/images/regularize` | loopback or session | Regularize one CLI direct-drop staging file. |
 | `PATCH` | `/api/zones/{id}/images/{filename}/comment` | session | Replace the item's short Unicode comment. |
 | `DELETE` | `/api/zones/{id}/images/{filename}` | session | Delete one managed item. |
 | `POST` | `/api/zones/{id}/images/batch-delete` | session | Delete several managed items. |
@@ -865,6 +871,12 @@ The server account owns files it creates; configure `file_group` and matching
 directory group permissions when other system users must read them.
 Each image may also include `changed_at`; it is `null` when the destination
 cannot provide a change timestamp.
+
+The `regularize` route is used by a local `drop` when it has staged a
+`.pbdrop-<24 lowercase hex digits>.tmp` file in the configured zone. It accepts
+a JSON object containing `stage`, `filename`, `mime`, and `replace`; it is not a
+general filesystem-adoption endpoint. Unauthenticated access is limited to a
+loopback peer, while an authenticated session may use the route remotely.
 
 ### 11.2 Upload
 
@@ -1097,7 +1109,7 @@ restart the service.
 
 The next major platform goal is native Windows and macOS support with the same
 transaction and security guarantees. That work is intentionally separate from
-the v2.1.0 support matrix and must not be represented as already supported.
+the v2.1.4 support matrix and must not be represented as already supported.
 
 ## 16. License
 

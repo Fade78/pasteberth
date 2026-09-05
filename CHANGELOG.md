@@ -2,6 +2,17 @@
 
 This file records user-visible changes to Pasteberth.
 
+## [2.1.4] - 2026-09-05
+
+### Direct Drop Regularization
+
+- let a local agent stage a drop directly in a writable configured zone when it
+  uses a loopback daemon, then have the daemon create the managed data/sidecar
+  pair without a password prompt;
+- keep HTTP authentication as the fallback when direct filesystem staging is
+  unavailable;
+- preserve foreign-file protection while adding the local regularization path.
+
 ## [2.1.3] - 2026-09-05
 
 ### Sidecar Storage and Server Drop
