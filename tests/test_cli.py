@@ -88,7 +88,7 @@ class TestVersion(unittest.TestCase):
     def test_aide_expose_les_sous_commandes_courtes(self):
         proc = run_cli(["--help"])
         self.assertEqual(proc.returncode, 0)
-        for command in ("drop", "rename", "delete"):
+        for command in ("drop", "mcp", "rename", "delete"):
             self.assertIn(command, proc.stdout)
         for old_command in ("filesystem-drop", "filesystem-rename", "filesystem-delete"):
             self.assertNotIn(old_command, proc.stdout)

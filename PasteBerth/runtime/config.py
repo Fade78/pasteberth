@@ -163,7 +163,7 @@ class AutoZoneConfig:
     reference_list_suffix: str = ""
     reference_separator: str = ","
     allow_zip_download: bool = True
-    color: str = "#243447"
+    color: str | None = None
     group_layout: str = "area"
     group_hide_empty: bool = False
     group_show_count: bool = True
@@ -688,14 +688,16 @@ def _parse_autozone(raw_autozone: object, index: int, warnings: list[str]) -> Au
         table, "reference_separator", where, default=",", allow_empty=True
     )
     allow_zip_download = _get_bool(table, "allow_zip_download", where, default=True)
-    color = _get_str(table, "color", where, default="#243447")
-    if not _COLOR_RE.fullmatch(color):
-        raise ConfigError(f"{where}: 'color' must use #RRGGBB format: {color!r}")
-    color = color.lower()
-    if _best_contrast(color) < 4.5:
-        raise ConfigError(
-            f"{where}: 'color' does not provide sufficient text contrast: {color!r}"
-        )
+    color = None
+    if "color" in table:
+        color = _get_str(table, "color", where)
+        if not _COLOR_RE.fullmatch(color):
+            raise ConfigError(f"{where}: 'color' must use #RRGGBB format: {color!r}")
+        color = color.lower()
+        if _best_contrast(color) < 4.5:
+            raise ConfigError(
+                f"{where}: 'color' does not provide sufficient text contrast: {color!r}"
+            )
     group_layout = _get_str(table, "group_layout", where, default="area").lower()
     if group_layout not in _GROUP_LAYOUTS:
         raise ConfigError(

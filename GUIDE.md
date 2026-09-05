@@ -354,9 +354,11 @@ Repeatable `[[autozone]]` rules expose existing directories below an absolute
 `base_directory` when their resolved relative path matches `pattern`. Discovery
 does not create directories or edit configuration, and a configuration may use
 autozones without any static `[[zones]]` entries. Each rule supplies a generated
-group and creates a sidecar-backed zone. The discovered directory must already
-be readable and traversable by the server account; discovery never changes its
-ownership or permissions.
+group and creates a sidecar-backed zone. If `color` is omitted, the zone color
+is assigned deterministically from the resolved access path and generated group
+name; an explicit `color` remains authoritative. The discovered directory must
+already be readable and traversable by the server account; discovery never
+changes its ownership or permissions.
 
 Regular files copied or moved directly into an autozone have no coherent
 sidecar, so they remain foreign and are ignored. Uploads through the browser,
@@ -556,7 +558,28 @@ file is never overwritten, even with `--replace`. Authentication prompts for a
 password after a `401`; `PASTEBERTH_PASSWORD` and `--password-stdin` support
 non-interactive calls.
 
-### 6.6 Filesystem rename
+### 6.6 MCP stdio adapter
+
+```sh
+PASTEBERTH_PASSWORD='your-password' pasteberth mcp --config config.toml
+```
+
+On Windows, set `PASTEBERTH_PASSWORD` in `cmd.exe` before invoking
+`PasteBerth\pasteberth.cmd`; in PowerShell use `$env:PASTEBERTH_PASSWORD =
+"your-password"`. The MCP process can read any regular local file readable by
+its account, so it should only be launched by a trusted agent.
+
+`mcp` serves newline-delimited JSON-RPC on standard input and standard output.
+The initial `drop` tool accepts a `zone` and one or more `items`; each item is
+either a local `path`, UTF-8 `content` plus `filename`, or `content_base64` plus
+`filename`. It calls the existing HTTP upload endpoint rather than accessing
+Pasteberth storage directly. `PASTEBERTH_PASSWORD` is used after a `401`; the
+adapter never prompts on stdin because that stream belongs to MCP. The adapter
+supports modern `server/discover` and per-request metadata for protocol
+`2026-07-28`, while retaining the legacy `initialize` handshake through
+`2025-06-18`.
+
+### 6.7 Filesystem rename
 
 ```sh
 pasteberth rename [--config PATH] \
@@ -567,7 +590,7 @@ The source and target are basenames inside the configured zone. The data file
 and its JSON sidecar are renamed transactionally. An existing target is never
 replaced.
 
-### 6.7 Filesystem delete
+### 6.8 Filesystem delete
 
 ```sh
 pasteberth delete [--config PATH] [--force] \
@@ -578,7 +601,7 @@ Only coherent managed pairs are deleted. `--force` permits deletion when the
 sidecar's recorded size is stale, but it does not make a foreign file or
 malformed sidecar eligible for deletion.
 
-### 6.8 Exit codes
+### 6.9 Exit codes
 
 Unless a parser error prevents command dispatch, the CLI uses these codes:
 

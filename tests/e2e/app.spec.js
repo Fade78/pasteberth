@@ -420,15 +420,19 @@ test("le layout tab ouvre une zone et permet une sélection multiple au Shift-cl
   await defaultLink.click({ modifiers: ["Control"] });
   await expect(page.locator(".tab-zone-main .zone")).toHaveCount(0);
   await secondaryLink.hover();
-  await expect(secondaryLink).toHaveAttribute("aria-current", "true");
+  await expect(defaultLink).toHaveAttribute("aria-current", "true");
+  await expect(secondaryLink).toHaveAttribute("aria-current", "false");
   const pasteRequest = page.waitForRequest(request => (
-    request.method() === "POST" && request.url().includes("/api/zones/secondary/images")
+    request.method() === "POST" && request.url().includes("/api/zones/default/images")
   ));
   await dispatchPaste(page);
   await pasteRequest;
-  await expect(page.locator('.tab-zone-main .zone[data-zone="secondary"]')).toHaveCount(1);
-  await secondaryLink.click({ modifiers: ["Control"] });
+  await expect(page.locator('.tab-zone-main .zone[data-zone="default"]')).toHaveCount(1);
+  await expect(page.locator('.tab-zone-main .zone[data-zone="secondary"]')).toHaveCount(0);
+  await defaultLink.click({ modifiers: ["Control"] });
   await expect(page.locator(".tab-zone-main .zone")).toHaveCount(0);
+  await secondaryLink.click({ modifiers: ["Control"] });
+  await expect(page.locator('.tab-zone-main .zone[data-zone="secondary"]')).toHaveCount(1);
   const dropRequest = page.waitForRequest(request => (
     request.method() === "POST" && request.url().includes("/api/zones/secondary/images")
   ));
@@ -1123,7 +1127,7 @@ test("colle du texte et l'affiche", async ({ page }) => {
   await expect(defaultZone.locator(".fname")).toHaveText(/\.md$/);
   await expect(defaultZone.locator(".dims")).not.toContainText("null");
   await expect(defaultZone.locator(".index-title")).toHaveText("Content index");
-  await expect(defaultZone.locator(".thumb-content")).toHaveText("TXT");
+  await expect(defaultZone.locator(".thumb-content")).toHaveText("MD");
   await expect(defaultZone.locator(".copy-image-btn")).toHaveText("Copy Text");
   await expect(defaultZone.locator(".copy-image-btn")).toHaveAttribute(
     "aria-label",
@@ -1142,6 +1146,49 @@ test("colle du texte et l'affiche", async ({ page }) => {
   await expect(page.locator("#pv-copy-image")).toHaveText("Copy Text");
   await expect(page.locator("#pv-download")).toHaveText("Download MD");
   await page.getByRole("button", { name: "Close" }).click();
+});
+
+test("un Ctrl-V maintenu ne depose le meme buffer qu'une fois", async ({ page }) => {
+  await openApp(page);
+  const defaultZone = page.locator('[data-zone="default"]');
+  await defaultZone.getByRole("button", { name: "Select zone Default" }).click();
+  const uploads = [];
+  page.on("request", request => {
+    if (request.method() === "POST" && request.url().includes("/api/zones/default/images")) {
+      uploads.push(request);
+    }
+  });
+
+  await page.evaluate((base64) => {
+    const bytes = Uint8Array.from(atob(base64), (char) => char.charCodeAt(0));
+    const file = new File([bytes], "held.png", { type: "image/png" });
+    const makePaste = () => {
+      const dataTransfer = new DataTransfer();
+      dataTransfer.items.add(file);
+      const paste = new Event("paste", { bubbles: true, cancelable: true });
+      Object.defineProperty(paste, "clipboardData", { value: dataTransfer });
+      window.dispatchEvent(paste);
+    };
+    document.dispatchEvent(new KeyboardEvent("keydown", {
+      key: "v", ctrlKey: true, bubbles: true,
+    }));
+    makePaste();
+    document.dispatchEvent(new KeyboardEvent("keydown", {
+      key: "v", ctrlKey: true, repeat: true, bubbles: true,
+    }));
+    makePaste();
+    document.dispatchEvent(new KeyboardEvent("keyup", {
+      key: "v", ctrlKey: true, bubbles: true,
+    }));
+    document.dispatchEvent(new KeyboardEvent("keyup", {
+      key: "Control", bubbles: true,
+    }));
+  }, ONE_PIXEL_PNG);
+
+  await expect.poll(() => uploads.length).toBe(1);
+  await expect(defaultZone.locator(".latest")).toBeVisible();
+  await page.waitForTimeout(250);
+  expect(uploads).toHaveLength(1);
 });
 
 test("conserve les retours de ligne et enregistre avec Ctrl-Entree", async ({ page }) => {
@@ -1188,6 +1235,8 @@ test("assainit la copie HTML et réserve la copie brute à l'action explicite", 
   await dispatchTextPaste(page, source, "text/html");
 
   await expect(defaultZone.locator(".fname")).toHaveText(/\.html$/);
+  await expect(defaultZone.locator(".file-box")).toHaveText("HTML");
+  await expect(defaultZone.locator(".thumb-content")).toHaveText("HTML");
   const filename = await defaultZone.locator(".fname").textContent();
   await defaultZone.locator(".file-box").click();
   await expect(page.locator("#pv")).toBeVisible();

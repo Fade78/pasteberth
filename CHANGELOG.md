@@ -4,6 +4,21 @@ This file records user-visible changes to Pasteberth.
 
 ## [Unreleased]
 
+### MCP Adapter
+
+- add an optional standard-library MCP stdio command with a vocabulary-preserving
+  `drop` tool for local paths and in-memory content;
+- route MCP drops through the existing authenticated HTTP upload path instead of
+  creating a second storage or service boundary.
+
+### UI and Autozone Corrections
+
+- keep hover-only movement from changing the active paste target and ignore
+  repeated `Ctrl-V`/`Command-V` key events while the key is held;
+- display text file extensions such as `HTML` and `MD` in content tiles;
+- assign omitted autozone colors deterministically from the resolved path and
+  generated group name while preserving explicit colors.
+
 ### Resource and Platform Hardening
 
 - keep Windows directory-handle operations bound to the original directory

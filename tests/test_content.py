@@ -55,7 +55,9 @@ class TestClassify(unittest.TestCase):
 
     def test_texte_html_selon_type_declare(self):
         info = classify(b"<p>hi</p>", "text/html")
+        self.assertEqual(info.kind, "text")
         self.assertEqual(info.ext, ".html")
+        self.assertEqual(info.mime, "text/html")
 
     def test_binaire_avec_extension_dorigine(self):
         info = classify(b"\x00\x01\x02\x03", "application/octet-stream", "archive.zip")

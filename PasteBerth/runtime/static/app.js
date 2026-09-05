@@ -79,6 +79,8 @@
   const dialogInvokers = new WeakMap();
   let activeReplacementPrompt = null;
   let pvCopyRawHtml = null;
+  let pasteShortcutActive = false;
+  let pasteShortcutHandled = false;
 
   // ------------------------------------------------------------- utilities
 
@@ -1233,7 +1235,7 @@
       const box = document.createElement("div");
       box.className = "file-box";
       box.dataset.itemId = item.id;
-      box.textContent = item.kind === "text" ? "TXT" : "FILE";
+      box.textContent = item.kind === "text" ? fileTypeLabel(item.filename) : "FILE";
       box.title = itemDetails(zoneId, item);
       box.tabIndex = 0;
       box.setAttribute("role", "button");
@@ -1280,7 +1282,7 @@
       } else {
         const label = document.createElement("span");
         label.className = "thumb-content";
-        label.textContent = item.kind === "text" ? "TXT" : fileTypeLabel(item.filename);
+        label.textContent = fileTypeLabel(item.filename);
         label.setAttribute("aria-hidden", "true");
         wrap.appendChild(label);
       }
@@ -1451,7 +1453,6 @@
       link.setAttribute("aria-expanded", String(state.openZoneIds.includes(zone.id)));
       link.setAttribute("aria-pressed", String(state.openZoneIds.includes(zone.id)));
       link.setAttribute("aria-controls", "tab-zone-main");
-      link.addEventListener("mouseenter", () => setActive(zone.id));
       link.addEventListener("focus", () => setActive(zone.id));
       link.addEventListener("click", event => toggleOpenZone(zone.id, event));
       if (zone.id === state.activeId) link.classList.add("active");
@@ -2356,6 +2357,34 @@
 
   // ------------------------------------------------------------- events
 
+  function isPasteShortcut(event) {
+    return (event.ctrlKey || event.metaKey)
+      && !event.altKey
+      && event.key.toLowerCase() === "v";
+  }
+
+  document.addEventListener("keydown", (event) => {
+    if (!isPasteShortcut(event)) return;
+    if (event.repeat) {
+      event.preventDefault();
+      return;
+    }
+    pasteShortcutActive = true;
+    pasteShortcutHandled = false;
+  });
+
+  document.addEventListener("keyup", (event) => {
+    if (event.key === "Control" || event.key === "Meta" || event.key.toLowerCase() === "v") {
+      pasteShortcutActive = false;
+      pasteShortcutHandled = false;
+    }
+  });
+
+  window.addEventListener("blur", () => {
+    pasteShortcutActive = false;
+    pasteShortcutHandled = false;
+  });
+
   if (filePicker) {
     filePicker.addEventListener("change", () => {
       const zoneId = filePicker.dataset.zone;
@@ -2382,6 +2411,13 @@
     if (applicationDialogOpen()) {
       event.preventDefault();
       return;
+    }
+    if (pasteShortcutActive) {
+      if (pasteShortcutHandled) {
+        event.preventDefault();
+        return;
+      }
+      pasteShortcutHandled = true;
     }
     const items = event.clipboardData && event.clipboardData.items;
     if (!items) return;

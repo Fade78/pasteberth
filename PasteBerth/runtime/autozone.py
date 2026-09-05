@@ -1,12 +1,13 @@
 """Read-only discovery of sidecar-backed dynamic zones."""
 from __future__ import annotations
 
+import hashlib
 import logging
 import os
 import re
+from collections.abc import Hashable, Iterable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from collections.abc import Hashable, Iterable, Mapping
 
 from .config import AutoZoneConfig, GroupConfig, ZoneConfig
 
@@ -14,6 +15,11 @@ from .config import AutoZoneConfig, GroupConfig, ZoneConfig
 log = logging.getLogger("pasteberth.autozone")
 
 _ZONE_ID_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
+_AUTOZONE_COLORS = (
+    "#243447", "#304c61", "#3f5f75", "#4d426b",
+    "#5c3f63", "#633f4b", "#65452f", "#5d542f",
+    "#3f5e45", "#2f5e5d", "#3e506b", "#51405f",
+)
 
 
 @dataclass(frozen=True)
@@ -144,6 +150,13 @@ def _scan_rule(
     return matches, diagnostics
 
 
+def _autozone_color(path: Path, group: str) -> str:
+    key = os.path.normcase(os.path.normpath(str(path))) + "\x00" + group
+    digest = hashlib.sha256(key.encode("utf-8")).digest()
+    index = int.from_bytes(digest[:8], "big") % len(_AUTOZONE_COLORS)
+    return _AUTOZONE_COLORS[index]
+
+
 def _zone_from_candidate(rule: AutoZoneConfig, path: Path, relative: str) -> ZoneConfig | None:
     zone_id = "-".join(relative.split("/")).lower()
     if not _ZONE_ID_RE.fullmatch(zone_id):
@@ -160,7 +173,7 @@ def _zone_from_candidate(rule: AutoZoneConfig, path: Path, relative: str) -> Zon
         reference_list_suffix=rule.reference_list_suffix,
         reference_separator=rule.reference_separator,
         allow_zip_download=rule.allow_zip_download,
-        color=rule.color,
+        color=rule.color if rule.color is not None else _autozone_color(path, rule.group),
         create_directory=False,
         min_free_percent=rule.min_free_percent,
         storage_mode="sidecar",

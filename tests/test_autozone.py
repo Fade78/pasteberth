@@ -1,11 +1,16 @@
+from dataclasses import replace
+import shutil
 import tempfile
 import unittest
 from pathlib import Path
-import shutil
 from unittest import mock
 
 from PasteBerth.runtime import autozone as autozone_module
-from PasteBerth.runtime.autozone import discover_autozones, merge_autozone_groups
+from PasteBerth.runtime.autozone import (
+    _autozone_color,
+    discover_autozones,
+    merge_autozone_groups,
+)
 from PasteBerth.runtime.config import (
     AutoZoneConfig,
     GroupConfig,
@@ -92,6 +97,52 @@ class TestAutozoneDiscovery(unittest.TestCase):
         self.assertEqual(len(candidates), 1)
         self.assertTrue(any("directory alias" in message for message in diagnostics))
 
+    def test_omitted_color_is_deterministic_for_path_and_group(self):
+        first = self.tmp / "first" / "work" / "exchange"
+        second = self.tmp / "second" / "work" / "exchange"
+        first.mkdir(parents=True)
+        second.mkdir(parents=True)
+
+        first_rule = rule(self.tmp)
+        first_candidates, _ = discover_autozones((first_rule,))
+        first_color = next(
+            candidate.zone.color
+            for candidate in first_candidates
+            if candidate.zone.directory == first
+        )
+        second_candidates, _ = discover_autozones((first_rule,))
+        second_color = next(
+            candidate.zone.color
+            for candidate in second_candidates
+            if candidate.zone.directory == second
+        )
+
+        self.assertEqual(first_color, _autozone_color(first, "Repositories"))
+        self.assertEqual(first_color, next(
+            candidate.zone.color
+            for candidate in discover_autozones((first_rule,))[0]
+            if candidate.zone.directory == first
+        ))
+        self.assertEqual(second_color, _autozone_color(second, "Repositories"))
+        self.assertNotEqual(
+            _autozone_color(Path("/var/lib/pasteberth/repo-a"), "Repositories"),
+            _autozone_color(Path("/var/lib/pasteberth/repo-b"), "Repositories"),
+        )
+        self.assertNotEqual(
+            _autozone_color(Path("/var/lib/pasteberth/repo-a"), "Repositories"),
+            _autozone_color(Path("/var/lib/pasteberth/repo-a"), "Other"),
+        )
+
+    def test_explicit_autozone_color_is_preserved(self):
+        candidate_path = self.tmp / "repo" / "work" / "exchange"
+        candidate_path.mkdir(parents=True)
+        explicit = rule(self.tmp)
+        explicit = replace(explicit, color="#243447")
+
+        candidates, _ = discover_autozones((explicit,))
+
+        self.assertEqual(candidates[0].zone.color, "#243447")
+
     def test_generated_group_keeps_empty_rule_and_explicit_membership(self):
         configured = (GroupConfig(name="Other", selection="other"),)
         groups, diagnostics = merge_autozone_groups(
@@ -137,6 +188,23 @@ max_items = 4
 
         self.assertEqual(cfg.zones, {})
         self.assertEqual(len(cfg.autozones), 1)
+        self.assertIsNone(cfg.autozones[0].color)
+
+    def test_autozone_explicit_color_is_loaded(self):
+        cfg = self._load(
+            f"""listen_address = \"127.0.0.1\"
+allowed_hosts = [\"localhost\"]
+allow_unauthenticated_local = true
+
+[[autozone]]
+base_directory = {str(self.tmp)!r}
+pattern = \"^[^/]+$\"
+group = \"Repositories\"
+color = \"#304237\"
+"""
+        )
+
+        self.assertEqual(cfg.autozones[0].color, "#304237")
 
     def test_autozone_est_sidecar_et_convertit_ancienne_limite(self):
         common = f"""listen_address = \"127.0.0.1\"
@@ -195,6 +263,7 @@ retain = 2
         dynamic = overview["zones"][0]
         self.assertEqual(dynamic["retain"], 2)
         self.assertEqual(dynamic["storage_mode"], "sidecar")
+        self.assertRegex(dynamic["color"], r"^#[0-9a-f]{6}$")
         self.service.upload(zone_id, b"third", "text/plain")
         self.assertEqual(len(self.service.history(zone_id)), 2)
 

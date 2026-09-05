@@ -28,6 +28,11 @@ class TestContratsFrontend(unittest.TestCase):
         # Sans zone active : demande explicite, jamais d'envoi ambigu.
         self.assertIn("requireActiveZone", self.app_js)
         self.assertIn("Choose a zone first", self.app_js)
+        self.assertNotIn('addEventListener("mouseenter", () => setActive', self.app_js)
+
+    def test_un_geste_ctrl_v_ne_rejoue_pas_le_paste(self):
+        self.assertIn("event.repeat", self.app_js)
+        self.assertIn("pasteShortcutHandled", self.app_js)
 
     def test_copy_clipboard_api_avec_repli(self):
         self.assertIn("navigator.clipboard.writeText", self.app_js)
@@ -211,6 +216,7 @@ class TestContratsFrontend(unittest.TestCase):
         self.assertIn("function downloadContent", self.app_js)
         self.assertIn('className = "download-btn"', self.app_js)
         self.assertIn('id="pv-download"', self.index_html)
+        self.assertIn("fileTypeLabel(item.filename)", self.app_js)
 
     def test_clipboard_html_conserve_le_stockage_et_assainit_la_copie(self):
         self.assertIn("const source = await loadHtml()", self.app_js)

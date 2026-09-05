@@ -110,6 +110,8 @@ only, without `/paste`.
 - Hover the selected file or a history icon to see complete, untruncated item
   details.
 - Publish files from scripts or agents with `drop`.
+- Expose the same `drop` vocabulary to local agents through the optional `mcp`
+  stdio adapter.
 - Resolve dynamic zone directories from the CLI without editing configuration.
 - Rename or delete managed files while keeping data and sidecars consistent.
 - Run behind an HTTPS reverse proxy or terminate TLS directly.
@@ -158,6 +160,28 @@ reference for each successful source.
 Direct staging still calls the daemon through the configured server URL. If a
 trusted local HTTPS certificate is self-signed, add `--insecure`; this disables
 certificate verification only.
+
+### MCP stdio adapter
+
+Run the optional adapter as a local MCP server:
+
+```sh
+PASTEBERTH_PASSWORD='your-password' pasteberth mcp --config config.toml
+```
+
+On Windows `cmd.exe`, use `set PASTEBERTH_PASSWORD=your-password` before
+running `PasteBerth\pasteberth.cmd mcp --config config.toml`; in PowerShell use
+`$env:PASTEBERTH_PASSWORD = "your-password"`. The MCP process can read any
+regular local file readable by its account, so only connect trusted agents.
+
+The adapter reads newline-delimited JSON-RPC from standard input and writes only
+MCP responses to standard output. Its initial `drop` tool accepts existing local
+file paths or UTF-8 content with a filename, then uses the same HTTP upload path,
+zone checks, size limits, MIME classification, and managed-file protections as
+the CLI. The password must come from `PASTEBERTH_PASSWORD`; standard input is
+reserved for the MCP protocol. The stdio implementation supports modern MCP
+discovery and requests from `2026-07-28` clients, while retaining the legacy
+initialize handshake through `2025-06-18`.
 
 ## Documentation
 

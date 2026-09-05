@@ -3,6 +3,7 @@
     pasteberth                         # start with local default values
     pasteberth serve   [--config PATH] [--log-level LEVEL]
     pasteberth drop [--config PATH] [--server URL] [--zone ID] [--replace] [ZONE_DIRECTORY] FILE...
+    pasteberth mcp  [--config PATH] [--server URL] [--insecure]
     pasteberth rename [--config PATH] DIRECTORY SOURCE TARGET
     pasteberth delete [--config PATH] [--force] DIRECTORY FILE...
     pasteberth passwd  [--config PATH]
@@ -13,6 +14,8 @@
 from __future__ import annotations
 
 import argparse
+import base64
+import binascii
 import errno
 import getpass
 import logging
@@ -53,6 +56,7 @@ from .config import (
     ensure_external_path,
 )
 from .platformfs import UnsafeLinkError, UnsupportedFilesystemError, platform_fs
+from .mcp import McpToolError, run_stdio
 from .service import PasteService, ServiceError
 from .storage import DestinationError, LocalDestination
 
@@ -392,7 +396,7 @@ def _cmd_drop(args: argparse.Namespace) -> int:
             raise ConfigError("drop requires at least one source file")
         client = PasteberthClient(
             _drop_server_url(cfg, args.server_url),
-            timeout=cfg.limits.http_request_timeout_seconds,
+            timeout=cfg.limits.http_request_timeout_seconds or 60.0,
             insecure=args.insecure,
         )
         local_destination = None
@@ -463,6 +467,155 @@ def _cmd_drop(args: argparse.Namespace) -> int:
             continue
         print(payload["reference"])
     return 1 if failures else 0
+
+
+def _mcp_item(item: object, max_bytes: int | None, limits) -> tuple[bytes, str, str]:
+    if not isinstance(item, dict):
+        raise McpToolError("each drop item must be an object")
+    allowed = {"path", "content", "content_base64", "filename", "mime"}
+    unknown = set(item) - allowed
+    if unknown:
+        raise McpToolError(f"unknown drop item field: {sorted(unknown)[0]!r}")
+    sources = [key for key in ("path", "content", "content_base64") if key in item]
+    if len(sources) != 1:
+        raise McpToolError("each drop item must contain exactly one source")
+    source = sources[0]
+    declared_mime = item.get("mime")
+    if declared_mime is not None and (
+        not isinstance(declared_mime, str) or not declared_mime
+    ):
+        raise McpToolError("drop item mime must be a non-empty string")
+
+    if source == "path":
+        raw_path = item["path"]
+        if not isinstance(raw_path, str) or not raw_path:
+            raise McpToolError("drop item path must be a non-empty string")
+        if "filename" in item:
+            raise McpToolError("filename is only valid for in-memory drop content")
+        path = Path(raw_path).expanduser()
+        data = _read_drop_source(path, max_bytes)
+        filename = path.name
+        fallback_mime = "application/octet-stream"
+    else:
+        filename = item.get("filename")
+        if not isinstance(filename, str) or not filename:
+            raise McpToolError("in-memory drop content requires filename")
+        if source == "content":
+            content = item["content"]
+            if not isinstance(content, str):
+                raise McpToolError("drop content must be a string")
+            data = content.encode("utf-8")
+            fallback_mime = "text/plain"
+        else:
+            encoded = item["content_base64"]
+            if not isinstance(encoded, str) or not encoded:
+                raise McpToolError("content_base64 must be a non-empty string")
+            try:
+                data = base64.b64decode(encoded, validate=True)
+            except (ValueError, TypeError, binascii.Error) as exc:
+                raise McpToolError("content_base64 is not valid base64") from exc
+            fallback_mime = "application/octet-stream"
+
+    if max_bytes is not None and len(data) > max_bytes:
+        raise McpToolError(f"content is too large ({len(data)} > {max_bytes} bytes)")
+    mime = declared_mime or mimetypes.guess_type(filename)[0] or fallback_mime
+    if (
+        limits.max_filename_length is not None
+        and len(filename) > limits.max_filename_length
+    ):
+        raise McpToolError("drop filename is too long")
+    if (
+        limits.max_filename_bytes is not None
+        and len(filename.encode("utf-8")) > limits.max_filename_bytes
+    ):
+        raise McpToolError("drop filename is too large")
+    if (
+        limits.max_mime_length is not None
+        and len(mime) > limits.max_mime_length
+    ):
+        raise McpToolError("drop MIME type is too long")
+    return data, filename, mime
+
+
+def _mcp_password() -> str:
+    password = os.environ.get("PASTEBERTH_PASSWORD")
+    if password is None:
+        raise McpToolError(
+            "authentication required; set PASTEBERTH_PASSWORD for MCP stdio"
+        )
+    return password
+
+
+def _cmd_mcp(args: argparse.Namespace) -> int:
+    config_path = find_config_path(_config_arg(args))
+    try:
+        cfg = build_default_config() if config_path is None else load_config(config_path)
+        client = PasteberthClient(
+            _drop_server_url(cfg, args.server_url),
+            timeout=cfg.limits.http_request_timeout_seconds or 60.0,
+            insecure=args.insecure,
+        )
+    except (ConfigError, ClientError) as exc:
+        print(f"pasteberth: configuration error\n  {exc}", file=sys.stderr)
+        return 2
+
+    cookie = None
+
+    def drop(arguments: dict) -> dict:
+        nonlocal cookie
+        unknown = set(arguments) - {"zone", "items", "replace"}
+        if unknown:
+            raise McpToolError(f"unknown drop field: {sorted(unknown)[0]!r}")
+        zone_id = arguments.get("zone")
+        if not isinstance(zone_id, str) or not _DROP_ZONE_RE.fullmatch(zone_id):
+            raise McpToolError("drop zone must be a valid zone ID")
+        items = arguments.get("items")
+        if not isinstance(items, list) or not items:
+            raise McpToolError("drop items must be a non-empty array")
+        if len(items) > 128:
+            raise McpToolError("drop accepts at most 128 items per call")
+        replace = arguments.get("replace", False)
+        if not isinstance(replace, bool):
+            raise McpToolError("drop replace must be a boolean")
+
+        uploaded = []
+        errors = []
+        for index, item in enumerate(items):
+            try:
+                data, filename, declared_mime = _mcp_item(
+                    item, cfg.max_upload_bytes, cfg.limits
+                )
+                response = client.upload(
+                    zone_id,
+                    data,
+                    filename,
+                    declared_mime,
+                    replace=replace,
+                    cookie=cookie,
+                )
+                if response.status == 401:
+                    cookie = client.login(_mcp_password())
+                    response = client.upload(
+                        zone_id,
+                        data,
+                        filename,
+                        declared_mime,
+                        replace=replace,
+                        cookie=cookie,
+                    )
+                if response.status != 201:
+                    raise api_error(response)
+                payload = response.json()
+                if not isinstance(payload, dict) or not isinstance(
+                    payload.get("reference"), str
+                ):
+                    raise ClientError("server returned an invalid upload response")
+                uploaded.append(payload)
+            except (ClientError, McpToolError, OSError, ValueError) as exc:
+                errors.append({"index": index, "message": str(exc)})
+        return {"zone": zone_id, "items": uploaded, "errors": errors}
+
+    return run_stdio(drop)
 
 
 def _generated_config_text(storage_path: Path) -> str:
@@ -1280,6 +1433,30 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_drop.add_argument("--config", default=argparse.SUPPRESS, help="path to config.toml")
     p_drop.set_defaults(func=_cmd_drop)
+
+    p_mcp = sub.add_parser(
+        "mcp",
+        help="serve the optional MCP stdio adapter",
+        description=(
+            "Serve Pasteberth MCP tools over newline-delimited JSON-RPC on stdin/stdout.\n\n"
+            "The stdio stream is reserved for MCP messages; authentication uses\n"
+            "PASTEBERTH_PASSWORD when the HTTP server requires a session.\n"
+            "The initial tool is drop, which accepts local paths or in-memory content."
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    p_mcp.add_argument(
+        "--server",
+        dest="server_url",
+        help="Pasteberth server URL (derived from config when omitted)",
+    )
+    p_mcp.add_argument(
+        "--insecure",
+        action="store_true",
+        help="disable TLS certificate verification for a trusted self-signed server",
+    )
+    p_mcp.add_argument("--config", default=argparse.SUPPRESS, help="path to config.toml")
+    p_mcp.set_defaults(func=_cmd_mcp)
 
     p_rename = sub.add_parser(
         "rename",
