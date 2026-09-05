@@ -3,6 +3,7 @@ démarrage, commande passwd."""
 import os
 import shutil
 import stat
+import ssl
 import socket
 import subprocess
 import sys
@@ -13,6 +14,7 @@ from unittest import mock
 
 from PasteBerth.runtime import __version__
 from PasteBerth.runtime.auth import load_password_hash, verify_password
+from PasteBerth.runtime.client import ClientError, PasteberthClient
 from PasteBerth.runtime.cli import _audit_tls, _network_warning, _read_drop_source
 from PasteBerth.runtime.config import load_config
 from PasteBerth.runtime.platformfs import platform_fs
@@ -64,12 +66,24 @@ class TestVersion(unittest.TestCase):
             "With --zone ID, positional arguments are source files only.",
             "loopback server",
             "HTTP API",
+            "trusted self-signed HTTPS certificate",
             "pasteberth drop --config config.toml --zone project-alpha report.pdf",
             "--password-stdin",
             "ZONE_DIRECTORY_OR_FIRST_SOURCE",
         ):
             with self.subTest(text=text):
                 self.assertIn(text, proc.stdout)
+
+    def test_client_aide_apres_une_erreur_de_verification_tls(self):
+        client = PasteberthClient("https://127.0.0.1:8765")
+        connection = mock.Mock()
+        connection.request.side_effect = ssl.SSLCertVerificationError(
+            "certificate verify failed"
+        )
+
+        with mock.patch.object(client, "_connection", return_value=connection):
+            with self.assertRaisesRegex(ClientError, r"retry with --insecure"):
+                client.request("POST", "/api/health")
 
     def test_aide_expose_les_sous_commandes_courtes(self):
         proc = run_cli(["--help"])

@@ -39,7 +39,7 @@ service between independent servers.
 
 ## Quick Start
 
-The current public release is `2.1.5`. The documented v2.1.5 server runs on
+The current public release is `2.1.6`. The documented v2.1.6 server runs on
 Linux, requires Python 3.11 or newer, and has no third-party
 Python runtime dependency. A native Windows backend is included but has only
 been validated under Wine; macOS and native Windows remain outside the official
@@ -151,6 +151,10 @@ unwritable HTTP drops use the server session, with `PASTEBERTH_PASSWORD` or
 `--password-stdin` available for non-interactive use. `drop` prints one
 reference for each successful source.
 
+Direct staging still calls the daemon through the configured server URL. If a
+trusted local HTTPS certificate is self-signed, add `--insecure`; this disables
+certificate verification only.
+
 ## Documentation
 
 [`GUIDE.md`](GUIDE.md) is the complete operator and integration guide. It
@@ -174,7 +178,7 @@ template is [`PasteBerth/support/deploy/pasteberth.service`](PasteBerth/support/
 
 ## Support Status
 
-| Area | v2.1.5 status |
+| Area | v2.1.6 status |
 |---|---|
 | Python | 3.11 or newer |
 | Server | Linux, officially tested |

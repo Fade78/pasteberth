@@ -2,6 +2,15 @@
 
 This file records user-visible changes to Pasteberth.
 
+## [2.1.6] - 2026-09-05
+
+### TLS Diagnostics
+
+- explain in `drop --help` that direct staging still calls the daemon URL;
+- point out the explicit `--insecure` option for trusted self-signed HTTPS
+  certificates without weakening TLS verification by default;
+- make certificate-verification errors tell the operator how to retry.
+
 ## [2.1.5] - 2026-09-05
 
 ### CLI Help

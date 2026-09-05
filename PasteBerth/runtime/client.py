@@ -98,6 +98,12 @@ class PasteberthClient:
             for key, value in response.getheaders():
                 response_headers.setdefault(key.lower(), value)
             return ClientResponse(response.status, response_headers, data)
+        except ssl.SSLCertVerificationError as exc:
+            raise ClientError(
+                "cannot reach Pasteberth server: "
+                f"{exc}; if this is a trusted self-signed HTTPS certificate, "
+                "retry with --insecure"
+            ) from exc
         except (OSError, ssl.SSLError) as exc:
             raise ClientError(f"cannot reach Pasteberth server: {exc}") from exc
         finally:

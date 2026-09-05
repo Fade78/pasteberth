@@ -1227,6 +1227,9 @@ def build_parser() -> argparse.ArgumentParser:
             "For a loopback server with a writable local zone, Pasteberth stages\n"
             "the source locally and asks the daemon to regularize it. Remote or\n"
             "unavailable local staging falls back to the HTTP API.\n\n"
+            "Direct staging still calls the daemon through the configured URL.\n"
+            "For a trusted self-signed HTTPS certificate, add --insecure; this\n"
+            "disables certificate verification only.\n\n"
             "Examples:\n"
             "  pasteberth drop --config config.toml --zone project-alpha report.pdf\n"
             "  pasteberth drop --config config.toml "
@@ -1273,7 +1276,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_drop.add_argument(
         "--insecure",
         action="store_true",
-        help="disable TLS certificate verification for the server call",
+        help="disable TLS certificate verification for a trusted self-signed server",
     )
     p_drop.add_argument("--config", default=argparse.SUPPRESS, help="path to config.toml")
     p_drop.set_defaults(func=_cmd_drop)
