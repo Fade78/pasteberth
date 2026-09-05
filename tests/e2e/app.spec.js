@@ -464,10 +464,29 @@ test("le layout tab ouvre une zone et permet une sélection multiple au Shift-cl
   await page.getByRole("button", { name: "Group options" }).click();
   await page.getByLabel("Layout").selectOption("tab");
   await expect(page.locator(".tab-zone-list")).toBeVisible();
+  await secondaryLink.click();
+  await expect(page.locator('.tab-zone-main .zone[data-zone="secondary"]')).toHaveCount(1);
   await page.reload({ waitUntil: "domcontentloaded" });
   await expect(page.locator("#status-text")).toHaveText("online");
   await expect(page.locator(".tab-zone-list")).toBeVisible();
-  await expect(page.locator(".tab-zone-main .zone")).toHaveCount(0);
+  await expect(page.locator('.tab-zone-main .zone[data-zone="secondary"]')).toHaveCount(1);
+  await expect(page.locator(".tab-zone-main .zone")).toHaveCount(1);
+});
+
+test("migre la zone active historique vers les zones ouvertes", async ({ page }) => {
+  await openApp(page);
+  await page.locator('.group-tab[data-group="Tabbed"]').click();
+  const secondaryLink = page.locator('.tab-zone-link[data-zone="secondary"]');
+  await secondaryLink.click();
+  await expect(page.locator('.tab-zone-main .zone[data-zone="secondary"]')).toHaveCount(1);
+
+  await page.evaluate(() => {
+    localStorage.removeItem("pb.openZones");
+    localStorage.setItem("pb.activeZone", "secondary");
+  });
+  await page.reload({ waitUntil: "domcontentloaded" });
+  await expect(page.locator("#status-text")).toHaveText("online");
+  await expect(page.locator('.tab-zone-main .zone[data-zone="secondary"]')).toHaveCount(1);
 });
 
 test("sélectionne des plages de zones TAB avec les modificateurs et masque la colonne", async ({ page }) => {

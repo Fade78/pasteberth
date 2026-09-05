@@ -268,6 +268,8 @@ class TestContratsFrontend(unittest.TestCase):
         self.assertIn("groupLayouts", self.app_js)
         self.assertIn('id = "opt-layout"', self.app_js)
         self.assertIn("tab-zone-link", self.app_js)
+        self.assertIn('localStorage.getItem("pb.openZones")', self.app_js)
+        self.assertIn('localStorage.setItem("pb.openZones"', self.app_js)
         self.assertIn('aria-label="Zone groups"', self.index_html)
         self.assertIn('aria-current", "page"', self.app_js)
 

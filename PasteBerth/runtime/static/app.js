@@ -1344,6 +1344,27 @@
     } catch (_) {}
   }
 
+  function loadOpenZones() {
+    try {
+      const raw = localStorage.getItem("pb.openZones");
+      if (raw === null) {
+        const activeZoneId = localStorage.getItem("pb.activeZone");
+        state.openZoneIds = activeZoneId ? [activeZoneId] : [];
+        return;
+      }
+      const stored = JSON.parse(raw);
+      if (Array.isArray(stored)) {
+        state.openZoneIds = stored.filter(zoneId => typeof zoneId === "string");
+      }
+    } catch (_) {}
+  }
+
+  function saveOpenZones() {
+    try {
+      localStorage.setItem("pb.openZones", JSON.stringify(state.openZoneIds));
+    } catch (_) {}
+  }
+
   function groupZoneCount(group) {
     return group.zone_count ?? group.zone_ids?.length ?? 0;
   }
@@ -1367,6 +1388,7 @@
     }
     if (state.activeGroupId === previous) return false;
     state.openZoneIds = [];
+    if (state.initialized) saveOpenZones();
     state.tabSelectionAnchorId = null;
     try {
       if (state.activeGroupId) localStorage.setItem("pb.activeGroup", state.activeGroupId);
@@ -1379,7 +1401,8 @@
     grid.replaceChildren();
     const visibleZones = getVisibleZones();
     const visibleIds = new Set(visibleZones.map(zone => zone.id));
-    state.openZoneIds = state.openZoneIds.filter(zoneId => visibleIds.has(zoneId));
+    const filteredOpenZoneIds = state.openZoneIds.filter(zoneId => visibleIds.has(zoneId));
+    state.openZoneIds = filteredOpenZoneIds;
     const group = state.groups.find(item => item.name === state.activeGroupId);
     const tabLayout = groupLayout(group) === "tab";
     const showTabSidebar = tabLayout && tabSidebarVisible(group);
@@ -1472,6 +1495,7 @@
       state.tabSelectionAnchorId = zoneId;
     }
     state.openZoneIds = visibleIds.filter(id => next.has(id));
+    saveOpenZones();
     setActive(zoneId);
     renderAll();
     if (restoreFocus) {
@@ -1575,6 +1599,7 @@
       : null;
     const visibleZones = getVisibleZones();
     state.openZoneIds = selectAll ? visibleZones.map(zone => zone.id) : [];
+    saveOpenZones();
     if (selectAll) {
       const activeVisible = visibleZones.some(zone => zone.id === state.activeId);
       state.tabSelectionAnchorId = activeVisible ? state.activeId : visibleZones[0]?.id || null;
@@ -1608,6 +1633,7 @@
     const focused = document.activeElement?.classList.contains("tab-zone-link")
       && document.activeElement.dataset.zone === zoneId;
     state.openZoneIds.push(zoneId);
+    saveOpenZones();
     renderAll();
     if (focused) {
       grid.querySelector(`.tab-zone-link[data-zone="${CSS.escape(zoneId)}"]`)?.focus();
@@ -1834,6 +1860,7 @@
     } catch (_) {}
     if (groupChanged) {
       state.openZoneIds = [];
+      saveOpenZones();
       state.tabSelectionAnchorId = null;
       setActive(null);
     }
@@ -1927,8 +1954,10 @@
       loadTabSidebarVisibility();
 
       reconcileActiveGroup();
+      if (!state.initialized) loadOpenZones();
       renderGroups();
       renderAll();
+      saveOpenZones();
 
       let stored = null;
       try { stored = localStorage.getItem("pb.activeZone"); } catch (_) {}

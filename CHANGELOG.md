@@ -2,6 +2,14 @@
 
 This file records user-visible changes to Pasteberth.
 
+## [2.1.7] - 2026-09-05
+
+### Web UI Session Restoration
+
+- persist open TAB-layout zones across browser reloads and service restarts;
+- migrate existing sessions from the persisted active zone when open-zone state
+  is not yet available.
+
 ## [2.1.6] - 2026-09-05
 
 ### TLS Diagnostics
