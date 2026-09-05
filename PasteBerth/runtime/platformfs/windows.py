@@ -425,10 +425,18 @@ class _WinApi:
 
 
 class _WindowsDirectoryHandle(DirectoryHandle):
-    def __init__(self, api: _WinApi, path: Path, handle: int, identity: FileIdentity):
+    def __init__(
+        self,
+        api: _WinApi,
+        path: Path,
+        handle: int,
+        identity: FileIdentity,
+        native_path: str,
+    ):
         super().__init__(path, identity)
         self._api = api
         self._handle = handle
+        self._native_path = native_path
 
     def _close_native(self) -> None:
         self._api.CloseHandle(ctypes.c_void_p(self._handle))
@@ -566,6 +574,58 @@ class WindowsPlatformFS(PlatformFS):
         root = drive + "\\"
         parts = [part for part in tail.split("\\") if part and part != "."]
         return root, parts
+
+    @staticmethod
+    def _native_directory_path(directory: DirectoryHandle) -> str:
+        if not isinstance(directory, _WindowsDirectoryHandle):
+            raise TypeError("Windows handle expected")
+        if directory.closed:
+            raise ValueError("directory handle is closed")
+        # Win32 has no general dirfd-relative equivalent for these operations.
+        # Keep using the final path captured with the open handle so a bound
+        # operation remains attached to the original directory after a rename.
+        return directory._native_path
+
+    def _resolve_bound_directory_path(
+        self,
+        directory: _WindowsDirectoryHandle,
+    ) -> str:
+        candidate = self._final_path(directory._handle)
+        access = _GENERIC_READ | _READ_CONTROL | _SYNCHRONIZE
+
+        def same_directory(path: str) -> str | None:
+            try:
+                handle = self._open_native(path, desired_access=access)
+            except OSError:
+                return None
+            try:
+                raw = self._query_raw(handle)
+                if (
+                    raw["identity"] == directory.identity
+                    and raw["attributes"] & _FILE_ATTRIBUTE_DIRECTORY
+                    and not raw["attributes"] & _FILE_ATTRIBUTE_REPARSE_POINT
+                ):
+                    return self._final_path(handle)
+                return None
+            finally:
+                self._close_native(handle)
+
+        resolved = same_directory(candidate)
+        if resolved is not None:
+            return resolved
+
+        # Some Windows-compatible runtimes keep returning the original name
+        # after a directory is renamed. Find the same object in its original
+        # parent as a fail-closed compatibility fallback.
+        try:
+            children = tuple(Path(directory.path).parent.iterdir())
+        except OSError:
+            children = ()
+        for child in children:
+            resolved = same_directory(self._path_string(child))
+            if resolved is not None:
+                return resolved
+        raise EntryChangedError(f"directory was replaced: {directory.path}")
 
     def _open_native(
         self,
@@ -860,20 +920,14 @@ class WindowsPlatformFS(PlatformFS):
     def _directory_stable(self, directory: DirectoryHandle) -> None:
         if not isinstance(directory, _WindowsDirectoryHandle):
             raise TypeError("Windows handle expected")
-        current = self._open_native(
-            self._path_string(directory.path),
-            desired_access=_GENERIC_READ | _READ_CONTROL | _SYNCHRONIZE,
-        )
-        try:
-            raw = self._query_raw(current)
-            if raw["identity"] != directory.identity:
-                raise EntryChangedError(f"directory was replaced: {directory.path}")
-            if self._compare_path(self._final_path(current)) != self._compare_path(
-                self._path_string(directory.path)
-            ):
-                raise UnsafeLinkError(f"zone path was redirected: {directory.path}")
-        finally:
-            self._close_native(current)
+        self._native_directory_path(directory)
+        raw = self._query_raw(directory._handle)
+        if raw["identity"] != directory.identity:
+            raise EntryChangedError(f"directory was replaced: {directory.path}")
+        # A directory handle follows a rename on Windows. Refresh the physical
+        # path before using Win32 APIs that do not accept a directory handle as
+        # a relative root.
+        directory._native_path = self._resolve_bound_directory_path(directory)
 
     def open_directory(
         self,
@@ -937,11 +991,13 @@ class WindowsPlatformFS(PlatformFS):
                 self._path_string(path)
             ):
                 raise UnsafeLinkError(f"zone path was redirected: {path}")
+            native_path = self._final_path(handle)
             return _WindowsDirectoryHandle(
                 self._api,
                 Path(path),
                 handle,
                 final_raw["identity"],
+                native_path,
             )
         except BaseException:
             self._close_native(handle)
@@ -990,7 +1046,7 @@ class WindowsPlatformFS(PlatformFS):
     ) -> tuple[int, dict]:
         self.validate_component(name)
         self._directory_stable(directory)
-        directory_path = self._path_string(directory.path)
+        directory_path = self._native_directory_path(directory)
         path = ntpath.join(directory_path, name)
         handle = self._open_native(path, desired_access=desired_access)
         try:
@@ -1070,7 +1126,7 @@ class WindowsPlatformFS(PlatformFS):
     ) -> _WindowsFileHandle:
         self.validate_component(name)
         self._directory_stable(directory)
-        path = ntpath.join(self._path_string(directory.path), name)
+        path = ntpath.join(self._native_directory_path(directory), name)
         handle = self._open_native(
             path,
             desired_access=(
@@ -1131,7 +1187,7 @@ class WindowsPlatformFS(PlatformFS):
 
     def entries(self, directory: DirectoryHandle) -> tuple[EntryInfo, ...]:
         self._directory_stable(directory)
-        pattern = ntpath.join(self._path_string(directory.path), "*")
+        pattern = ntpath.join(self._native_directory_path(directory), "*")
         data = _WIN32_FIND_DATAW()
         search = self._api.FindFirstFileW(self._extended_path(pattern), ctypes.byref(data))
         if not _valid_handle(search):
@@ -1202,8 +1258,9 @@ class WindowsPlatformFS(PlatformFS):
     ) -> None:
         self._check_expected(directory, source, expected)
         self.validate_component(target)
-        source_path = ntpath.join(self._path_string(directory.path), source)
-        target_path = ntpath.join(self._path_string(directory.path), target)
+        directory_path = self._native_directory_path(directory)
+        source_path = ntpath.join(directory_path, source)
+        target_path = ntpath.join(directory_path, target)
         self._directory_stable(directory)
         if not self._api.CreateHardLinkW(
             self._extended_path(target_path),
@@ -1217,7 +1274,7 @@ class WindowsPlatformFS(PlatformFS):
 
     def _rename_buffer(self, target: str, directory: DirectoryHandle, *, replace: bool):
         target_path = self._extended_path(
-            ntpath.join(self._path_string(directory.path), target)
+            ntpath.join(self._native_directory_path(directory), target)
         )
         target_bytes = target_path.encode("utf-16-le")
         if replace:
@@ -1245,7 +1302,7 @@ class WindowsPlatformFS(PlatformFS):
 
     def _rename_buffer_legacy(self, target: str, directory: DirectoryHandle, *, replace: bool):
         target_path = self._extended_path(
-            ntpath.join(self._path_string(directory.path), target)
+            ntpath.join(self._native_directory_path(directory), target)
         )
         target_bytes = target_path.encode("utf-16-le")
         info_type = _FILE_RENAME_INFO
@@ -1463,7 +1520,7 @@ class WindowsPlatformFS(PlatformFS):
     ):
         self.validate_component(name)
         self._directory_stable(directory)
-        path = ntpath.join(self._path_string(directory.path), name)
+        path = ntpath.join(self._native_directory_path(directory), name)
         handle = self._open_native(
             path,
             desired_access=_GENERIC_READ | _GENERIC_WRITE | _READ_CONTROL | _SYNCHRONIZE,
@@ -1515,8 +1572,9 @@ class WindowsPlatformFS(PlatformFS):
             raise TypeError("Windows handle expected")
         if directory.closed:
             raise ValueError("directory handle is closed")
+        self._directory_stable(directory)
         handle = self._open_native(
-            self._path_string(directory.path),
+            self._native_directory_path(directory),
             desired_access=_GENERIC_WRITE | _READ_CONTROL | _SYNCHRONIZE,
         )
         try:
@@ -1526,11 +1584,12 @@ class WindowsPlatformFS(PlatformFS):
             self._close_native(handle)
 
     def volume_space(self, directory: DirectoryHandle) -> VolumeSpace:
+        self._directory_stable(directory)
         total = ctypes.c_uint64()
         available = ctypes.c_uint64()
         free = ctypes.c_uint64()
         if not self._api.GetDiskFreeSpaceExW(
-            self._extended_path(self._path_string(directory.path)),
+            self._extended_path(self._native_directory_path(directory)),
             ctypes.byref(available),
             ctypes.byref(total),
             ctypes.byref(free),

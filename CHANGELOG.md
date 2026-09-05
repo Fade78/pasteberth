@@ -6,6 +6,8 @@ This file records user-visible changes to Pasteberth.
 
 ### Resource and Platform Hardening
 
+- keep Windows directory-handle operations bound to the original directory
+  after a zone rename, and add a native Windows command launcher;
 - bound multipart request framing independently from extracted upload content;
 - bound the total uncompressed size and duration of streamed ZIP downloads;
 - reject Windows-reserved, alternate-stream, and ambiguous trailing-dot/space

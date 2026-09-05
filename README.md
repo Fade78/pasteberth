@@ -45,6 +45,10 @@ Python runtime dependency. A native Windows backend is included but has only
 been validated under Wine; macOS and native Windows remain outside the official
 support matrix until real-OS validation is available.
 
+The deployment bundle also contains `PasteBerth\pasteberth.cmd` for invoking
+the runtime from Windows `cmd.exe` or PowerShell. Python 3.11 or newer must be
+available as `py -3` or `python` on `PATH`.
+
 ```sh
 git clone https://github.com/Fade78/pasteberth.git
 cd pasteberth

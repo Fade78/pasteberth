@@ -1,6 +1,5 @@
 """Tests du stockage : noms uniques, sidecars, rétention, ownership."""
 import json
-import grp
 import multiprocessing
 import os
 import shutil
@@ -10,6 +9,11 @@ import time
 import unittest
 from pathlib import Path
 from unittest import mock
+
+try:
+    import grp
+except ImportError:  # pragma: no cover - Windows has no POSIX group module.
+    grp = None
 
 import PasteBerth.runtime.storage as storage_module
 from PasteBerth.runtime.images import ImageInfo
@@ -87,7 +91,7 @@ class TestSauvegarde(Base):
             self.assertEqual(stat.S_IMODE((self.dir / (stored.filename + ".json")).stat().st_mode), 0o600)
 
     def test_fichier_et_sidecar_recoivent_le_groupe_configure(self):
-        if platform_fs().backend_name != "posix":
+        if platform_fs().backend_name != "posix" or grp is None:
             self.skipTest("les groupes système sont une capacité POSIX")
         group = grp.getgrgid(os.getgid()).gr_name
         destination = LocalDestination(self.dir.parent / "grouped", file_group=group)

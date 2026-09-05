@@ -134,8 +134,11 @@ class TestWrappers(unittest.TestCase):
                 env.pop(key, None)
             else:
                 env[key] = value
+        command = [str(executable), *(args or ["--version"])]
+        if executable.suffix.lower() in {".cmd", ".bat"}:
+            command = ["cmd.exe", "/d", "/c", *command]
         return subprocess.run(
-            [str(executable), *(args or ["--version"])],
+            command,
             capture_output=True,
             text=True,
             env=env,
@@ -145,7 +148,12 @@ class TestWrappers(unittest.TestCase):
 
     def test_wrappers_resistent_au_cwd_et_au_pythonpath(self):
         fake_root = self._fake_package()
-        for wrapper in ("PasteBerth/pasteberth",):
+        wrappers = (
+            ("PasteBerth/pasteberth.cmd",)
+            if platform_fs().backend_name == "windows"
+            else ("PasteBerth/pasteberth",)
+        )
+        for wrapper in wrappers:
             with self.subTest(wrapper=wrapper):
                 proc = self._run_wrapper(
                     wrapper,
@@ -157,6 +165,8 @@ class TestWrappers(unittest.TestCase):
                 self.assertNotIn("WRAPPER_SHADOW_MARKER", proc.stdout + proc.stderr)
 
     def test_lien_symbolique_externe_retrouve_le_bundle(self):
+        if platform_fs().backend_name == "windows":
+            self.skipTest("les liens symboliques Windows exigent une capacité native")
         fake_root = self._fake_package()
         link_dir = self.tmp / "local-bin"
         link_dir.mkdir()
@@ -178,8 +188,11 @@ class TestWrappers(unittest.TestCase):
             ignore=shutil.ignore_patterns("__pycache__"),
         )
 
+        wrapper = bundle / (
+            "pasteberth.cmd" if platform_fs().backend_name == "windows" else "pasteberth"
+        )
         proc = self._run_executable(
-            bundle / "pasteberth",
+            wrapper,
             cwd=fake_root,
             pythonpath=fake_root,
         )
@@ -198,8 +211,11 @@ class TestWrappers(unittest.TestCase):
             ignore=shutil.ignore_patterns("__pycache__"),
         )
 
+        wrapper = bundle / (
+            "pasteberth.cmd" if platform_fs().backend_name == "windows" else "pasteberth"
+        )
         proc = self._run_executable(
-            bundle / "pasteberth",
+            wrapper,
             cwd=self.tmp,
             pythonpath=self.tmp,
             args=["--generate-config"],
@@ -213,7 +229,10 @@ class TestWrappers(unittest.TestCase):
         target = config_home / "pasteberth" / "config.toml"
         self.assertEqual(proc.returncode, 0, proc.stderr)
         self.assertTrue(target.is_file())
-        self.assertIn(str(data_home / "pasteberth" / "storage" / "default"), target.read_text())
+        self.assertIn(
+            (data_home / "pasteberth" / "storage" / "default").as_posix(),
+            target.read_text(),
+        )
         self.assertFalse((bundle / "config.toml").exists())
         self.assertFalse((bundle / "storage").exists())
         self.assertFalse((bundle / "runtime" / "__pycache__").exists())
@@ -225,8 +244,9 @@ class TestWrappers(unittest.TestCase):
             bundle,
             ignore=shutil.ignore_patterns("__pycache__"),
         )
-        executable = self.tmp / "pasteberth"
-        shutil.copy2(bundle / "pasteberth", executable)
+        wrapper_name = "pasteberth.cmd" if platform_fs().backend_name == "windows" else "pasteberth"
+        executable = self.tmp / wrapper_name
+        shutil.copy2(bundle / wrapper_name, executable)
         executable.chmod(0o755)
 
         without_home = self._run_executable(
@@ -467,7 +487,7 @@ class TestConfigurationDepot(unittest.TestCase):
         self.assertIn('url_prefix = ""', content)
         self.assertIn("allowed_hosts = []", content)
         self.assertIn(
-            str(self.tmp / "data-home" / "pasteberth" / "storage" / "default"),
+            (self.tmp / "data-home" / "pasteberth" / "storage" / "default").as_posix(),
             content,
         )
         self.assertIn("structural pixel budget", content)
@@ -511,7 +531,10 @@ class TestConfigurationDepot(unittest.TestCase):
         target = config_home / "pasteberth" / "config.toml"
         self.assertEqual(proc.returncode, 0, proc.stderr)
         self.assertTrue(target.is_file())
-        self.assertIn(str(data_home / "pasteberth" / "storage" / "default"), target.read_text())
+        self.assertIn(
+            (data_home / "pasteberth" / "storage" / "default").as_posix(),
+            target.read_text(),
+        )
         self.assertFalse((REPO_ROOT / "PasteBerth" / "config.toml").exists())
 
     def test_configuration_dans_le_bundle_refusee(self):
@@ -569,6 +592,8 @@ class TestConfigurationDepot(unittest.TestCase):
         self.assertNotIn("show_full_path", proc.stdout)
 
     def test_audit_selections_groupes_redondantes_avertit(self):
+        if running_under_wine():
+            self.skipTest("Wine ne reproduit pas les ACL héritées du répertoire temporaire")
         with socket.socket() as probe:
             probe.bind(("127.0.0.1", 0))
             port = probe.getsockname()[1]
@@ -592,6 +617,8 @@ class TestConfigurationDepot(unittest.TestCase):
         self.assertIn("redundant groups: All (all) and AllPattern (pattern)", proc.stdout)
 
     def test_audit_permissions_zone_avertit_sans_echouer(self):
+        if running_under_wine():
+            self.skipTest("Wine ne reproduit pas les ACL héritées du répertoire temporaire")
         target = self.tmp / "open"
         target.mkdir(mode=0o755)
         os.chmod(target, 0o755)
@@ -630,6 +657,8 @@ class TestConfigurationDepot(unittest.TestCase):
         self.assertIn("file_group", proc.stdout)
 
     def test_audit_permissions_group_writable_avertit_aussi(self):
+        if running_under_wine():
+            self.skipTest("Wine ne reproduit pas les ACL héritées du répertoire temporaire")
         # Feature: un mode group-writable (0o775) avertit mais n'échoue pas,
         # sinon l'opérateur contourne la protection (chmod 777, stockage hors zone).
         target = self.tmp / "shared"
@@ -668,6 +697,8 @@ class TestConfigurationDepot(unittest.TestCase):
         self.assertIn("same directory", proc.stdout)
 
     def test_audit_verifie_le_bind(self):
+        if running_under_wine():
+            self.skipTest("Wine ne reproduit pas les ACL héritées du répertoire temporaire")
         import socket
 
         with socket.socket() as occupied:
