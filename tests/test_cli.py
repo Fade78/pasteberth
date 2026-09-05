@@ -57,6 +57,20 @@ class TestVersion(unittest.TestCase):
         self.assertIn("--log-level", proc.stdout)
         self.assertIn("DEBUG", proc.stdout)
 
+    def test_aide_drop_explique_les_formes_et_le_fallback(self):
+        proc = run_cli(["drop", "--help"])
+        self.assertEqual(proc.returncode, 0)
+        for text in (
+            "With --zone ID, positional arguments are source files only.",
+            "loopback server",
+            "HTTP API",
+            "pasteberth drop --config config.toml --zone project-alpha report.pdf",
+            "--password-stdin",
+            "ZONE_DIRECTORY_OR_FIRST_SOURCE",
+        ):
+            with self.subTest(text=text):
+                self.assertIn(text, proc.stdout)
+
     def test_aide_expose_les_sous_commandes_courtes(self):
         proc = run_cli(["--help"])
         self.assertEqual(proc.returncode, 0)

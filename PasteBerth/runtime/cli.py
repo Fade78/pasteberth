@@ -1219,13 +1219,40 @@ def build_parser() -> argparse.ArgumentParser:
     p_drop = sub.add_parser(
         "drop",
         help="drop files directly when possible, otherwise through the server",
+        description=(
+            "Publish one or more regular source files into a configured zone.\n\n"
+            "With --zone ID, positional arguments are source files only.\n"
+            "Without --zone, the first positional argument is the exact configured zone\n"
+            "directory and the remaining arguments are source files.\n\n"
+            "For a loopback server with a writable local zone, Pasteberth stages\n"
+            "the source locally and asks the daemon to regularize it. Remote or\n"
+            "unavailable local staging falls back to the HTTP API.\n\n"
+            "Examples:\n"
+            "  pasteberth drop --config config.toml --zone project-alpha report.pdf\n"
+            "  pasteberth drop --config config.toml "
+            "/srv/pasteberth/project-alpha report.pdf\n"
+            "  pasteberth drop --config config.toml --server \\\n"
+            "      https://pasteberth.example.internal --zone project-alpha report.pdf"
+        ),
+        epilog=(
+            "Sources are never modified. Foreign files are never adopted or\n"
+            "overwritten; use --replace only for a managed filename. Use\n"
+            "--password-stdin for non-interactive HTTP authentication."
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     p_drop.add_argument(
         "directory",
         nargs="?",
-        help="exact zone directory, or the first source when --zone is used",
+        metavar="ZONE_DIRECTORY_OR_FIRST_SOURCE",
+        help="zone directory, or the first source file when --zone is used",
     )
-    p_drop.add_argument("files", nargs="*", help="source files to upload")
+    p_drop.add_argument(
+        "files",
+        nargs="*",
+        metavar="SOURCE_FILE",
+        help="additional source files",
+    )
     p_drop.add_argument(
         "--server",
         dest="server_url",
@@ -1234,14 +1261,14 @@ def build_parser() -> argparse.ArgumentParser:
     p_drop.add_argument(
         "--zone",
         dest="zone_id",
-        help="zone ID; avoids requiring filesystem access to the target directory",
+        help="zone ID; positional arguments are source files and no target directory is required",
     )
     p_drop.add_argument("--replace", action="store_true",
                         help="allow explicit replacement of a managed name")
     p_drop.add_argument(
         "--password-stdin",
         action="store_true",
-        help="read the server password from standard input after an authentication challenge",
+        help="read the password from stdin for an HTTP authentication challenge",
     )
     p_drop.add_argument(
         "--insecure",

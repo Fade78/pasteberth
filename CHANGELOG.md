@@ -2,6 +2,15 @@
 
 This file records user-visible changes to Pasteberth.
 
+## [2.1.5] - 2026-09-05
+
+### CLI Help
+
+- explain both `drop` invocation forms, with and without `--zone`;
+- show copyable local, loopback, and remote examples in `drop --help`;
+- document direct staging, HTTP fallback, foreign-file protection, and
+  non-interactive authentication in the built-in help.
+
 ## [2.1.4] - 2026-09-05
 
 ### Direct Drop Regularization
