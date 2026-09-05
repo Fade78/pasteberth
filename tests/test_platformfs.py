@@ -17,7 +17,10 @@ from PasteBerth.runtime.platformfs import (
     InvalidNameError,
     platform_fs,
 )
-from PasteBerth.runtime.platformfs.linux import LinuxPlatformFS
+try:
+    from PasteBerth.runtime.platformfs.linux import LinuxPlatformFS
+except ImportError:  # pragma: no cover - native Windows has no fcntl module.
+    LinuxPlatformFS = None
 from tests.helpers import running_under_wine
 
 
@@ -99,6 +102,10 @@ class PlatformFSContract(unittest.TestCase):
             for name in ("../escape", "a/b", "a\\b", "", ".."):
                 with self.subTest(name=name), self.assertRaises(InvalidNameError):
                     self.fs.entry_info(directory, name)
+            if self.fs.backend_name == "windows":
+                for name in ("CON", "PRN.txt", "foo.", "foo ", "foo:bar"):
+                    with self.subTest(name=name), self.assertRaises(InvalidNameError):
+                        self.fs.entry_info(directory, name)
 
     def test_no_replace_rename_and_expected_identity(self):
         with self.fs.open_directory(self.directory_path, create=True) as directory:
@@ -170,7 +177,7 @@ class PlatformFSContract(unittest.TestCase):
 
 class LinuxPlatformFSBehavior(unittest.TestCase):
     def setUp(self):
-        if platform_fs().backend_name != "linux":
+        if LinuxPlatformFS is None or platform_fs().backend_name != "linux":
             self.skipTest("comportement spécifique au backend Linux")
         self.fs = LinuxPlatformFS()
         self.tmp = tempfile.TemporaryDirectory()

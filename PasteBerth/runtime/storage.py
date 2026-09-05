@@ -48,6 +48,12 @@ _GENERATED_FILENAME_RE = re.compile(
     r"^\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}_[0-9a-f]{6}\.[a-z0-9]{1,10}$"
 )
 _CLIENT_FILENAME_RE = re.compile(r"^[^/\\\x00\r\n]+$")
+_WINDOWS_RESERVED_NAMES = {
+    "CON", "PRN", "AUX", "NUL",
+    *(f"COM{index}" for index in range(1, 10)),
+    *(f"LPT{index}" for index in range(1, 10)),
+}
+_WINDOWS_INVALID_FILENAME_CHARS = set('<>:"|?*')
 _META_KEYS = {"filename", "created_at", "width", "height", "size", "format"}
 # kind/mime were added in v1.0.3; v1.0.1/v1.0.2 sidecars (6 keys) remain valid.
 _META_KEYS_NEW = _META_KEYS | {"kind", "mime"}
@@ -254,6 +260,22 @@ def valid_filename(
     return not name.startswith(_INTERNAL_RESERVED_PREFIXES)
 
 
+def portable_filename(
+    name: object,
+    *,
+    max_length: int | None = _DEFAULT_LIMITS.max_filename_length,
+    max_bytes: int | None = _DEFAULT_LIMITS.max_filename_bytes,
+) -> bool:
+    """Return whether a new name is safe on both POSIX and Windows."""
+    if not valid_filename(name, max_length=max_length, max_bytes=max_bytes):
+        return False
+    if any(char in _WINDOWS_INVALID_FILENAME_CHARS for char in name):
+        return False
+    if name.endswith((".", " ")):
+        return False
+    return name.split(".", 1)[0].upper() not in _WINDOWS_RESERVED_NAMES
+
+
 def generated_filename(name: object) -> bool:
     """Return whether a name comes from the historical internal generator."""
     return isinstance(name, str) and bool(_GENERATED_FILENAME_RE.fullmatch(name))
@@ -429,6 +451,13 @@ class LocalDestination(Destination):
 
     def _valid_filename(self, name: object) -> bool:
         return valid_filename(
+            name,
+            max_length=self.limits.max_filename_length,
+            max_bytes=self.limits.max_filename_bytes,
+        )
+
+    def _new_filename(self, name: object) -> bool:
+        return portable_filename(
             name,
             max_length=self.limits.max_filename_length,
             max_bytes=self.limits.max_filename_bytes,
@@ -3429,7 +3458,7 @@ class LocalDestination(Destination):
     ) -> StoredImage:
         self._ensure_dir()
         if filename is not None:
-            if not self._valid_filename(filename):
+            if not self._new_filename(filename):
                 raise DestinationError(f"invalid filename: {filename!r}")
             with self._directory_fd() as directory_fd:
                 return self._save_named(
@@ -3583,7 +3612,7 @@ class LocalDestination(Destination):
 
     def rename(self, source: str, target: str) -> StoredImage:
         """Rename a managed pair without ever replacing a target."""
-        if not self._valid_filename(source) or not self._valid_filename(target):
+        if not self._valid_filename(source) or not self._new_filename(target):
             raise DestinationError("invalid filename")
         if source == target:
             raise DestinationError("source and target names are identical")

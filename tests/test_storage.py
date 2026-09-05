@@ -21,6 +21,7 @@ from PasteBerth.runtime.storage import (
     RetentionError,
     StorageConflictError,
     StorageLowError,
+    portable_filename,
     validate_comment,
     valid_filename,
 )
@@ -2543,6 +2544,12 @@ class TestRepertoires(unittest.TestCase):
         self.assertFalse(valid_filename("report\u202e gnp.exe"))
         self.assertFalse(valid_filename("zero\u200bwidth.txt"))
         self.assertFalse(valid_filename("escape\x1b.txt"))
+
+    def test_nouveaux_noms_restent_portables(self):
+        self.assertTrue(portable_filename("rapport final.txt"))
+        for name in ("CON", "PRN.txt", "AUX", "NUL", "COM1", "LPT9", "foo.", "foo ", "foo:bar", "foo.txt::$DATA"):
+            with self.subTest(name=name):
+                self.assertFalse(portable_filename(name))
     def test_espace_libre_sous_seuil(self):
         dest = LocalDestination(self.tmp / "space")
         with mock.patch.object(

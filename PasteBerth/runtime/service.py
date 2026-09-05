@@ -35,6 +35,7 @@ from .storage import (
     StoredImage,
     UnknownImageError,
     validate_comment,
+    portable_filename,
     valid_filename,
 )
 
@@ -238,6 +239,13 @@ class PasteService:
             max_bytes=self.cfg.limits.max_filename_bytes,
         )
 
+    def _new_filename(self, name: object) -> bool:
+        return portable_filename(
+            name,
+            max_length=self.cfg.limits.max_filename_length,
+            max_bytes=self.cfg.limits.max_filename_bytes,
+        )
+
     @contextmanager
     def _zone_operation_snapshot(
         self,
@@ -327,7 +335,7 @@ class PasteService:
             )
         target_filename = None
         if preserve_filename:
-            if not filename_hint or not self._valid_filename(filename_hint):
+            if not filename_hint or not self._new_filename(filename_hint):
                 raise ServiceError(
                     "invalid_filename",
                     "the dropped filename is invalid",
@@ -383,7 +391,6 @@ class PasteService:
         info,
         target_filename: str | None,
         allow_replace: bool,
-        adopt_existing: bool,
     ) -> tuple[StoredImage, list[str]]:
         try:
             device = destination.device_id
@@ -391,16 +398,12 @@ class PasteService:
             raise ServiceError("destination_error", str(exc)) from exc
         try:
             with self._space_locks[device].locked():
-                # Adoption only allocates the bounded JSON sidecar; the data
-                # file is already present in the zone.
-                incoming_bytes = 0 if adopt_existing else len(data)
-                destination.ensure_space(incoming_bytes, zone.min_free_percent)
+                destination.ensure_space(len(data), zone.min_free_percent)
                 stored = destination.save(
                     data,
                     info,
                     filename=target_filename,
                     allow_replace=allow_replace,
-                    adopt_existing=adopt_existing,
                 )
                 retention_deleted = destination.apply_retention(zone.retain, stored.filename)
         except StorageLowError as exc:
@@ -491,6 +494,7 @@ class PasteService:
                     "color": zone.color,
                     "retain": zone.retain,
                     "count": None if busy else len(items),
+                    "images": [] if busy else items,
                     "groups": list(groups),
                     "busy": busy,
                     "storage_mode": zone.storage_mode,
@@ -527,7 +531,6 @@ class PasteService:
         preserve_filename: bool = False,
         *,
         allow_replace: bool = False,
-        adopt_existing: bool = False,
         blocking: bool = True,
     ) -> dict:
         if not self.has_zone(zid):
@@ -546,7 +549,6 @@ class PasteService:
                 info,
                 target_filename,
                 allow_replace,
-                adopt_existing,
             )
         payload = self.item_payload(zid, stored, zone=zone, destination=destination)
         if retention_deleted:
@@ -588,7 +590,6 @@ class PasteService:
                     info,
                     target_filename,
                     allow_replace,
-                    False,
                 )
                 destination.discard_direct_drop(stage_name, stage_identity)
             except StorageLowError as exc:
@@ -735,7 +736,7 @@ class PasteService:
         """Rename a managed pair (file + sidecar) in a zone."""
         if not self.has_zone(zid):
             raise ServiceError("unknown_zone", f"unknown zone: {zid}")
-        if not self._valid_filename(source) or not self._valid_filename(target) or source == target:
+        if not self._valid_filename(source) or not self._new_filename(target) or source == target:
             raise ServiceError("invalid_filename", "invalid source or target filename")
         try:
             with self.zone_operation(
@@ -852,6 +853,13 @@ class PasteService:
                     with destination.open_read(filename):
                         pass
                     selected.append(item)
+                total_bytes = sum(item.size for item in selected)
+                max_archive_bytes = self.cfg.limits.max_archive_bytes
+                if max_archive_bytes is not None and total_bytes > max_archive_bytes:
+                    raise ServiceError(
+                        "too_large",
+                        "selected files exceed the archive size limit",
+                    )
             except ServiceError:
                 raise
             except UnknownImageError as exc:

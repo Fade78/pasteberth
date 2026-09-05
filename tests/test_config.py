@@ -232,6 +232,9 @@ class TestParsing(unittest.TestCase):
             limits={
                 "max_filename_length": 17,
                 "max_filename_size": "1KiB",
+                "max_multipart_body_size": "3MiB",
+                "max_archive_size": "4MiB",
+                "max_archive_duration_seconds": 12.5,
                 "max_login_delay_seconds": 0.5,
                 "max_login_concurrent_checks": "unlimited",
                 "max_login_tracked_ips": 12,
@@ -246,6 +249,9 @@ class TestParsing(unittest.TestCase):
         )
         self.assertEqual(cfg.limits.max_filename_length, 17)
         self.assertEqual(cfg.limits.max_filename_bytes, 1024)
+        self.assertEqual(cfg.limits.max_multipart_body_bytes, 3 * 1024**2)
+        self.assertEqual(cfg.limits.max_archive_bytes, 4 * 1024**2)
+        self.assertEqual(cfg.limits.max_archive_duration_seconds, 12.5)
         self.assertEqual(cfg.limits.max_login_delay_seconds, 0.5)
         self.assertIsNone(cfg.limits.max_login_concurrent_checks)
         self.assertEqual(cfg.limits.max_login_tracked_ips, 12)

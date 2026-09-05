@@ -197,8 +197,11 @@ class LimitsConfig:
     max_multipart_parts: int | None = 32
     max_multipart_header_bytes: int | None = 8 * 1024
     max_multipart_field_name_length: int | None = 256
+    max_multipart_body_bytes: int | None = 24 * 1024**2
     max_batch_names: int | None = 10_000
     max_batch_body_bytes: int | None = 2 * 1024**2
+    max_archive_bytes: int | None = 256 * 1024**2
+    max_archive_duration_seconds: float | None = 300.0
     max_comment_body_bytes: int | None = 8 * 1024
     max_http_header_bytes: int | None = 64 * 1024
     max_login_body_bytes: int | None = 4 * 1024
@@ -344,8 +347,11 @@ def _parse_limits(raw: object, warnings: list[str]) -> LimitsConfig:
         "max_multipart_parts",
         "max_multipart_header_size",
         "max_multipart_field_name_length",
+        "max_multipart_body_size",
         "max_batch_names",
         "max_batch_body_size",
+        "max_archive_size",
+        "max_archive_duration_seconds",
         "max_comment_body_size",
         "max_http_header_size",
         "max_login_body_size",
@@ -403,8 +409,11 @@ def _parse_limits(raw: object, warnings: list[str]) -> LimitsConfig:
         max_multipart_parts=integer("max_multipart_parts", 32),
         max_multipart_header_bytes=size("max_multipart_header_size", 8 * 1024),
         max_multipart_field_name_length=integer("max_multipart_field_name_length", 256),
+        max_multipart_body_bytes=size("max_multipart_body_size", 24 * 1024**2),
         max_batch_names=integer("max_batch_names", 10_000),
         max_batch_body_bytes=size("max_batch_body_size", 2 * 1024**2),
+        max_archive_bytes=size("max_archive_size", 256 * 1024**2),
+        max_archive_duration_seconds=seconds("max_archive_duration_seconds", 300.0),
         max_comment_body_bytes=size("max_comment_body_size", 8 * 1024),
         max_http_header_bytes=size("max_http_header_size", 64 * 1024),
         max_login_body_bytes=size("max_login_body_size", 4 * 1024),

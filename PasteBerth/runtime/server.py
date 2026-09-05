@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import logging
 import ipaddress
+import os
 import ssl
 import socket
 import signal
@@ -87,7 +88,15 @@ class PasteberthServer(ThreadingHTTPServer):
         self._active_sockets: set[socket.socket] = set()
         self._pending_sockets: set[socket.socket] = set()
         self._sockets_lock = threading.Lock()
+        self.allow_reuse_address = os.name != "nt"
         super().__init__(resolved_address, handler_class, bind_and_activate)
+
+    def server_bind(self):
+        if os.name == "nt":
+            exclusive = getattr(socket, "SO_EXCLUSIVEADDRUSE", None)
+            if exclusive is not None:
+                self.socket.setsockopt(socket.SOL_SOCKET, exclusive, 1)
+        super().server_bind()
 
     def get_request(self):
         request, client_address = super().get_request()

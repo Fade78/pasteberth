@@ -27,7 +27,7 @@ from tests.helpers import (
     write_config,
     LiveServer,
 )
-from PasteBerth.runtime.webapp import _safe_log_text
+from PasteBerth.runtime.webapp import _ChunkedWriter, _safe_log_text
 
 PASSWORD = "mot-de-passe-de-test-123"
 FILENAME_RE = re.compile(r"^\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}_[0-9a-f]{6}\.(png|jpg|webp)$")
@@ -141,6 +141,27 @@ class TestLimiteUpload(Base):
             content_type="text/plain",
             extra_fields={"preserve_name": "1"},
         )
+        status, _, response = self.req(
+            "POST",
+            "/api/zones/default/images",
+            body=body,
+            headers={"Content-Type": content_type},
+        )
+        self.assertEqual(status, 413)
+        self.assertEqual(json_of(response)["error"]["code"], "too_large")
+
+
+class TestLimiteMultipart(Base):
+    config_kwargs = {"limits": {"max_multipart_body_size": "1KiB"}}
+
+    def test_corps_multipart_trop_grand_est_refuse_avant_le_service(self):
+        body, content_type = build_multipart(
+            filename="framing.txt",
+            data=b"x" * 1024,
+            content_type="text/plain",
+            extra_fields={"preserve_name": "1"},
+        )
+        self.assertGreater(len(body), 1024)
         status, _, response = self.req(
             "POST",
             "/api/zones/default/images",
@@ -1330,6 +1351,51 @@ class TestOperationsDeZone(Base):
             self.assertEqual(json_of(response)["error"]["code"], "zone_busy")
 
 
+class TestLimiteArchive(Base):
+    config_kwargs = {"limits": {"max_archive_size": 5}}
+
+    def _upload_named(self, filename: str, data: bytes) -> dict:
+        body, ctype = build_multipart(
+            filename=filename,
+            data=data,
+            content_type="text/plain",
+            extra_fields={"preserve_name": "1"},
+        )
+        status, _, response = self.req(
+            "POST",
+            "/api/zones/default/images",
+            body=body,
+            headers={"Content-Type": ctype},
+        )
+        self.assertEqual(status, 201)
+        return json_of(response)
+
+    def test_archive_est_refusee_avant_les_entetes_si_trop_grande(self):
+        first = self._upload_named("first.txt", b"first")
+        second = self._upload_named("second.txt", b"second")
+        body = urllib.parse.urlencode(
+            [("filename", first["filename"]), ("filename", second["filename"])]
+        ).encode()
+        status, _, response = self.req(
+            "POST",
+            "/api/zones/default/images/archive",
+            body=body,
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+        )
+        self.assertEqual(status, 413)
+        self.assertEqual(json_of(response)["error"]["code"], "too_large")
+
+
+class TestArchiveWriter(unittest.TestCase):
+    def test_writer_refuse_apres_le_delai_absolu(self):
+        output = io.BytesIO()
+        handler = mock.Mock()
+        handler.wfile = output
+        handler._archive_deadline = time.monotonic() - 1
+        with self.assertRaises(TimeoutError):
+            _ChunkedWriter(handler).write(b"data")
+
+
 class TestZipDesactive(Base):
     config_kwargs = {"allow_zip_download": False}
 
@@ -1474,9 +1540,12 @@ class TestGroupsAPI(Base):
     def test_overview_ne_lit_qu_un_historique_par_zone(self):
         original = self.server.service.history
         with mock.patch.object(self.server.service, "history", wraps=original) as history:
-            status, _, _ = self.req("GET", "/api/zones")
+            status, _, response = self.req("GET", "/api/zones")
         self.assertEqual(status, 200)
         self.assertEqual(history.call_count, 2)
+        for zone in json_of(response)["zones"]:
+            self.assertIn("images", zone)
+            self.assertEqual(zone["count"], len(zone["images"]))
 
 
 class TestPersistenceRestart(Base):

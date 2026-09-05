@@ -23,3 +23,25 @@ browser:
       - test-results/
     reports:
       junit: test-results/e2e-junit.xml
+
+# These jobs stay opt-in until native runners are registered. They prevent the
+# platform contract from being forgotten without making Linux CI pending.
+platform_windows:
+  stage: test
+  tags:
+    - windows
+  rules:
+    - if: '$PASTEBERTH_NATIVE_WINDOWS_CI == "1"'
+    - when: never
+  script:
+    - python -m unittest tests.test_platformfs
+
+platform_macos:
+  stage: test
+  tags:
+    - macos
+  rules:
+    - if: '$PASTEBERTH_NATIVE_MACOS_CI == "1"'
+    - when: never
+  script:
+    - python3 -m unittest tests.test_platformfs

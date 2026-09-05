@@ -2,6 +2,25 @@
 
 This file records user-visible changes to Pasteberth.
 
+## [Unreleased]
+
+### Resource and Platform Hardening
+
+- bound multipart request framing independently from extracted upload content;
+- bound the total uncompressed size and duration of streamed ZIP downloads;
+- reject Windows-reserved, alternate-stream, and ambiguous trailing-dot/space
+  names for new files while preserving existing managed pairs;
+- use exclusive listener binding on Windows and add opt-in native platform CI
+  jobs.
+
+### Web UI and API Read Model
+
+- prevent a hidden TAB sidebar from leaving a non-visible paste target active;
+- include the zone history in the same `/api/zones` snapshot used for counts,
+  avoiding a duplicate browser refresh scan;
+- keep ordinary service uploads from reaching the explicit storage-adoption
+  path.
+
 ## [2.1.7] - 2026-09-05
 
 ### Web UI Session Restoration

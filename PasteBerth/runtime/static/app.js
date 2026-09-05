@@ -1328,6 +1328,14 @@
     return Boolean(group && state.tabSidebarVisibility[group.name] !== false);
   }
 
+  function activeTargetIsAvailable(zoneId = state.activeId) {
+    if (!zoneId || !getVisibleZones().some(zone => zone.id === zoneId)) return false;
+    const group = state.groups.find(item => item.name === state.activeGroupId);
+    return groupLayout(group) !== "tab"
+      || tabSidebarVisible(group)
+      || state.openZoneIds.includes(zoneId);
+  }
+
   function loadTabSidebarVisibility() {
     try {
       const stored = JSON.parse(localStorage.getItem("pb.tabSidebarVisibility") || "{}");
@@ -1406,6 +1414,10 @@
     const group = state.groups.find(item => item.name === state.activeGroupId);
     const tabLayout = groupLayout(group) === "tab";
     const showTabSidebar = tabLayout && tabSidebarVisible(group);
+    if (tabLayout && !showTabSidebar && state.activeId
+        && !state.openZoneIds.includes(state.activeId)) {
+      setActive(null);
+    }
     if (state.tabSelectionAnchorId && !visibleIds.has(state.tabSelectionAnchorId)) {
       state.tabSelectionAnchorId = null;
     }
@@ -1893,11 +1905,13 @@
           continue;
         }
         try {
-          const data = await api(
-            `/api/zones/${encodeURIComponent(z.id)}/images`,
-            { signal: controller.signal },
-          );
-          nextZones.push(Object.assign({}, z, { images: data.images, busy: false }));
+          const images = Array.isArray(z.images)
+            ? z.images
+            : (await api(
+              `/api/zones/${encodeURIComponent(z.id)}/images`,
+              { signal: controller.signal },
+            )).images;
+          nextZones.push(Object.assign({}, z, { images, busy: false }));
         } catch (err) {
           if (err.code !== "zone_busy") throw err;
           nextZones.push(Object.assign({}, z, {
@@ -1964,7 +1978,7 @@
       const visibleZones = getVisibleZones();
       const candidate = state.activeId || stored
         || (!state.initialized && visibleZones.length === 1 ? visibleZones[0].id : null);
-      if (candidate && visibleZones.some(z => z.id === candidate)) setActive(candidate);
+      if (candidate && activeTargetIsAvailable(candidate)) setActive(candidate);
       else setActive(null);
 
       state.initialized = true;
@@ -2302,7 +2316,7 @@
   }
 
   function requireActiveZone() {
-    if (state.activeId && getVisibleZones().some(z => z.id === state.activeId)) {
+    if (activeTargetIsAvailable()) {
       return state.activeId;
     }
     if (state.activeId) setActive(null);

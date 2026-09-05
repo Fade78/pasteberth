@@ -23,6 +23,7 @@ from .base import (
     EntryInfo,
     FileHandle,
     FileIdentity,
+    InvalidNameError,
     PermissionAudit,
     PermissionSecurityError,
     PlatformCapabilities,
@@ -494,6 +495,17 @@ class WindowsPlatformFS(PlatformFS):
     def __init__(self):
         self._api = _WinApi()
         self._user_sid: str | None = None
+
+    @staticmethod
+    def validate_component(name: str) -> None:
+        PlatformFS.validate_component(name)
+        if any(char in '<>:"|?*' for char in name) or name.endswith((".", " ")):
+            raise InvalidNameError(f"invalid Windows filename: {name!r}")
+        reserved = {"CON", "PRN", "AUX", "NUL"}
+        reserved.update(f"COM{index}" for index in range(1, 10))
+        reserved.update(f"LPT{index}" for index in range(1, 10))
+        if name.split(".", 1)[0].upper() in reserved:
+            raise InvalidNameError(f"reserved Windows filename: {name!r}")
 
     @property
     def capabilities(self) -> PlatformCapabilities:

@@ -139,6 +139,9 @@ class _ChunkedWriter:
         data = bytes(data)
         if not data:
             return 0
+        deadline = getattr(self.handler, "_archive_deadline", None)
+        if deadline is not None and time.monotonic() >= deadline:
+            raise TimeoutError("archive duration exceeded")
         self.handler.wfile.write(f"{len(data):X}\r\n".encode("ascii"))
         self.handler.wfile.write(data)
         self.handler.wfile.write(b"\r\n")
@@ -237,6 +240,16 @@ def make_handler(cfg: Config, service: PasteService, sessions: SessionStore,
                     self._request_timer = timer
                     timer.start()
                     return
+            self.close_connection = True
+            try:
+                self.connection.shutdown(socket.SHUT_RDWR)
+            except OSError:
+                pass
+
+        def _expire_archive(self) -> None:
+            if getattr(self, "_archive_deadline", None) is None:
+                return
+            self._archive_deadline = 0
             self.close_connection = True
             try:
                 self.connection.shutdown(socket.SHUT_RDWR)
@@ -1053,9 +1066,11 @@ def make_handler(cfg: Config, service: PasteService, sessions: SessionStore,
                 return
             ctype_raw = self.headers.get("Content-Type") or ""
             ctype = ctype_raw.split(";")[0].strip().lower()
-            # The service validates the extracted file. Multipart framing is
-            # deliberately not given a second hidden ceiling here.
-            body_limit = None if ctype == "multipart/form-data" else cfg.max_upload_bytes
+            body_limit = (
+                cfg.limits.max_multipart_body_bytes
+                if ctype == "multipart/form-data"
+                else cfg.max_upload_bytes
+            )
             try:
                 body, _ = self._read_body(max_bytes=body_limit)
             except BodyTooLarge:
@@ -1195,6 +1210,15 @@ def make_handler(cfg: Config, service: PasteService, sessions: SessionStore,
             self._response_started = True
             self._streaming_response = True
             self._stream_last_activity = time.monotonic()
+            duration = cfg.limits.max_archive_duration_seconds
+            self._archive_deadline = (
+                None if duration is None else self._stream_last_activity + duration
+            )
+            archive_timer = None
+            if duration is not None:
+                archive_timer = threading.Timer(duration, self._expire_archive)
+                archive_timer.daemon = True
+                archive_timer.start()
             self.send_response(200)
             self.send_header("Content-Type", "application/zip")
             self.send_header("Transfer-Encoding", "chunked")
@@ -1237,6 +1261,9 @@ def make_handler(cfg: Config, service: PasteService, sessions: SessionStore,
                 )
             finally:
                 self._streaming_response = False
+                self._archive_deadline = None
+                if archive_timer is not None:
+                    archive_timer.cancel()
 
         def _h_zone_archive(self, zid: str) -> None:
             if not self._require_auth_api():

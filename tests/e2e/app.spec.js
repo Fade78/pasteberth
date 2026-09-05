@@ -317,7 +317,7 @@ test("la confirmation de remplacement commence par Cancel et restaure le focus",
   const originalZoneSelect = await defaultZone.locator(".zone-select").elementHandle();
   const refreshDone = page.waitForResponse((response) => (
     response.request().method() === "GET"
-      && response.url().endsWith("/api/zones/secondary/images")
+      && response.url().endsWith("/api/zones")
   ));
   await Promise.all([
     refreshDone,
@@ -529,6 +529,16 @@ test("sélectionne des plages de zones TAB avec les modificateurs et masque la c
   await sidebarToggle.click();
   await expect(page.locator(".grid")).toHaveClass(/tab-sidebar-hidden/);
   await expect(page.locator(".tab-zone-list")).toHaveCount(0);
+
+  let uploadSeen = false;
+  page.on("request", (request) => {
+    if (request.method() === "POST" && request.url().includes("/api/zones/")) {
+      uploadSeen = true;
+    }
+  });
+  await dispatchPaste(page);
+  await expect(page.locator("#toast")).toContainText("Choose a zone first");
+  expect(uploadSeen).toBe(false);
 
   await page.locator('.group-tab[data-group="Secondary"]').click();
   await expect(page.locator(".grid")).toHaveClass(/tab-layout/);
@@ -1073,7 +1083,7 @@ test("ne réaffiche pas une image supprimée après un refresh périmé", async 
   let releaseRefresh;
   let refreshCaptured;
   const refreshReady = new Promise((resolve) => { refreshCaptured = resolve; });
-  await page.route("**/api/zones/default/images", async (route) => {
+  await page.route("**/api/zones", async (route) => {
     if (route.request().method() !== "GET" || releaseRefresh) {
       await route.continue();
       return;

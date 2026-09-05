@@ -216,7 +216,8 @@ The available `[limits]` keys are `max_image_dimension`, `max_image_raw_size`,
 `max_jpeg_segments`, `max_webp_chunks`, `max_mime_length`,
 `max_multipart_boundary_length`, `max_multipart_parts`,
 `max_multipart_header_size`, `max_multipart_field_name_length`,
-`max_batch_names`, `max_batch_body_size`, `max_comment_body_size`,
+`max_multipart_body_size`, `max_batch_names`, `max_batch_body_size`,
+`max_archive_size`, `max_archive_duration_seconds`, `max_comment_body_size`,
 `max_http_header_size`, `max_login_body_size`, `max_login_fields`,
 `max_login_delay_seconds`, `max_login_concurrent_checks`,
 `max_login_tracked_ips`, `login_forget_after_seconds`,
@@ -227,6 +228,12 @@ The available `[limits]` keys are `max_image_dimension`, `max_image_raw_size`,
 `request_queue_size` must remain a positive integer because it is passed to the
 operating-system listen backlog; the other numeric and size budgets may use
 `"unlimited"` where the operation supports it.
+
+`max_multipart_body_size` defaults to `24MiB` and limits the complete multipart
+request, including framing and auxiliary fields. It is independent from
+`max_upload_size`, whose limit applies to the extracted content. The archive
+limits default to `256MiB` of uncompressed selected files and `300` seconds of
+total streaming time; ZIP output remains streamed without a temporary archive.
 
 ### 4.2 TLS
 
@@ -855,7 +862,7 @@ and previews. The prefix is a configured public path, not part of the browser
 | Method | Path | Authentication | Purpose |
 |---|---|---|---|
 | `GET` | `/api/health` | public | Liveness probe. |
-| `GET` | `/api/zones` | session | Zones, counts, group memberships, and zone settings. |
+| `GET` | `/api/zones` | session | Zones, counts, complete histories, group memberships, and zone settings from one read snapshot. |
 | `GET` | `/api/groups` | session | Group definitions and matching zone IDs. |
 | `GET` | `/api/zones/{id}/images` | session | Complete zone history, newest first. |
 | `POST` | `/api/zones/{id}/images` | session | Upload multipart content. |
@@ -872,6 +879,9 @@ and previews. The prefix is a configured public path, not part of the browser
 `/api/zones/{id}/images` and its `images` response key cover images, UTF-8 text,
 and opaque binary content. Each zone reports `busy`, copied-list formatting
 settings, whether ZIP download is enabled, and its sidecar `retain` setting.
+The `/api/zones` response also includes the same `images` array used to compute
+each zone count; clients may use it as a dashboard snapshot and retain the
+per-zone route for compatibility and direct refreshes.
 The server account owns files it creates; configure `file_group` and matching
 directory group permissions when other system users must read them.
 Each image may also include `changed_at`; it is `null` when the destination
@@ -1115,6 +1125,9 @@ restart the service.
 The next major platform goal is native Windows and macOS support with the same
 transaction and security guarantees. That work is intentionally separate from
 the v2.1.7 support matrix and must not be represented as already supported.
+The repository contains opt-in `platform_windows` and `platform_macos` CI jobs;
+enable them only after registering native runners with
+`PASTEBERTH_NATIVE_WINDOWS_CI=1` or `PASTEBERTH_NATIVE_MACOS_CI=1`.
 
 ## 16. License
 
