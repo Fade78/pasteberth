@@ -791,6 +791,40 @@ test("le bouton d'une zone ouvre le sélecteur de fichiers multiple", async ({ p
   await expect(defaultZone.locator(".selection-summary-name")).toHaveCount(2);
 });
 
+test("les entrees web partagent le contrat de provenance", async ({ page }) => {
+  await openApp(page);
+  const defaultZone = page.locator('[data-zone="default"]');
+  await defaultZone.getByRole("button", { name: "Select zone Default" }).click();
+  const uploadResponse = () => page.waitForResponse(response => (
+    response.request().method() === "POST"
+      && response.url().includes("/api/zones/default/images")
+      && [200, 201].includes(response.status())
+  ));
+  const assertMethod = async (responsePromise, method) => {
+    const item = await (await responsePromise).json();
+    expect(item.creation_method).toBe(method);
+  };
+
+  const pasteResponse = uploadResponse();
+  await dispatchClipboardFile(page, "provenance-paste.zip", [0, 1, 2], "application/zip");
+  await assertMethod(pasteResponse, "web_paste");
+
+  const dropResponse = uploadResponse();
+  await dispatchItemsOnlyDrop(page, '.zone[data-zone="default"]');
+  await assertMethod(dropResponse, "web_mouse_drop");
+
+  const chooserPromise = page.waitForEvent("filechooser");
+  const pickerResponse = uploadResponse();
+  await defaultZone.getByRole("button", { name: "Add files to Default" }).click();
+  const chooser = await chooserPromise;
+  await chooser.setFiles({
+    name: "provenance-picker.txt",
+    mimeType: "text/plain",
+    buffer: Buffer.from("picker"),
+  });
+  await assertMethod(pickerResponse, "web_mouse_drop");
+});
+
 test("affiche les détails d'upload depuis le compteur de zone", async ({ page }) => {
   await openApp(page);
   const defaultZone = page.locator('[data-zone="default"]');

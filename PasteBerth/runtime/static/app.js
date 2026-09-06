@@ -377,7 +377,7 @@
     if (!hasText) {
       const image = slots.find(part => part && part.kind === "image");
       if (image) {
-        upload(zoneId, image.blob);
+        uploadCandidate(zoneId, browserUploadCandidate(image.blob));
         return;
       }
       toast("The clipboard does not contain an image or text");
@@ -397,7 +397,10 @@
     }
     if (!chunks.length) return;
     const html = `<!doctype html><html><body>${chunks.join("\n")}</body></html>`;
-    upload(zoneId, new Blob([html], { type: "text/html" }));
+    uploadCandidate(
+      zoneId,
+      browserUploadCandidate(new Blob([html], { type: "text/html" })),
+    );
   }
 
   const HTML_ALLOWED_ELEMENTS = new Set([
@@ -2108,6 +2111,24 @@
       .filter(Boolean);
   }
 
+  function browserUploadCandidate(file, {
+    creationMethod = "web_paste",
+    preserveName = false,
+  } = {}) {
+    if (!file) return null;
+    return { file, creationMethod, preserveName };
+  }
+
+  function browserUploadCandidates(files, options) {
+    return [...files]
+      .map(file => browserUploadCandidate(file, options))
+      .filter(Boolean);
+  }
+
+  function browserUploadCandidatesFromDataTransfer(dataTransfer, options) {
+    return browserUploadCandidates(filesFromDataTransfer(dataTransfer), options);
+  }
+
   function recordUploadedItem(zoneId, item) {
     const zone = state.zones.find(z => z.id === zoneId);
     if (!zone) return;
@@ -2120,12 +2141,13 @@
     rememberItem(zoneId, item);
   }
 
-  function countNewUploads(zoneId, files, preserveName) {
+  function countNewUploads(zoneId, candidates) {
     const zone = state.zones.find(item => item.id === zoneId);
     const knownNames = new Set(zone ? zone.images.map(item => item.filename) : []);
     let additions = 0;
-    for (const file of files) {
-      const name = preserveName && file.name ? file.name : null;
+    for (const candidate of candidates) {
+      const file = candidate.file;
+      const name = candidate.preserveName && file.name ? file.name : null;
       if (name && knownNames.has(name)) continue;
       additions += 1;
       if (name) knownNames.add(name);
@@ -2177,10 +2199,16 @@
       }
       if (
         warnCapacity
-        && !confirmRetention(zoneId, countNewUploads(zoneId, [file], preserveName))
+        && !confirmRetention(
+          zoneId,
+          countNewUploads(zoneId, [browserUploadCandidate(file, {
+            creationMethod,
+            preserveName,
+          })]),
+        )
       ) return null;
       const fd = new FormData();
-      // The server preserves names only for dropped files.
+      // Preserve the filename only for candidates that carry a named-file policy.
       fd.append("image", file, file.name || "clipboard");
       if (preserveName) fd.append("preserve_name", "1");
       if (allowReplace) fd.append("replace", "1");
@@ -2258,21 +2286,26 @@
     }
   }
 
+  function uploadCandidate(zoneId, candidate, options = {}) {
+    if (!candidate?.file) return null;
+    return upload(zoneId, candidate.file, {
+      ...options,
+      preserveName: candidate.preserveName,
+      creationMethod: candidate.creationMethod,
+    });
+  }
+
   async function uploadBatch(
     zoneId,
-    files,
-    { creationMethod = "web_mouse_drop" } = {},
+    candidates,
   ) {
-    const batch = [...files].filter(Boolean);
+    const batch = [...candidates].filter(candidate => candidate?.file);
     if (!batch.length) return;
     if (batch.length === 1) {
-      await upload(zoneId, batch[0], {
-        preserveName: true,
-        creationMethod,
-      });
+      await uploadCandidate(zoneId, batch[0]);
       return;
     }
-    if (!confirmRetention(zoneId, countNewUploads(zoneId, batch, true))) return;
+    if (!confirmRetention(zoneId, countNewUploads(zoneId, batch))) return;
     state.batchBusyZoneIds.add(zoneId);
     renderAll();
     refreshGeneration += 1;
@@ -2282,13 +2315,11 @@
     try {
       // Keep each request independent: one bad file must not cancel the rest,
       // and the normal single-upload size/memory limits still apply.
-      for (const file of batch) {
-        const item = await upload(zoneId, file, {
-          preserveName: true,
+      for (const candidate of batch) {
+        const item = await uploadCandidate(zoneId, candidate, {
           autoCopy: false,
           notify: false,
           warnCapacity: false,
-          creationMethod,
         });
         if (item) successful.push(item);
         else failed += 1;
@@ -2331,6 +2362,12 @@
       state.batchBusyZoneIds.delete(zoneId);
       renderAll();
     }
+  }
+
+  function submitBrowserFiles(zoneId, files, options) {
+    const candidates = browserUploadCandidates(files, options);
+    if (!candidates.length) return null;
+    return uploadBatch(zoneId, candidates);
   }
 
   function hasManagedName(zoneId, filename) {
@@ -2477,7 +2514,12 @@
       const zoneId = filePicker.dataset.zone;
       const files = filePicker.files ? [...filePicker.files] : [];
       delete filePicker.dataset.zone;
-      if (zoneId && files.length) uploadBatch(zoneId, files);
+      if (zoneId && files.length) {
+        submitBrowserFiles(zoneId, files, {
+          creationMethod: "web_mouse_drop",
+          preserveName: true,
+        });
+      }
     });
   }
 
@@ -2530,14 +2572,19 @@
       event.preventDefault();
       const zoneId = requireActiveZone();
       if (!zoneId) return;
-      upload(zoneId, files[0], { creationMethod: "web_paste" });
+      uploadCandidate(zoneId, browserUploadCandidate(files[0], {
+        creationMethod: "web_paste",
+      }));
       return;
     }
     if (files.length) {
       event.preventDefault();
       const zoneId = requireActiveZone();
       if (!zoneId) return;
-      uploadBatch(zoneId, files, { creationMethod: "web_paste" });
+      submitBrowserFiles(zoneId, files, {
+        creationMethod: "web_paste",
+        preserveName: true,
+      });
       return;
     }
     let file = null;
@@ -2548,7 +2595,7 @@
       event.preventDefault();
       const zoneId = requireActiveZone();
       if (!zoneId) return;
-      upload(zoneId, file);
+      uploadCandidate(zoneId, browserUploadCandidate(file));
       return;
     }
     // Prefer plain text, but do not let an empty flavor hide another usable one.
@@ -2573,7 +2620,7 @@
             return;
           }
           const blob = new Blob([text], { type: textItem.type || "text/plain" });
-          upload(zoneId, blob);
+          uploadCandidate(zoneId, browserUploadCandidate(blob));
         });
       };
       uploadText(0);
@@ -2694,14 +2741,15 @@
       toast("This zone is busy; try again shortly", "error");
       return;
     }
-    const files = filesFromDataTransfer(event.dataTransfer);
-    if (!files.length) {
+    const candidates = browserUploadCandidatesFromDataTransfer(event.dataTransfer, {
+      creationMethod: "web_mouse_drop",
+      preserveName: true,
+    });
+    if (!candidates.length) {
       toast("The drop does not contain a file", "error");
       return;
     }
-    uploadBatch(zoneTarget.dataset.zone, files, {
-      creationMethod: "web_mouse_drop",
-    });
+    uploadBatch(zoneTarget.dataset.zone, candidates);
   });
 
   document.addEventListener("keydown", (event) => {

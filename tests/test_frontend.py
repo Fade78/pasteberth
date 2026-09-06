@@ -87,6 +87,10 @@ class TestContratsFrontend(unittest.TestCase):
     def test_drag_and_drop_sur_zones(self):
         self.assertIn('"drop"', self.app_js)
         self.assertIn('"dragover"', self.app_js)
+        self.assertIn("function browserUploadCandidate", self.app_js)
+        self.assertIn("function browserUploadCandidatesFromDataTransfer", self.app_js)
+        self.assertIn("function submitBrowserFiles", self.app_js)
+        self.assertIn("uploadCandidate(zoneId", self.app_js)
         self.assertIn("function uploadBatch", self.app_js)
         self.assertIn("function filesFromDataTransfer", self.app_js)
         self.assertIn("dataTransfer.files", self.app_js)
