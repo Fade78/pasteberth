@@ -4,6 +4,15 @@ This file records user-visible changes to Pasteberth.
 
 ## [Unreleased]
 
+## [2.1.9] - 2026-09-06
+
+### Shared Zone Locks
+
+- make operation locks group-shareable in POSIX `setgid` zones so users such as
+  `atelier` can register files in a zone already used by the daemon;
+- keep private-zone locks owner-only while preserving regular-file and symlink
+  safety checks.
+
 ## [2.1.8] - 2026-09-06
 
 ### MCP Adapter

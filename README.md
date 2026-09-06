@@ -39,7 +39,7 @@ service between independent servers.
 
 ## Quick Start
 
-The current public release is `2.1.8`. The documented v2.1.8 server runs on
+The current public release is `2.1.9`. The documented v2.1.9 server runs on
 Linux, requires Python 3.11 or newer, and has no third-party
 Python runtime dependency. A native Windows backend is included but has only
 been validated under Wine; macOS and native Windows remain outside the official
@@ -222,7 +222,7 @@ template is [`PasteBerth/support/deploy/pasteberth.service`](PasteBerth/support/
 
 ## Support Status
 
-| Area | v2.1.8 status |
+| Area | v2.1.9 status |
 |---|---|
 | Python | 3.11 or newer |
 | Server | Linux, officially tested |

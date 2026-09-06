@@ -607,6 +607,8 @@ class LocalDestination(Destination):
                         directory_fd,
                         exclusive=exclusive,
                         blocking=blocking,
+                        permissions=0o660 if self.file_group is not None else None,
+                        group=self.file_group,
                     ):
                         token = self._operation_directory.set(directory_fd)
                         try:

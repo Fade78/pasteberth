@@ -1517,6 +1517,8 @@ class WindowsPlatformFS(PlatformFS):
         name: str = ".pasteberth.lock",
         exclusive: bool,
         blocking: bool = True,
+        permissions: int | None = None,
+        group: str | None = None,
     ):
         self.validate_component(name)
         self._directory_stable(directory)

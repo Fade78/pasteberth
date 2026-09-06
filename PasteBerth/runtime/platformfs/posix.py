@@ -513,26 +513,54 @@ class PosixPlatformFS(PlatformFS):
         name: str = ".pasteberth.lock",
         exclusive: bool,
         blocking: bool = True,
+        permissions: int | None = None,
+        group: str | None = None,
     ):
         self.validate_component(name)
         if not isinstance(directory, PosixDirectoryHandle):
             raise TypeError("POSIX handle expected")
+        directory_info = os.fstat(directory.fd)
+        shared_directory = bool(
+            directory_info.st_mode & stat.S_ISGID
+            and directory_info.st_mode & stat.S_IWGRP
+        )
+        if permissions is None:
+            permissions = 0o660 if shared_directory else 0o600
+        shared_lock = bool(group is not None or shared_directory) and bool(
+            permissions & 0o060
+        )
+        desired_group = (
+            self._group_id(group)
+            if group is not None
+            else directory_info.st_gid
+            if shared_directory
+            else None
+        )
         fd = -1
         locked = False
         try:
             fd = os.open(
                 name,
                 os.O_RDWR | os.O_CREAT | _O_NOFOLLOW | _O_CLOEXEC,
-                0o600,
+                permissions,
                 dir_fd=directory.fd,
             )
             info = os.fstat(fd)
             if not stat.S_ISREG(info.st_mode):
                 raise UnsafeLinkError(f"lock is not regular: {name!r}")
             uid_getter = getattr(os, "getuid", None)
-            if uid_getter is not None and info.st_uid != uid_getter():
+            owned = uid_getter is None or info.st_uid == uid_getter()
+            if not owned and not shared_lock:
                 raise PermissionSecurityError(f"lock is not owned: {name!r}")
-            os.fchmod(fd, 0o600)
+            if owned:
+                if desired_group is not None and info.st_gid != desired_group:
+                    try:
+                        os.fchown(fd, -1, desired_group)
+                    except PermissionError as exc:
+                        raise PermissionSecurityError(
+                            f"cannot assign lock group {desired_group}: {exc}"
+                        ) from exc
+                os.fchmod(fd, permissions)
             flags = fcntl.LOCK_EX if exclusive else fcntl.LOCK_SH
             if not blocking:
                 flags |= fcntl.LOCK_NB

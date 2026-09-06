@@ -295,6 +295,8 @@ class PlatformFS:
         name: str = ".pasteberth.lock",
         exclusive: bool,
         blocking: bool = True,
+        permissions: int | None = None,
+        group: str | None = None,
     ):
         raise NotImplementedError
 

@@ -2417,6 +2417,24 @@ class TestOwnership(Base):
             self.dest.read(stored.filename)
 
 
+class TestSharedOperationLock(unittest.TestCase):
+    def setUp(self):
+        if platform_fs().backend_name == "windows":
+            self.skipTest("permissions POSIX non représentatives sous Windows")
+        self._tmp = tempfile.TemporaryDirectory()
+        self.directory = Path(self._tmp.name) / "shared"
+        self.directory.mkdir()
+        self.directory.chmod(0o2770)
+        self.addCleanup(self._tmp.cleanup)
+
+    def test_verrou_d_une_zone_setgid_est_partageable(self):
+        LocalDestination(self.directory, create_directory=False)
+
+        lock_mode = (self.directory / ".pasteberth.lock").stat().st_mode & 0o777
+
+        self.assertEqual(lock_mode & 0o660, 0o660)
+
+
 class TestDirectoryHandleBinding(Base):
     def _replace_zone(self):
         original = self.dir.parent / "images-original"
