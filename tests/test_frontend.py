@@ -33,6 +33,14 @@ class TestContratsFrontend(unittest.TestCase):
     def test_un_geste_ctrl_v_ne_rejoue_pas_le_paste(self):
         self.assertIn("event.repeat", self.app_js)
         self.assertIn("pasteShortcutHandled", self.app_js)
+        self.assertIn("already present", self.app_js)
+
+    def test_compteur_de_zone_affiche_les_details_upload(self):
+        self.assertIn("renderZoneCapacity", self.app_js)
+        self.assertIn("upload_limit_bytes", self.app_js)
+        self.assertIn('event.pointerType !== "touch"', self.app_js)
+        self.assertIn("aria-expanded", self.app_js)
+        self.assertIn(".zone-capacity-panel", self.style_css)
 
     def test_copy_clipboard_api_avec_repli(self):
         self.assertIn("navigator.clipboard.writeText", self.app_js)

@@ -4,6 +4,8 @@ This file records user-visible changes to Pasteberth.
 
 ## [Unreleased]
 
+## [2.1.8] - 2026-09-06
+
 ### MCP Adapter
 
 - add an optional standard-library MCP stdio command with a vocabulary-preserving
@@ -18,6 +20,31 @@ This file records user-visible changes to Pasteberth.
 - display text file extensions such as `HTML` and `MD` in content tiles;
 - assign omitted autozone colors deterministically from the resolved path and
   generated group name while preserving explicit colors.
+
+### Deployment Launcher
+
+- load the private runtime directly from the deployment directory so a
+  cross-user symbolic link does not require listing the deployment owner's
+  home directory.
+
+### Cross-User Filesystem Drop
+
+- resolve target directories in the daemon's static zones and autozones so a
+  client without a configuration can drop through the loopback daemon;
+- canonicalize configured and supplied paths through symbolic links and use
+  `https://127.0.0.1:8765` as the no-configuration drop default.
+- keep `drop` server-backed and add `register FILE` for the explicit local
+  sidecar operation; registration creates or refreshes metadata through the
+  filesystem permissions without rewriting or moving the existing regular file.
+
+### Upload Deduplication
+
+- prevent repeated anonymous uploads of identical content from creating extra
+  items or consuming zone retention;
+- persist each new item's SHA-256 content digest in its JSON sidecar while
+  keeping older sidecar schemas readable.
+- show the effective per-zone upload limit from the count control without
+  exposing raw filesystem capacity.
 
 ### Resource and Platform Hardening
 
@@ -35,7 +62,7 @@ This file records user-visible changes to Pasteberth.
 - prevent a hidden TAB sidebar from leaving a non-visible paste target active;
 - include the zone history in the same `/api/zones` snapshot used for counts,
   avoiding a duplicate browser refresh scan;
-- keep ordinary service uploads from reaching the explicit storage-adoption
+- keep ordinary service uploads from reaching the explicit storage-registration
   path.
 
 ## [2.1.7] - 2026-09-05

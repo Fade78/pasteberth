@@ -1,5 +1,6 @@
 """Tests CLI (sous-processus) : --version, erreurs de config, politique de
 démarrage, commande passwd."""
+import json
 import os
 import shutil
 import stat
@@ -15,8 +16,14 @@ from unittest import mock
 from PasteBerth.runtime import __version__
 from PasteBerth.runtime.auth import load_password_hash, verify_password
 from PasteBerth.runtime.client import ClientError, PasteberthClient
-from PasteBerth.runtime.cli import _audit_tls, _network_warning, _read_drop_source
-from PasteBerth.runtime.config import load_config
+from PasteBerth.runtime.cli import (
+    _audit_tls,
+    _drop_server_url,
+    _network_warning,
+    _read_drop_source,
+    _zone_for_directory,
+)
+from PasteBerth.runtime.config import build_default_config, load_config
 from PasteBerth.runtime.platformfs import platform_fs
 
 from tests.helpers import LiveServer, REPO_ROOT, running_under_wine, write_config
@@ -70,6 +77,7 @@ class TestVersion(unittest.TestCase):
             "pasteberth drop --config config.toml --zone project-alpha report.pdf",
             "--password-stdin",
             "ZONE_DIRECTORY_OR_FIRST_SOURCE",
+            "use register FILE",
         ):
             with self.subTest(text=text):
                 self.assertIn(text, proc.stdout)
@@ -88,7 +96,7 @@ class TestVersion(unittest.TestCase):
     def test_aide_expose_les_sous_commandes_courtes(self):
         proc = run_cli(["--help"])
         self.assertEqual(proc.returncode, 0)
-        for command in ("drop", "mcp", "rename", "delete"):
+        for command in ("drop", "register", "mcp", "rename", "delete"):
             self.assertIn(command, proc.stdout)
         for old_command in ("filesystem-drop", "filesystem-rename", "filesystem-delete"):
             self.assertNotIn(old_command, proc.stdout)
@@ -105,6 +113,18 @@ class TestVersion(unittest.TestCase):
         self.assertEqual(proc.returncode, 0, proc.stderr)
         self.assertIn("_pasteberth_complete()", proc.stdout)
         self.assertIn("complete -o bashdefault", proc.stdout)
+
+    def test_drop_sans_configuration_utilise_le_demon_https_par_defaut(self):
+        cfg = build_default_config()
+
+        self.assertEqual(
+            _drop_server_url(cfg, None),
+            "https://127.0.0.1:8765",
+        )
+        self.assertEqual(
+            _drop_server_url(cfg, "http://127.0.0.1:9876"),
+            "http://127.0.0.1:9876",
+        )
 
 
 class TestWrappers(unittest.TestCase):
@@ -1005,17 +1025,77 @@ class TestFilesystemDrop(unittest.TestCase):
         self.assertIn("foreign file", proc.stderr)
         self.assertEqual(foreign.read_text(encoding="utf-8"), "foreign\n")
 
-    def test_drop_refuse_un_fichier_deja_present_sans_sidecar(self):
+    def test_drop_refuse_un_fichier_sans_zone_et_indique_register(self):
         target = self.zone / "already.txt"
         self.zone.mkdir(parents=True, exist_ok=True)
         target.write_text("already here\n", encoding="utf-8")
+        before = target.stat()
 
-        proc = self._run_drop(target)
+        proc = run_cli(
+            [
+                "drop",
+                "--config",
+                str(self.cfg),
+                str(target),
+            ]
+        )
 
-        self.assertEqual(proc.returncode, 1, proc.stderr)
-        self.assertIn("foreign file", proc.stderr)
+        self.assertEqual(proc.returncode, 2, proc.stderr)
+        self.assertIn("register FILE", proc.stderr)
+        after = target.stat()
+        self.assertEqual(after.st_ino, before.st_ino)
         self.assertEqual(target.read_text(encoding="utf-8"), "already here\n")
         self.assertFalse((self.zone / (target.name + ".json")).exists())
+
+    def test_register_cree_uniquement_le_sidecar(self):
+        target = self.zone / "explicit-register.txt"
+        self.zone.mkdir(parents=True, exist_ok=True)
+        target.write_text("explicit registration\n", encoding="utf-8")
+        before = target.stat()
+
+        proc = run_cli(
+            [
+                "register",
+                "--config",
+                str(self.cfg),
+                str(target),
+            ]
+        )
+
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(proc.stdout.strip(), str(target.resolve()))
+        after = target.stat()
+        self.assertEqual(after.st_ino, before.st_ino)
+        self.assertEqual(target.read_text(encoding="utf-8"), "explicit registration\n")
+        sidecar = self.zone / (target.name + ".json")
+        self.assertTrue(sidecar.exists())
+        if platform_fs().backend_name != "windows":
+            self.assertEqual(sidecar.stat().st_mode & 0o777, 0o660)
+
+    def test_register_actualise_un_sidecar_existant(self):
+        target = self.zone / "refresh-register.txt"
+        self.zone.mkdir(parents=True, exist_ok=True)
+        target.write_text("before\n", encoding="utf-8")
+
+        first = run_cli(
+            ["register", "--config", str(self.cfg), str(target)]
+        )
+        self.assertEqual(first.returncode, 0, first.stderr)
+        sidecar = self.zone / (target.name + ".json")
+        original_metadata = sidecar.read_text(encoding="utf-8")
+        inode = target.stat().st_ino
+        target.write_text("after with a different size\n", encoding="utf-8")
+
+        second = run_cli(
+            ["register", "--config", str(self.cfg), str(target)]
+        )
+
+        self.assertEqual(second.returncode, 0, second.stderr)
+        self.assertEqual(target.stat().st_ino, inode)
+        self.assertEqual(target.read_text(encoding="utf-8"), "after with a different size\n")
+        refreshed_metadata = json.loads(sidecar.read_text(encoding="utf-8"))
+        self.assertNotEqual(sidecar.read_text(encoding="utf-8"), original_metadata)
+        self.assertEqual(refreshed_metadata["size"], len("after with a different size\n"))
 
     def test_plusieurs_sources_sont_traitees_individuellement(self):
         first = self.tmp / "first.txt"
@@ -1083,6 +1163,22 @@ class TestFilesystemDrop(unittest.TestCase):
         self.assertFalse((self.zone / "report.txt").exists())
         self.assertFalse((self.zone / "report.txt.json").exists())
 
+    def test_drop_reconnait_une_zone_statique_a_travers_un_alias(self):
+        if platform_fs().backend_name == "windows":
+            self.skipTest("les liens de répertoire ne sont pas couverts ici")
+        real_zone = self.tmp / "real-zone"
+        real_zone.mkdir()
+        alias = self.tmp / "zone-alias"
+        alias.symlink_to(real_zone, target_is_directory=True)
+        cfg_path = write_config(
+            self.tmp,
+            zones=[{"id": "aliased", "directory": str(alias)}],
+        )
+
+        zone = _zone_for_directory(load_config(cfg_path), str(real_zone))
+
+        self.assertEqual(zone.id, "aliased")
+
     def test_rename_ne_remplace_pas_une_cible_etrangere(self):
         source = self.tmp / "report.txt"
         source.write_text("report", encoding="utf-8")
@@ -1147,6 +1243,162 @@ retain = 2
             (self.zone / source.name).read_text(encoding="utf-8"),
             "published",
         )
+
+    def test_autozone_reconnait_un_alias_du_chemin_fourni(self):
+        if platform_fs().backend_name == "windows":
+            self.skipTest("les liens de répertoire ne sont pas couverts ici")
+        alias = self.tmp / "project-alias"
+        alias.symlink_to(self.zone.parent.parent, target_is_directory=True)
+
+        zone = _zone_for_directory(
+            load_config(self.cfg),
+            str(alias / "work" / "exchange"),
+        )
+
+        self.assertEqual(zone.id, "project-work-exchange")
+
+    def test_drop_par_chemin_demande_la_resolution_au_demon(self):
+        source = self.tmp / "path-drop.txt"
+        source.write_text("path drop", encoding="utf-8")
+
+        proc = run_cli(
+            [
+                "drop",
+                "--config",
+                str(self.cfg),
+                "--server",
+                f"http://127.0.0.1:{self.server.port}",
+                str(self.zone),
+                str(source),
+            ]
+        )
+
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual((self.zone / source.name).read_text(encoding="utf-8"), "path drop")
+
+    def test_drop_sans_configuration_utilise_une_zone_du_demon(self):
+        source = self.tmp / "no-config-drop.txt"
+        source.write_text("no config", encoding="utf-8")
+        config_home = self.tmp / "empty-config-home"
+        data_home = self.tmp / "empty-data-home"
+
+        proc = run_cli(
+            [
+                "drop",
+                "--server",
+                f"http://127.0.0.1:{self.server.port}",
+                "--insecure",
+                str(self.zone),
+                str(source),
+            ],
+            env={
+                "PASTEBERTH_CONFIG": None,
+                "XDG_CONFIG_HOME": str(config_home),
+                "XDG_DATA_HOME": str(data_home),
+            },
+        )
+
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual((self.zone / source.name).read_text(encoding="utf-8"), "no config")
+
+    def test_drop_sans_configuration_refuse_un_repertoire_non_gere(self):
+        target = self.tmp / "not-a-zone"
+        target.mkdir()
+        source = self.tmp / "rejected.txt"
+        source.write_text("rejected", encoding="utf-8")
+
+        proc = run_cli(
+            [
+                "drop",
+                "--server",
+                f"http://127.0.0.1:{self.server.port}",
+                str(target),
+                str(source),
+            ],
+            env={"PASTEBERTH_CONFIG": None},
+        )
+
+        self.assertEqual(proc.returncode, 2)
+        self.assertIn("does not match any configured zone", proc.stderr)
+        self.assertFalse((target / source.name).exists())
+
+    def test_register_sans_configuration_reste_local(self):
+        target = self.zone / "no-config-register.txt"
+        target.write_text("no config registration", encoding="utf-8")
+        before = target.stat()
+        config_home = self.tmp / "empty-register-config-home"
+        data_home = self.tmp / "empty-register-data-home"
+
+        proc = run_cli(
+            [
+                "register",
+                str(target),
+            ],
+            env={
+                "PASTEBERTH_CONFIG": None,
+                "XDG_CONFIG_HOME": str(config_home),
+                "XDG_DATA_HOME": str(data_home),
+            },
+        )
+
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(proc.stdout.strip(), str(target.resolve()))
+        self.assertEqual(target.stat().st_ino, before.st_ino)
+        self.assertTrue((self.zone / (target.name + ".json")).exists())
+
+
+class TestFilesystemDropDirectoryAlias(unittest.TestCase):
+    def setUp(self):
+        if platform_fs().backend_name == "windows":
+            self.skipTest("les liens de répertoire ne sont pas couverts ici")
+        self._tmp = tempfile.TemporaryDirectory()
+        self.tmp = Path(self._tmp.name)
+        self.addCleanup(self._tmp.cleanup)
+        self.real_zone = self.tmp / "real-zone"
+        self.real_zone.mkdir()
+        self.configured_alias = self.tmp / "configured-alias"
+        self.configured_alias.symlink_to(self.real_zone, target_is_directory=True)
+        self.cfg = write_config(
+            self.tmp,
+            zones=[{"id": "aliased", "directory": str(self.configured_alias)}],
+        )
+        self.server = LiveServer(self.cfg)
+        self.addCleanup(self.server.stop)
+
+    def test_drop_resout_le_chemin_reel_d_une_zone_configuree_par_alias(self):
+        source = self.tmp / "alias-drop.txt"
+        source.write_text("alias drop", encoding="utf-8")
+
+        proc = run_cli(
+            [
+                "drop",
+                "--config",
+                str(self.cfg),
+                "--server",
+                f"http://127.0.0.1:{self.server.port}",
+                str(self.real_zone),
+                str(source),
+            ]
+        )
+
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual((self.real_zone / source.name).read_text(encoding="utf-8"), "alias drop")
+
+    def test_register_un_fichier_a_travers_un_alias_filesystem(self):
+        target = self.real_zone / "alias-register.txt"
+        target.write_text("alias registration", encoding="utf-8")
+        before = target.stat()
+
+        proc = run_cli(
+            [
+                "register",
+                str(self.configured_alias / target.name),
+            ]
+        )
+
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(target.stat().st_ino, before.st_ino)
+        self.assertTrue((self.real_zone / (target.name + ".json")).is_file())
 
 
 class TestFilesystemDropWithWritableZone(unittest.TestCase):

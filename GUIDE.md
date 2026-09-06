@@ -1,7 +1,7 @@
 # Pasteberth Operator Guide
 
 This guide is the detailed reference for installing, configuring, operating,
-and integrating Pasteberth 2.1.7. The short project overview is in
+and integrating Pasteberth 2.1.8. The short project overview is in
 [`README.md`](README.md); user-visible release history is in
 [`CHANGELOG.md`](CHANGELOG.md).
 
@@ -74,14 +74,14 @@ contexts:
 
 ## 2. Requirements and Support
 
-The 2.1.7 implementation requires:
+The 2.1.8 implementation requires:
 
 - Python 3.11 or newer;
 - a local filesystem supported by the active platform backend;
 - a modern browser for the Web UI;
 - no third-party Python runtime dependency.
 
-Linux is the current official and tested server platform for v2.1.7. The
+Linux is the current official and tested server platform for v2.1.8. The
 Windows backend has broad Wine coverage, but native Windows/NTFS validation is
 still outstanding and macOS support is not implemented. Do not infer support
 for every network or exotic filesystem from the operating system name.
@@ -93,7 +93,7 @@ Firefox when the corresponding Playwright browser is installed.
 
 ### 3.1 Deployable copy
 
-The supported v2.1.7 installation is the tracked `PasteBerth/` directory. It is
+The supported v2.1.8 installation is the tracked `PasteBerth/` directory. It is
 the complete code-only deployment unit: it needs no root access, installation
 script, Python package installation, or build step.
 
@@ -120,9 +120,11 @@ pasteberth --version
 ```
 
 The executable resolves the deployment directory before launching its private
-runtime, replaces the inherited `PYTHONPATH`, and uses Python's `-P` safe-path
-mode. It therefore does not provide a plugin mechanism through the current
-directory or `PYTHONPATH`. A copy of the executable without the rest of the
+runtime, replaces the inherited `PYTHONPATH` with that deployment directory,
+and uses Python's `-P` safe-path mode. It therefore does not provide a plugin
+mechanism through the current directory or `PYTHONPATH`, and it also works when
+the deployment is reached through a cross-user symbolic link whose parent home
+directory cannot be listed. A copy of the executable without the rest of the
 deployment requires `PASTEBERTH_HOME=/absolute/path/to/PasteBerth`; `--config`
 only selects configuration and never locates the runtime.
 
@@ -276,7 +278,7 @@ Each `[[zones]]` table defines one independent project area:
 |---|---:|---|
 | `id` | required | Lowercase API/UI identifier, up to 64 characters. |
 | `label` | `id` | Human-readable UI label. |
-| `type` | `local` | Only `local` is implemented in v2.1.7. |
+| `type` | `local` | Only `local` is implemented in v2.1.8. |
 | `directory` | required | Absolute path as seen by the server and the harness. |
 | `retain` | `10` | Number of managed items retained in the zone. |
 | `reference_prefix` | `@` | Text prepended to one returned reference. |
@@ -389,6 +391,13 @@ The web UI asks for confirmation before an upload would exceed `retain`, because
 the oldest managed items will then be removed. The server remains authoritative.
 A successful upload that removed items includes their filenames in the
 `retention_deleted` response field; direct API clients should inspect it.
+
+The server deduplicates anonymous uploads, including clipboard pastes, within
+each zone. It computes the SHA-256 digest after receiving the bytes under the
+zone lock; if the same content is already managed, the response is `200` with
+`duplicate: true`, the existing item is returned, and retention is unchanged.
+Uploads with a preserved filename remain independent so named files may
+intentionally contain identical bytes. No hashing is performed in the browser.
 
 After an upload, Pasteberth tries to copy the exact returned reference to the
 clipboard. Clipboard permissions are controlled by the browser.
@@ -532,20 +541,39 @@ conditions that may be intentional but deserve review.
 ### 6.5 Filesystem drop
 
 ```sh
-pasteberth drop [--config PATH] [--server URL] [--zone ID] [--replace] \
-  /path/to/report.pdf /path/to/screen.png
+pasteberth drop [--config PATH] [--server URL] [--insecure] [--zone ID] [--replace] \
+  [ZONE_DIRECTORY] SOURCE_FILE...
+pasteberth register [--config PATH] FILE
 ```
 
-`drop` first stages each source in a private `.pbdrop-*.tmp` file when it is
-using a loopback daemon and the configured local zone is writable. It then asks
-the daemon to validate the staged data and create the managed data/sidecar pair.
-If direct staging is unavailable, it falls back to the HTTP API. Use `--zone ID`
-to select the destination and `--server URL` for a remote server; when omitted,
-both can be derived from the local configuration and a configured zone
-directory. One or more regular source files are accepted, remain unchanged, and
-produce one returned reference per successful upload. A file already present in
-the destination without a coherent sidecar is foreign and is never adopted or
-overwritten.
+Without `--zone` and with multiple positional arguments, the first positional
+argument is the target directory and the daemon resolves its canonical path
+against static zones and eligible `[[autozone]]` candidates. This resolution is
+performed by the daemon, so the client does not need a configuration file;
+symlinked spellings of the configured and supplied paths resolve to the same
+zone. With `--zone ID`, positional arguments are source files and the ID is sent
+directly.
+
+With no `--zone` and only one positional argument, `drop FILE` is rejected
+because `drop` always contacts the daemon. Use `register FILE` for an existing
+regular file. The parent directory must be readable, traversable, and writable
+by the current account. `register` is filesystem-only and does not contact the
+daemon. On POSIX, the sidecar uses the existing file's group when the current
+account belongs to that group, so a setgid shared zone can remain readable by
+the daemon. An existing sidecar is refreshed from the current file.
+
+For the target-directory form, `drop` first stages each source in a private
+`.pbdrop-*.tmp` file when it is using a loopback daemon and the target is
+writable. It then asks the daemon to validate the staged data and create the
+managed data/sidecar pair. If direct staging is unavailable, it falls back to
+the HTTP API. `--server URL` overrides the URL from configuration; with no
+configuration, the default is
+`https://127.0.0.1:8765`. One or more regular source files are accepted, remain
+unchanged, and produce one returned reference per successful upload. A file
+already present in the destination without a coherent sidecar remains foreign
+for normal uploads. `register` creates or refreshes only the sidecar after
+validating the regular file and its content; it never rewrites, moves, or
+overwrites the existing data file.
 
 Direct staging still calls the daemon through the configured server URL. If the
 loopback daemon uses a trusted self-signed HTTPS certificate, add `--insecure`;
@@ -554,9 +582,9 @@ contains the loopback address when possible.
 
 Without `--replace`, an existing managed filename is refused. With
 `--replace`, only a coherent Pasteberth-managed pair may be replaced. A foreign
-file is never overwritten, even with `--replace`. Authentication prompts for a
-password after a `401`; `PASTEBERTH_PASSWORD` and `--password-stdin` support
-non-interactive calls.
+file is never overwritten, even with `--replace`; `--replace` is not applicable
+to `register`. Authentication prompts for a password after a `401`;
+`PASTEBERTH_PASSWORD` and `--password-stdin` support non-interactive calls.
 
 ### 6.6 MCP stdio adapter
 
@@ -663,12 +691,14 @@ zone/
 ```
 
 The sidecar records metadata such as `filename`, `created_at`, `size`,
-`width`, `height`, `format`, `kind`, and `mime`. Older valid sidecar schemas
-remain readable. Pasteberth recognizes an item only when the data file and
-sidecar are coherent. For a direct local `drop`, the source bytes pass through
-a private staging file; the daemon validates them and creates a new managed
-pair before removing the staging file. Other foreign files remain outside
-managed operations.
+`width`, `height`, `format`, `kind`, `mime`, and the content `sha256`. Older
+valid sidecar schemas without the digest remain readable; when needed, legacy
+content is hashed on demand for duplicate detection. Pasteberth recognizes an
+item only when the data file and sidecar are coherent. For a direct local
+`drop`, the source bytes pass through a private staging file; the daemon
+validates them and creates a new managed pair before removing the staging file.
+An explicit `register` validates an existing regular file and creates or refreshes
+only its sidecar; other foreign files remain outside managed operations.
 
 Generated names use the form:
 
@@ -887,6 +917,7 @@ and previews. The prefix is a configured public path, not part of the browser
 | `GET` | `/api/health` | public | Liveness probe. |
 | `GET` | `/api/zones` | session | Zones, counts, complete histories, group memberships, and zone settings from one read snapshot. |
 | `GET` | `/api/groups` | session | Group definitions and matching zone IDs. |
+| `POST` | `/api/drop/resolve` | loopback or session | Resolve a target directory to a configured zone ID. |
 | `GET` | `/api/zones/{id}/images` | session | Complete zone history, newest first. |
 | `POST` | `/api/zones/{id}/images` | session | Upload multipart content. |
 | `POST` | `/api/zones/{id}/images/regularize` | loopback or session | Regularize one CLI direct-drop staging file. |
@@ -901,7 +932,14 @@ and previews. The prefix is a configured public path, not part of the browser
 
 `/api/zones/{id}/images` and its `images` response key cover images, UTF-8 text,
 and opaque binary content. Each zone reports `busy`, copied-list formatting
-settings, whether ZIP download is enabled, and its sidecar `retain` setting.
+settings, whether ZIP download is enabled, its sidecar `retain` setting, and an
+effective `upload_limit_bytes` value. That value is the smaller of the hard
+upload limit and the bytes that can be accepted without crossing the configured
+free-space safeguards; raw disk capacity is not returned.
+The loopback-only `POST /api/drop/resolve` endpoint accepts a target directory
+and returns its configured zone ID after static/autozone and canonical-path
+resolution. It is used by the filesystem client when the client has no local
+configuration; it never authorizes an arbitrary target directory.
 The `/api/zones` response also includes the same `images` array used to compute
 each zone count; clients may use it as a dashboard snapshot and retain the
 per-zone route for compatibility and direct refreshes.
@@ -913,7 +951,7 @@ cannot provide a change timestamp.
 The `regularize` route is used by a local `drop` when it has staged a
 `.pbdrop-<24 lowercase hex digits>.tmp` file in the configured zone. It accepts
 a JSON object containing `stage`, `filename`, `mime`, and `replace`; it is not a
-general filesystem-adoption endpoint. Unauthenticated access is limited to a
+general filesystem-registration endpoint. Unauthenticated access is limited to a
 loopback peer, while an authenticated session may use the route remotely.
 
 ### 11.2 Upload
@@ -1029,6 +1067,23 @@ preserve and resend the cookie for protected API calls, and should send the
 same-origin `Origin` or `Referer` on unsafe requests.
 
 ## 12. Troubleshooting
+
+### `ModuleNotFoundError: No module named 'PasteBerth'`
+
+This means an old or manually configured launcher is invoking the private
+module with `python3 -m PasteBerth.runtime`. The v2 deployment must be started
+through the executable inside the deployment directory, which loads its
+runtime directly from that directory:
+
+```sh
+/home/atelier/PasteBerth/pasteberth --help
+```
+
+If `pasteberth` resolves to `~/.local/bin/pasteberth`, replace that symlink or
+copy with the current `PasteBerth/pasteberth` executable. Do not run the module
+directly from inside the `PasteBerth/` directory; `PYTHONPATH` would then need
+to point to its parent. For systemd, `ExecStart` must end in
+`/PasteBerth/pasteberth`, not `/usr/bin/python3 -m PasteBerth.runtime`.
 
 ### `pasteberth` starts without authentication
 
@@ -1147,7 +1202,7 @@ restart the service.
 
 The next major platform goal is native Windows and macOS support with the same
 transaction and security guarantees. That work is intentionally separate from
-the v2.1.7 support matrix and must not be represented as already supported.
+the v2.1.8 support matrix and must not be represented as already supported.
 The repository contains opt-in `platform_windows` and `platform_macos` CI jobs;
 enable them only after registering native runners with
 `PASTEBERTH_NATIVE_WINDOWS_CI=1` or `PASTEBERTH_NATIVE_MACOS_CI=1`.

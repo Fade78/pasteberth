@@ -6,9 +6,12 @@ zones independent from one another.
 """
 from __future__ import annotations
 
+import hashlib
 import logging
+import os
 import threading
 from contextlib import contextmanager
+from pathlib import Path
 from urllib.parse import quote
 
 from .autozone import (
@@ -382,6 +385,12 @@ class PasteService:
             )
         return info, target_filename
 
+    def _upload_limit_bytes(self, zone: ZoneConfig, destination: LocalDestination) -> int:
+        space_limit = destination.available_upload_bytes(zone.min_free_percent)
+        if self.cfg.max_upload_bytes is None:
+            return space_limit
+        return min(self.cfg.max_upload_bytes, space_limit)
+
     def _store_prepared_upload(
         self,
         zid: str,
@@ -391,19 +400,25 @@ class PasteService:
         info,
         target_filename: str | None,
         allow_replace: bool,
-    ) -> tuple[StoredImage, list[str]]:
+    ) -> tuple[StoredImage, list[str], bool]:
+        content_sha256 = hashlib.sha256(data).hexdigest()
         try:
             device = destination.device_id
         except (DestinationError, OSError) as exc:
             raise ServiceError("destination_error", str(exc)) from exc
         try:
             with self._space_locks[device].locked():
+                if target_filename is None:
+                    duplicate = destination.find_duplicate(content_sha256, len(data))
+                    if duplicate is not None:
+                        return duplicate, [], True
                 destination.ensure_space(len(data), zone.min_free_percent)
                 stored = destination.save(
                     data,
                     info,
                     filename=target_filename,
                     allow_replace=allow_replace,
+                    sha256=content_sha256,
                 )
                 retention_deleted = destination.apply_retention(zone.retain, stored.filename)
         except StorageLowError as exc:
@@ -423,7 +438,7 @@ class PasteService:
             stored.kind,
             stored.size,
         )
-        return stored, retention_deleted
+        return stored, retention_deleted, False
 
     # ---------------------------------------------------------------- zones
 
@@ -435,6 +450,29 @@ class PasteService:
         self._refresh_autozones()
         with self._registry_lock:
             return zid in self._zone_cfg
+
+    def zone_id_for_directory(self, directory: str | Path) -> str:
+        """Resolve a client path against the daemon's configured zones."""
+        try:
+            target = Path(directory).expanduser().resolve()
+        except (OSError, RuntimeError, ValueError) as exc:
+            raise ServiceError("invalid_request", f"invalid zone directory: {directory}") from exc
+        target_key = os.path.normcase(os.path.normpath(str(target)))
+        self._refresh_autozones()
+        with self._registry_lock:
+            zones = tuple(self._zone_cfg.items())
+        for zid, zone in zones:
+            try:
+                configured = zone.directory.resolve()
+            except (OSError, RuntimeError, ValueError):
+                continue
+            configured_key = os.path.normcase(os.path.normpath(str(configured)))
+            if target_key == configured_key:
+                return zid
+        raise ServiceError(
+            "unknown_zone",
+            f"target directory does not match any configured zone: {target}",
+        )
 
     def _group_overview_from_registry(self) -> list[dict]:
         with self._registry_lock:
@@ -473,6 +511,7 @@ class PasteService:
         zones = []
         for zid, zone, destination, zone_lock, groups in snapshot:
             busy = False
+            upload_limit_bytes = None
             try:
                 items = self.history(
                     zid,
@@ -487,6 +526,11 @@ class PasteService:
                 items = []
             except (DestinationError, OSError) as exc:
                 raise ServiceError("destination_error", str(exc)) from exc
+            if not busy:
+                try:
+                    upload_limit_bytes = self._upload_limit_bytes(zone, destination)
+                except (DestinationError, OSError) as exc:
+                    raise ServiceError("destination_error", str(exc)) from exc
             zones.append(
                 {
                     "id": zid,
@@ -495,6 +539,7 @@ class PasteService:
                     "retain": zone.retain,
                     "count": None if busy else len(items),
                     "images": [] if busy else items,
+                    "upload_limit_bytes": upload_limit_bytes,
                     "groups": list(groups),
                     "busy": busy,
                     "storage_mode": zone.storage_mode,
@@ -541,7 +586,7 @@ class PasteService:
         with self.zone_operation(
             zid, kind="upload", exclusive=True, blocking=blocking
         ) as (zone, destination):
-            stored, retention_deleted = self._store_prepared_upload(
+            stored, retention_deleted, duplicate = self._store_prepared_upload(
                 zid,
                 zone,
                 destination,
@@ -553,6 +598,8 @@ class PasteService:
         payload = self.item_payload(zid, stored, zone=zone, destination=destination)
         if retention_deleted:
             payload["retention_deleted"] = retention_deleted
+        if duplicate:
+            payload["duplicate"] = True
         return payload
 
     def regularize_staged_upload(
@@ -582,7 +629,7 @@ class PasteService:
                     filename,
                     preserve_filename=True,
                 )
-                stored, retention_deleted = self._store_prepared_upload(
+                stored, retention_deleted, duplicate = self._store_prepared_upload(
                     zid,
                     zone,
                     destination,
@@ -605,6 +652,8 @@ class PasteService:
         payload = self.item_payload(zid, stored, zone=zone, destination=destination)
         if retention_deleted:
             payload["retention_deleted"] = retention_deleted
+        if duplicate:
+            payload["duplicate"] = True
         return payload
 
     # ------------------------------------------------------------ historique

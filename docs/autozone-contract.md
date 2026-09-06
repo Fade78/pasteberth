@@ -230,10 +230,12 @@ zone/
 ```
 
 The data file and its matching JSON sidecar form one managed item. Pasteberth
-creates both through the server API, validates the pair before reads,
+normally creates both through the server API, validates the pair before reads,
 replacements, renames, and deletions, and preserves foreign files. A regular
-root file without a coherent sidecar is not visible in the API and cannot be
-adopted, previewed, replaced, renamed, or deleted by Pasteberth.
+root file without a coherent sidecar is not visible in the API. It can also be
+registered through the explicit local CLI operation, which creates or refreshes
+the sidecar without rewriting the existing data file; it cannot be previewed, replaced,
+renamed, or deleted until that sidecar is coherent.
 
 Temporary files and transaction markers are private implementation details.
 They are reconciled on startup and must not be edited or published by an
@@ -260,11 +262,15 @@ If access is lost after discovery, the corresponding operation returns a
 destination error rather than bypassing operating-system permissions.
 
 An external process can still copy or move a regular file into the root. It
-remains foreign until a server upload creates a coherent pair; arbitrary
-filesystem files are never implicitly adopted. The `drop` CLI's direct path is
-explicit: it stages source bytes in a private `.pbdrop-*.tmp` file and asks the
-loopback regularization endpoint to create a new managed pair. It does not adopt
-an existing foreign filename.
+remains foreign until an explicit operation creates a coherent pair;
+arbitrary filesystem files are never implicitly registered. The `drop` CLI's
+normal multi-file path stages source bytes in a private `.pbdrop-*.tmp` file and
+asks the loopback regularization endpoint to create a new managed pair. When
+`drop` receives exactly one positional file, it rejects the invocation because
+`drop` is server-backed. `register FILE` reads an existing file and creates or
+refreshes only its sidecar in the same directory under the filesystem operation
+lock. The resulting sidecar must be readable by the daemon; the operation never
+rewrites, moves, or overwrites the data file.
 
 ## 8. Refresh and lifecycle
 
@@ -315,7 +321,7 @@ out of the registry until a later poll succeeds.
 
 Legacy directory settings are normalized to sidecar storage at configuration
 load time. Existing root files without sidecars are intentionally not migrated
-or adopted.
+or implicitly registered; registration remains an explicit operation.
 
 It does not make arbitrary nested project trees into recursive Pasteberth zones:
 an accepted candidate is itself a zone and may not contain subdirectories. It

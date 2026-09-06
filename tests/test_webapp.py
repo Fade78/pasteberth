@@ -16,6 +16,7 @@ from unittest import mock
 
 from PasteBerth.runtime import __version__
 from PasteBerth.runtime.platformfs import VolumeSpace
+from PasteBerth.runtime.storage import SpaceInfo
 from tests.helpers import (
     build_multipart,
     json_of,
@@ -292,6 +293,44 @@ class TestPublic(Base):
         status, _, response = self.req("GET", "/api/zones")
         self.assertEqual(status, 200)
         self.assertTrue(json_of(response)["show_full_path"])
+
+
+class TestUploadLimit(Base):
+    config_kwargs = {"max_upload_size": "10MiB"}
+
+    def test_overview_expose_la_limite_effective_sans_espace_brut(self):
+        destination = self.server.service._destinations["default"]
+        total = 100 * 1024**2
+        available = 8 * 1024**2
+        with mock.patch.object(
+            destination,
+            "space_info",
+            return_value=SpaceInfo(total, available),
+        ):
+            status, _, response = self.req("GET", "/api/zones")
+
+        self.assertEqual(status, 200)
+        overview = json_of(response)
+        zone = next(item for item in overview["zones"] if item["id"] == "default")
+        self.assertEqual(
+            zone["upload_limit_bytes"],
+            available - 64 * 1024 - 2 * 1024**2,
+        )
+        self.assertNotIn("available_bytes", zone)
+        self.assertNotIn("total_bytes", zone)
+
+    def test_overview_plafonne_la_capacite_sur_la_limite_dure(self):
+        destination = self.server.service._destinations["default"]
+        with mock.patch.object(
+            destination,
+            "space_info",
+            return_value=SpaceInfo(100 * 1024**2, 90 * 1024**2),
+        ):
+            status, _, response = self.req("GET", "/api/zones")
+
+        self.assertEqual(status, 200)
+        zone = next(item for item in json_of(response)["zones"] if item["id"] == "default")
+        self.assertEqual(zone["upload_limit_bytes"], 10 * 1024**2)
 
 
 class TestComments(Base):
@@ -1025,6 +1064,73 @@ class TestRejetsUploads(Base):
         self.assertEqual(data, b"hello world")
         self.assertEqual(headers["content-type"], "text/plain")
 
+    def test_contenu_anonyme_identique_est_retourne_sans_nouveau_fichier(self):
+        contents = [
+            b"same clipboard content",
+            b"another clipboard content",
+            b"third clipboard content",
+        ]
+        first_statuses = []
+        first_item = None
+        for data in contents:
+            status, _, body = self.req(
+                "POST",
+                "/api/zones/default/images",
+                body=data,
+                headers={"Content-Type": "text/plain"},
+            )
+            first_statuses.append(status)
+            if first_item is None:
+                first_item = json_of(body)
+
+        duplicate_status, _, duplicate_body = self.req(
+            "POST",
+            "/api/zones/default/images",
+            body=contents[0],
+            headers={"Content-Type": "text/plain"},
+        )
+
+        self.assertEqual(first_statuses, [201, 201, 201])
+        self.assertEqual(duplicate_status, 200)
+        duplicate = json_of(duplicate_body)
+        self.assertTrue(duplicate["duplicate"])
+        self.assertEqual(duplicate["filename"], first_item["filename"])
+
+        _, _, default_history = self.req("GET", "/api/zones/default/images")
+        history = json_of(default_history)["images"]
+        self.assertEqual(len(history), 3)
+        self.assertIn(first_item["filename"], [item["filename"] for item in history])
+
+        other_status, _, other_body = self.req(
+            "POST",
+            "/api/zones/secondary/images",
+            body=contents[0],
+            headers={"Content-Type": "text/plain"},
+        )
+        self.assertEqual(other_status, 201)
+        self.assertFalse(json_of(other_body).get("duplicate", False))
+
+    def test_deux_fichiers_nommes_peuvent_partager_le_contenu(self):
+        def upload(filename):
+            body, content_type = build_multipart(
+                filename=filename,
+                data=b"same named content",
+                content_type="text/plain",
+                extra_fields={"preserve_name": "1"},
+            )
+            return self.req(
+                "POST",
+                "/api/zones/default/images",
+                body=body,
+                headers={"Content-Type": content_type},
+            )
+
+        first_status, _, _ = upload("first.txt")
+        second_status, _, _ = upload("second.txt")
+
+        self.assertEqual(first_status, 201)
+        self.assertEqual(second_status, 201)
+
     def test_markdown_selon_type_declare(self):
         status_code, _, resp = self.req("POST", "/api/zones/default/images",
                                         body=b"# Titre",
@@ -1480,7 +1586,7 @@ class TestRetentionAPI(Base):
         # secondary retain=2, default retain=3 : les flux ne se mélangent jamais.
         for i in range(5):
             zone = ["default", "secondary"][i % 2]
-            body, ctype = build_multipart(data=make_png(3, 3))
+            body, ctype = build_multipart(data=make_png(i + 2, 3))
             self.req("POST", f"/api/zones/{zone}/images", body=body,
                      headers={"Content-Type": ctype})
         counts = {}

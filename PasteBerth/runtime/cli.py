@@ -3,6 +3,7 @@
     pasteberth                         # start with local default values
     pasteberth serve   [--config PATH] [--log-level LEVEL]
     pasteberth drop [--config PATH] [--server URL] [--zone ID] [--replace] [ZONE_DIRECTORY] FILE...
+    pasteberth register [--config PATH] FILE
     pasteberth mcp  [--config PATH] [--server URL] [--insecure]
     pasteberth rename [--config PATH] DIRECTORY SOURCE TARGET
     pasteberth delete [--config PATH] [--force] DIRECTORY FILE...
@@ -18,6 +19,7 @@ import base64
 import binascii
 import errno
 import getpass
+import hashlib
 import logging
 import mimetypes
 import os
@@ -55,6 +57,8 @@ from .config import (
     validate_directory_identities,
     ensure_external_path,
 )
+from .content import classify
+from .images import InvalidImageError, mime_syntax_allowed
 from .platformfs import UnsafeLinkError, UnsupportedFilesystemError, platform_fs
 from .mcp import McpToolError, run_stdio
 from .service import PasteService, ServiceError
@@ -308,11 +312,14 @@ def _cmd_delete(args: argparse.Namespace) -> int:
 
 
 _DROP_ZONE_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
+_DEFAULT_DROP_SERVER_URL = "https://127.0.0.1:8765"
 
 
 def _drop_server_url(cfg, explicit: str | None) -> str:
     if explicit:
         return explicit
+    if cfg.using_default_config:
+        return _DEFAULT_DROP_SERVER_URL
     host = cfg.listen_address
     if host in {"0.0.0.0", "::", ""}:
         host = "127.0.0.1"
@@ -375,8 +382,125 @@ def _try_direct_drop(
         raise
 
 
-def _cmd_drop(args: argparse.Namespace) -> int:
+def _resolve_drop_zone(
+    client: PasteberthClient,
+    directory: Path,
+    *,
+    cookie: str | None = None,
+) -> str | None:
+    response = client.resolve_directory(str(directory), cookie=cookie)
+    if response.status == 401:
+        return None
+    if response.status != 200:
+        raise api_error(response, "cannot resolve target zone")
+    payload = response.json()
+    if not isinstance(payload, dict) or not isinstance(payload.get("zone"), str):
+        raise ClientError("server returned an invalid zone resolution response", status=response.status)
+    return payload["zone"]
+
+
+def _local_register_file_group(path: Path) -> str | None:
+    if os.name == "nt":
+        return None
+    try:
+        group_ids = {os.getgid(), *os.getgroups()}
+        group_id = path.stat().st_gid
+    except (AttributeError, OSError):
+        return None
+    return str(group_id) if group_id in group_ids else None
+
+
+def _local_register_info(data: bytes, path: Path, declared_mime: str, cfg):
+    if not data:
+        raise ValueError("no data received")
+    if cfg.max_upload_bytes is not None and len(data) > cfg.max_upload_bytes:
+        raise ValueError(
+            f"file is too large ({len(data)} > {cfg.max_upload_bytes} bytes)"
+        )
+    if not mime_syntax_allowed(
+        declared_mime,
+        max_length=cfg.limits.max_mime_length,
+    ):
+        raise ValueError(f"declared Content-Type is invalid: {declared_mime!r}")
+    try:
+        info = classify(
+            data,
+            declared_mime,
+            path.name,
+            max_pixels=cfg.max_image_pixels,
+            max_dimension=cfg.limits.max_image_dimension,
+            max_raw_bytes=cfg.limits.max_image_raw_bytes,
+            max_png_chunks=cfg.limits.max_png_chunks,
+            max_jpeg_segments=cfg.limits.max_jpeg_segments,
+            max_webp_chunks=cfg.limits.max_webp_chunks,
+        )
+    except InvalidImageError as exc:
+        raise ValueError(str(exc)) from exc
+    accepted = {
+        "image": cfg.accept_img,
+        "text": cfg.accept_doc,
+        "binary": cfg.accept_bin,
+    }
+    if not accepted[info.kind]:
+        raise ValueError(
+            f"{info.kind} content is rejected by configuration (accept_*)"
+        )
+    return info
+
+
+def _cmd_register_path(args: argparse.Namespace, raw_path: str) -> int:
     config_path = find_config_path(_config_arg(args))
+    try:
+        cfg = build_default_config() if config_path is None else load_config(config_path)
+        path = _command_path(raw_path)
+        declared_mime = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
+        destination = LocalDestination(
+            path.parent,
+            create_directory=False,
+            limits=cfg.limits,
+            max_image_pixels=cfg.max_image_pixels,
+            file_group=_local_register_file_group(path),
+        )
+    except ConfigError as exc:
+        print(f"pasteberth: configuration error\n  {exc}", file=sys.stderr)
+        return 2
+    except (DestinationError, OSError, UnsupportedFilesystemError, ValueError) as exc:
+        print(f"pasteberth: {raw_path}: {exc}", file=sys.stderr)
+        return 1
+
+    try:
+        with destination.operation_lock(exclusive=True):
+            data = destination.read_foreign(path.name, cfg.max_upload_bytes)
+            info = _local_register_info(data, path, declared_mime, cfg)
+            destination.save(
+                data,
+                info,
+                filename=path.name,
+                register_existing=True,
+                sha256=hashlib.sha256(data).hexdigest(),
+            )
+    except (DestinationError, OSError, UnsupportedFilesystemError, ValueError) as exc:
+        print(f"pasteberth: {raw_path}: {exc}", file=sys.stderr)
+        return 1
+    print(path)
+    return 0
+
+
+def _cmd_register(args: argparse.Namespace) -> int:
+    return _cmd_register_path(args, args.file)
+
+
+def _cmd_drop(args: argparse.Namespace) -> int:
+    if args.zone_id is None and args.directory is not None and not args.files:
+        print(
+            "pasteberth: drop requires a zone directory and at least one source file; "
+            "use 'pasteberth register FILE' for an existing local file",
+            file=sys.stderr,
+        )
+        return 2
+    config_path = find_config_path(_config_arg(args))
+    cookie = None
+    password = None
     try:
         cfg = build_default_config() if config_path is None else load_config(config_path)
         local_zone = None
@@ -386,11 +510,12 @@ def _cmd_drop(args: argparse.Namespace) -> int:
             local_zone = _zone_for_id(cfg, args.zone_id)
             sources = ([args.directory] if args.directory is not None else []) + args.files
             zone_id = args.zone_id
+            target_directory = None
         else:
             if args.directory is None or not args.files:
                 raise ConfigError("drop requires a zone directory and at least one source file")
-            local_zone = _zone_for_directory(cfg, args.directory)
-            zone_id = local_zone.id
+            target_directory = _command_path(args.directory)
+            zone_id = None
             sources = args.files
         if not sources:
             raise ConfigError("drop requires at least one source file")
@@ -399,26 +524,39 @@ def _cmd_drop(args: argparse.Namespace) -> int:
             timeout=cfg.limits.http_request_timeout_seconds or 60.0,
             insecure=args.insecure,
         )
+        if target_directory is not None:
+            zone_id = _resolve_drop_zone(client, target_directory, cookie=cookie)
+            if zone_id is None:
+                password = _drop_password(args)
+                cookie = client.login(password)
+                zone_id = _resolve_drop_zone(client, target_directory, cookie=cookie)
+            if zone_id is None:
+                raise ClientError("server did not resolve a target zone")
         local_destination = None
-        if local_zone is not None:
+        destination_directory = target_directory
+        create_directory = False
+        if destination_directory is None and local_zone is not None:
+            destination_directory = local_zone.directory
+            create_directory = local_zone.create_directory
+        if destination_directory is not None:
             try:
                 local_endpoint = is_loopback_address(client.host)
             except ConfigError:
                 local_endpoint = False
             if local_endpoint:
                 local_destination = LocalDestination(
-                    local_zone.directory,
-                    create_directory=local_zone.create_directory,
+                    destination_directory,
+                    create_directory=create_directory,
                     limits=cfg.limits,
                     max_image_pixels=cfg.max_image_pixels,
                 )
+        if zone_id is None:
+            raise ClientError("server did not resolve a target zone")
     except (ConfigError, ClientError) as exc:
         print(f"pasteberth: configuration error\n  {exc}", file=sys.stderr)
         return 2
 
     failures = 0
-    cookie = None
-    password = None
     for raw_source in sources:
         try:
             source = _command_path(raw_source)
@@ -1373,14 +1511,17 @@ def build_parser() -> argparse.ArgumentParser:
         "drop",
         help="drop files directly when possible, otherwise through the server",
         description=(
-            "Publish one or more regular source files into a configured zone.\n\n"
+            "Publish one or more regular source files into a zone managed by the daemon.\n\n"
             "With --zone ID, positional arguments are source files only.\n"
-            "Without --zone, the first positional argument is the exact configured zone\n"
-            "directory and the remaining arguments are source files.\n\n"
-            "For a loopback server with a writable local zone, Pasteberth stages\n"
+            "Without --zone, the first positional argument is a target directory\n"
+            "that the daemon resolves against its static zones and autozones; the\n"
+            "remaining arguments are source files. A single positional argument is\n"
+            "invalid; use register FILE for an existing local file.\n\n"
+            "For a loopback server with a writable target, Pasteberth stages\n"
             "the source locally and asks the daemon to regularize it. Remote or\n"
             "unavailable local staging falls back to the HTTP API.\n\n"
-            "Direct staging still calls the daemon through the configured URL.\n"
+            "The daemon URL comes from the configuration, or defaults to\n"
+            "https://127.0.0.1:8765 when no configuration is available.\n"
             "For a trusted self-signed HTTPS certificate, add --insecure; this\n"
             "disables certificate verification only.\n\n"
             "Examples:\n"
@@ -1388,11 +1529,15 @@ def build_parser() -> argparse.ArgumentParser:
             "  pasteberth drop --config config.toml "
             "/srv/pasteberth/project-alpha report.pdf\n"
             "  pasteberth drop --config config.toml --server \\\n"
-            "      https://pasteberth.example.internal --zone project-alpha report.pdf"
+            "      https://pasteberth.example.internal --zone project-alpha report.pdf\n"
+            "  pasteberth register --config config.toml "
+            "/srv/pasteberth/project-alpha/report.pdf"
         ),
         epilog=(
-            "Sources are never modified. Foreign files are never adopted or\n"
-            "overwritten; use --replace only for a managed filename. Use\n"
+            "Sources are never modified. Use register for an existing regular file;\n"
+            "it creates or refreshes only the sidecar and relies on the directory's\n"
+            "filesystem permissions. Use --replace only for an upload to a managed\n"
+            "filename. Use\n"
             "--password-stdin for non-interactive HTTP authentication."
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -1412,7 +1557,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_drop.add_argument(
         "--server",
         dest="server_url",
-        help="Pasteberth server URL (derived from config when omitted)",
+        help="Pasteberth server URL (derived from config or localhost default)",
     )
     p_drop.add_argument(
         "--zone",
@@ -1433,6 +1578,25 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_drop.add_argument("--config", default=argparse.SUPPRESS, help="path to config.toml")
     p_drop.set_defaults(func=_cmd_drop)
+
+    p_register = sub.add_parser(
+        "register",
+        help="create or refresh a sidecar for an existing file",
+        description=(
+            "Create or refresh only the Pasteberth sidecar for an existing regular file.\n"
+            "This is a filesystem-only operation: it reads the file and writes\n"
+            "the sidecar in the same directory without contacting the daemon."
+        ),
+        epilog=(
+            "Registration never changes the file data. An existing sidecar is\n"
+            "refreshed from the current file, while a valid comment is retained.\n"
+            "The daemon must be able to read the resulting sidecar."
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    p_register.add_argument("file", metavar="FILE", help="existing file to register")
+    p_register.add_argument("--config", default=argparse.SUPPRESS, help="path to config.toml")
+    p_register.set_defaults(func=_cmd_register)
 
     p_mcp = sub.add_parser(
         "mcp",

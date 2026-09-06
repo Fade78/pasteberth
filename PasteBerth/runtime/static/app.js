@@ -18,7 +18,7 @@
   }
 
   const state = {
-    zones: [],            // [{id,label,color,retain,count,images:[...]}]
+    zones: [],            // [{id,label,color,retain,count,upload_limit_bytes,images:[...]}]
     activeId: null,
     authEnabled: true,
     showFullPath: true,
@@ -922,6 +922,72 @@
     filePicker.click();
   }
 
+  function renderZoneCapacity(zone) {
+    const wrap = document.createElement("div");
+    wrap.className = "zone-capacity";
+    const count = document.createElement("button");
+    count.type = "button";
+    count.className = "zone-count";
+    const limit = zone.retain;
+    const retention = limit == null ? "" : ` / ${limit}`;
+    count.textContent = `${zone.images.length}${retention}`;
+    count.setAttribute(
+      "aria-label",
+      `${zone.images.length} files in ${zone.label}; show upload details`,
+    );
+    count.setAttribute("aria-expanded", "false");
+
+    const panel = document.createElement("div");
+    panel.className = "zone-capacity-panel";
+    panel.hidden = true;
+    const uploadLimit = document.createElement("p");
+    uploadLimit.textContent = zone.upload_limit_bytes == null
+      ? "Maximum upload: unavailable"
+      : `Maximum upload: ${fmtBytes(zone.upload_limit_bytes)}`;
+    const retentionInfo = document.createElement("p");
+    retentionInfo.textContent = limit == null
+      ? "Retention: unlimited"
+      : `Retention: ${limit} files`;
+    panel.append(uploadLimit, retentionInfo);
+    wrap.append(count, panel);
+
+    let hovering = false;
+    let focused = false;
+    let clickedOpen = false;
+    const sync = () => {
+      const visible = hovering || focused || clickedOpen;
+      panel.hidden = !visible;
+      count.setAttribute("aria-expanded", String(visible));
+    };
+    wrap.addEventListener("pointerenter", event => {
+      if (event.pointerType !== "touch") {
+        hovering = true;
+        sync();
+      }
+    });
+    wrap.addEventListener("pointerleave", event => {
+      if (event.pointerType !== "touch") {
+        hovering = false;
+        sync();
+      }
+    });
+    count.addEventListener("focus", () => {
+      focused = true;
+      sync();
+    });
+    count.addEventListener("blur", () => {
+      focused = false;
+      sync();
+    });
+    count.addEventListener("click", event => {
+      event.stopPropagation();
+      clickedOpen = !clickedOpen;
+      if (!clickedOpen) count.blur();
+      sync();
+    });
+    return wrap;
+  }
+
   function renderZone(zone) {
     const el = document.createElement("section");
     el.className = "zone";
@@ -943,8 +1009,7 @@
     );
     select.innerHTML =
       '<span class="zone-marker" aria-hidden="true"></span>' +
-      '<span class="zone-label"></span>' +
-      '<span class="zone-count"></span>';
+      '<span class="zone-label"></span>';
     const zoneLabel = select.querySelector(".zone-label");
     zoneLabel.textContent = zone.label;
     if (hasNewItems(zone.id)) {
@@ -952,10 +1017,6 @@
       badge.classList.add("zone-new-badge");
       zoneLabel.appendChild(badge);
     }
-    const limit = zone.retain;
-    select.querySelector(".zone-count").textContent = limit == null
-      ? `${zone.images.length}`
-      : `${zone.images.length} / ${limit}`;
     const uploadButton = document.createElement("button");
     uploadButton.type = "button";
     uploadButton.className = "zone-upload-btn";
@@ -967,7 +1028,7 @@
       setActive(zone.id);
       chooseFiles(zone.id);
     });
-    head.append(select, uploadButton);
+    head.append(select, renderZoneCapacity(zone), uploadButton);
     el.appendChild(head);
 
     if (zone.busy) {
@@ -2123,7 +2184,10 @@
         Array.isArray(item.retention_deleted) ? item.retention_deleted.length : 0,
       );
       if (notify) {
-        const uploaded = `${item.kind === "image" ? "Image" : "Content"} uploaded (${shortRef(item.reference)})`;
+        const contentLabel = item.kind === "image" ? "Image" : "Content";
+        const uploaded = item.duplicate
+          ? `${contentLabel} already present (${shortRef(item.reference)})`
+          : `${contentLabel} uploaded (${shortRef(item.reference)})`;
         toast(retentionWarning ? `${retentionWarning}; ${uploaded}` : uploaded,
           retentionWarning ? "warning" : "info");
       }

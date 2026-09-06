@@ -14,18 +14,18 @@ if not exist "%DEPLOYMENT_ROOT%\runtime\__main__.py" goto invalid_root
 if not exist "%DEPLOYMENT_ROOT%\runtime\static" goto invalid_root
 if not exist "%DEPLOYMENT_ROOT%\runtime\templates" goto invalid_root
 
-set "PYTHONPATH=%DEPLOYMENT_ROOT%\.."
+set "PYTHONPATH=%DEPLOYMENT_ROOT%"
 set "PYTHONDONTWRITEBYTECODE=1"
 
 where py >nul 2>&1
 if not errorlevel 1 goto use_py_launcher
 
-python -P -m PasteBerth.runtime %*
+python -P -m runtime %*
 set "EXIT_CODE=%ERRORLEVEL%"
 goto finish
 
 :use_py_launcher
-py -3 -P -m PasteBerth.runtime %*
+py -3 -P -m runtime %*
 set "EXIT_CODE=%ERRORLEVEL%"
 goto finish
 

@@ -6,8 +6,8 @@ cannot become an arbitrary read or delete primitive.
 """
 from __future__ import annotations
 
-import json
 import hashlib
+import json
 import logging
 import os  # Compatibility seam for tests that patch the process-wide os module.
 import re
@@ -59,15 +59,33 @@ _META_KEYS = {"filename", "created_at", "width", "height", "size", "format"}
 _META_KEYS_NEW = _META_KEYS | {"kind", "mime"}
 _META_KEYS_WITH_COMMENT = _META_KEYS | {"comment"}
 _META_KEYS_NEW_WITH_COMMENT = _META_KEYS_NEW | {"comment"}
+_META_KEYS_WITH_SHA256 = _META_KEYS | {"sha256"}
+_META_KEYS_NEW_WITH_SHA256 = _META_KEYS_NEW | {"sha256"}
+_META_KEYS_WITH_COMMENT_SHA256 = _META_KEYS_WITH_COMMENT | {"sha256"}
+_META_KEYS_NEW_WITH_COMMENT_SHA256 = _META_KEYS_NEW_WITH_COMMENT | {"sha256"}
 _MIME_RE = re.compile(r"^[A-Za-z0-9!#$%&'*+.^_`|~-]+/[A-Za-z0-9!#$%&'*+.^_`|~-]+$")
+_SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 _TEXT_MIMES = {"application/json", "application/xml", "application/x-yaml"}
+
+
 def _meta_keys_ok(raw: dict) -> bool:
     return set(raw) in (
         _META_KEYS,
         _META_KEYS_NEW,
         _META_KEYS_WITH_COMMENT,
         _META_KEYS_NEW_WITH_COMMENT,
+        _META_KEYS_WITH_SHA256,
+        _META_KEYS_NEW_WITH_SHA256,
+        _META_KEYS_WITH_COMMENT_SHA256,
+        _META_KEYS_NEW_WITH_COMMENT_SHA256,
     )
+
+
+def _sha256_file(file_handle: FileHandle) -> str:
+    digest = hashlib.sha256()
+    while chunk := file_handle.read(1024 * 1024):
+        digest.update(chunk)
+    return digest.hexdigest()
 
 
 def validate_comment(
@@ -306,6 +324,7 @@ class StoredImage:
     mime: str = "image/png"
     comment: str = ""
     changed_at: datetime | None = None  # filesystem modification time when known
+    sha256: str | None = None
 
 
 @dataclass(frozen=True)
@@ -371,8 +390,14 @@ class Destination(ABC):
         filename: str | None = None,
         *,
         allow_replace: bool = False,
-        adopt_existing: bool = False,
+        register_existing: bool = False,
+        sha256: str | None = None,
     ) -> StoredImage: ...
+
+    @abstractmethod
+    def find_duplicate(self, sha256: str, size: int) -> StoredImage | None:
+        """Return an existing item with the same content digest, if any."""
+        ...
 
     @abstractmethod
     def list(self) -> list[StoredImage]:
@@ -2797,7 +2822,23 @@ class LocalDestination(Destination):
             max_length=self.limits.max_comment_length,
             max_bytes=self.limits.max_comment_bytes,
         )
-        return StoredImage(filename, created_at, width, height, size, fmt, kind, mime, comment)
+        sha256 = raw.get("sha256")
+        if sha256 is not None and (
+            not isinstance(sha256, str) or not _SHA256_RE.fullmatch(sha256)
+        ):
+            raise ValueError("invalid content SHA-256")
+        return StoredImage(
+            filename,
+            created_at,
+            width,
+            height,
+            size,
+            fmt,
+            kind,
+            mime,
+            comment,
+            sha256=sha256,
+        )
 
     def _require_owned(
         self,
@@ -2855,6 +2896,38 @@ class LocalDestination(Destination):
             except (DestinationError, OSError):
                 pass
             raise
+
+    def _replace_meta_atomic(
+        self,
+        directory_fd: DirectoryHandle,
+        meta: dict,
+        expected_target: tuple[int, int],
+    ) -> None:
+        """Replace an existing sidecar without touching its data file."""
+        target = meta["filename"] + ".json"
+        temp_name = self._write_meta_temp(directory_fd, meta)
+        temp_identity = self._entry_identity(directory_fd, temp_name)
+        if temp_identity is None:
+            raise DestinationError(f"temporary sidecar disappeared: {target!r}")
+        published = False
+        try:
+            self._fs.replace(
+                directory_fd,
+                temp_name,
+                target,
+                expected_source=temp_identity,
+                expected_target=expected_target,
+            )
+            published = True
+            self._fsync_directory(directory_fd)
+        except (EntryChangedError, UnsafeLinkError) as exc:
+            raise StorageConflictError(f"sidecar changed during operation: {target!r}") from exc
+        finally:
+            if not published:
+                try:
+                    self._remove_expected(directory_fd, temp_name, temp_identity)
+                except (DestinationError, OSError):
+                    pass
 
     def _write_meta_temp(self, directory_fd: DirectoryHandle, meta: dict) -> str:
         temp_name = f".pbmeta-{secrets.token_hex(12)}.tmp"
@@ -2984,6 +3057,42 @@ class LocalDestination(Destination):
                 raise StorageConflictError(f"direct-drop staging file changed: {name!r}")
             return data, entry.identity
 
+    def read_foreign(
+        self,
+        name: str,
+        max_bytes: int | None,
+    ) -> bytes:
+        """Read an existing regular file before registering its sidecar."""
+        if not self._valid_filename(name):
+            raise DestinationError(f"invalid filename: {name!r}")
+        with self._directory_fd() as directory_fd:
+            entry = self._fs.entry_info(directory_fd, name)
+            if entry is None:
+                raise StorageConflictError(f"foreign file is missing: {name!r}")
+            if not entry.is_regular or entry.is_symlink:
+                raise StorageConflictError(f"foreign file is not regular: {name!r}")
+            try:
+                with self._fs.open_existing(directory_fd, name, mode="rb") as stream:
+                    data = stream.read(max_bytes + 1) if max_bytes is not None else stream.read()
+            except (OSError, UnsupportedFilesystemError) as exc:
+                raise DestinationError(f"cannot read foreign file: {exc}") from exc
+            current = self._fs.entry_info(directory_fd, name)
+            size_matches = (
+                current is not None
+                and current.size == (
+                    entry.size
+                    if max_bytes is not None and entry.size > max_bytes
+                    else len(data)
+                )
+            )
+            if (
+                current is None
+                or current.identity != entry.identity
+                or not size_matches
+            ):
+                raise StorageConflictError(f"foreign file changed: {name!r}")
+            return data
+
     def discard_direct_drop(
         self,
         name: str,
@@ -3044,8 +3153,12 @@ class LocalDestination(Destination):
         data: bytes,
         info: ContentInfo,
         filename: str,
+        sha256: str | None = None,
+        comment: str = "",
     ) -> tuple[StoredImage, dict]:
         created_at = datetime.now(timezone.utc)
+        if sha256 is None:
+            sha256 = hashlib.sha256(data).hexdigest()
         stored = StoredImage(
             filename=filename,
             created_at=created_at,
@@ -3055,6 +3168,8 @@ class LocalDestination(Destination):
             fmt=info.fmt,
             kind=info.kind,
             mime=info.mime,
+            comment=comment,
+            sha256=sha256,
         )
         return stored, {
             "filename": filename,
@@ -3066,16 +3181,18 @@ class LocalDestination(Destination):
             "kind": stored.kind,
             "mime": stored.mime,
             "comment": stored.comment,
+            "sha256": stored.sha256,
         }
 
-    def _adopt_named(
+    def _register_named(
         self,
         directory_fd: DirectoryHandle,
         data: bytes,
         info: ContentInfo,
         filename: str,
+        sha256: str | None = None,
     ) -> StoredImage:
-        """Add a sidecar for an existing file without rewriting its data."""
+        """Create or refresh a sidecar without rewriting its data."""
         meta_name = self._meta_name(filename)
         file_handle = None
         try:
@@ -3083,35 +3200,61 @@ class LocalDestination(Destination):
             target_identity = file_handle.identity
             if file_handle.size != len(data):
                 raise StorageConflictError(
-                    f"file changed during adoption: {filename!r}"
+                    f"file changed during registration: {filename!r}"
                 )
             file_handle.seek(0)
             offset = 0
             while chunk := file_handle.read(1024 * 1024):
                 if data[offset:offset + len(chunk)] != chunk:
                     raise StorageConflictError(
-                        f"file changed during adoption: {filename!r}"
+                        f"file changed during registration: {filename!r}"
                     )
                 offset += len(chunk)
             if offset != len(data):
                 raise StorageConflictError(
-                    f"file changed during adoption: {filename!r}"
+                    f"file changed during registration: {filename!r}"
                 )
             if self._entry_identity(directory_fd, filename) != target_identity:
                 raise StorageConflictError(
-                    f"file changed during adoption: {filename!r}"
-                )
-            if self._entry_exists(directory_fd, meta_name):
-                raise StorageConflictError(
-                    f"sidecar appeared during adoption: {filename!r}"
+                    f"file changed during registration: {filename!r}"
                 )
 
-            stored, meta = self._stored_item_and_meta(data, info, filename)
-            self._write_meta_atomic(directory_fd, meta)
             meta_identity = self._entry_identity(directory_fd, meta_name)
+            comment = ""
+            if meta_identity is not None:
+                try:
+                    raw = self._read_meta(directory_fd, meta_name)
+                    if self._entry_identity(directory_fd, meta_name) != meta_identity:
+                        raise StorageConflictError(
+                            f"sidecar changed during registration: {filename!r}"
+                        )
+                    comment = validate_comment(
+                        raw.get("comment", ""),
+                        max_length=self.limits.max_comment_length,
+                        max_bytes=self.limits.max_comment_bytes,
+                    )
+                except StorageConflictError:
+                    raise
+                except (DestinationError, OSError, TypeError, ValueError, KeyError):
+                    # Registration repairs an unreadable or stale sidecar from
+                    # the current data file instead of treating it as a blocker.
+                    comment = ""
+
+            stored, meta = self._stored_item_and_meta(
+                data,
+                info,
+                filename,
+                sha256,
+                comment=comment,
+            )
             if meta_identity is None:
+                self._write_meta_atomic(directory_fd, meta)
+            else:
+                self._replace_meta_atomic(directory_fd, meta, meta_identity)
+            published_meta_identity = self._entry_identity(directory_fd, meta_name)
+            if published_meta_identity is None:
                 raise StorageConflictError(
-                    f"sidecar disappeared during adoption: {filename!r}"
+                    f"sidecar disappeared during registration: {filename!r}"
                 )
             try:
                 target_still_matches = (
@@ -3120,18 +3263,19 @@ class LocalDestination(Destination):
             except (DestinationError, OSError):
                 target_still_matches = False
             if not target_still_matches:
-                self._remove_expected(directory_fd, meta_name, meta_identity)
+                if meta_identity is None:
+                    self._remove_expected(directory_fd, meta_name, published_meta_identity)
                 raise StorageConflictError(
-                    f"file changed during adoption: {filename!r}"
+                    f"file changed during registration: {filename!r}"
                 )
             return stored
         except FileNotFoundError as exc:
             raise StorageConflictError(
-                f"file disappeared during adoption: {filename!r}"
+                f"file disappeared during registration: {filename!r}"
             ) from exc
         except UnsafeLinkError as exc:
             raise StorageConflictError(
-                f"foreign file is not regular: {filename!r}"
+                f"foreign file or sidecar is not regular: {filename!r}"
             ) from exc
         finally:
             if file_handle is not None and not file_handle.closed:
@@ -3145,7 +3289,8 @@ class LocalDestination(Destination):
         filename: str,
         *,
         allow_replace: bool = False,
-        adopt_existing: bool = False,
+        register_existing: bool = False,
+        sha256: str | None = None,
     ) -> StoredImage:
         meta_name = self._meta_name(filename)
         if filename in self._active_transaction_names(directory_fd):
@@ -3156,9 +3301,9 @@ class LocalDestination(Destination):
         meta_exists = self._entry_exists(directory_fd, meta_name)
         target_identity: tuple[int, int] | None = None
         meta_identity: tuple[int, int] | None = None
+        if register_existing:
+            return self._register_named(directory_fd, data, info, filename, sha256)
         if target_exists and not meta_exists:
-            if adopt_existing:
-                return self._adopt_named(directory_fd, data, info, filename)
             # Foreign file: never overwrite it; expose a client conflict (409).
             raise StorageConflictError(
                 f"foreign file present without sidecar: {filename!r}"
@@ -3184,7 +3329,7 @@ class LocalDestination(Destination):
                     f"explicit replacement required for {filename!r}"
                 )
 
-        stored, meta = self._stored_item_and_meta(data, info, filename)
+        stored, meta = self._stored_item_and_meta(data, info, filename, sha256)
         data_temp = self._write_data_temp(directory_fd, data)
         data_temp_identity = self._entry_identity(directory_fd, data_temp)
         try:
@@ -3406,6 +3551,15 @@ class LocalDestination(Destination):
         if info.available_bytes < required or remaining < minimum_bytes:
             raise StorageLowError(info, minimum_percent)
 
+    def available_upload_bytes(self, minimum_percent: float) -> int:
+        """Return bytes available for one upload without crossing safeguards."""
+        info = self.space_info()
+        minimum_bytes = info.total_bytes * minimum_percent / 100.0
+        return max(
+            0,
+            int(info.available_bytes - _SPACE_MARGIN_BYTES - minimum_bytes),
+        )
+
     # -- reconciliation ----------------------------------------------------
 
     def reconcile(self) -> None:
@@ -3447,6 +3601,29 @@ class LocalDestination(Destination):
 
     # -- API Destination ---------------------------------------------------
 
+    def find_duplicate(self, sha256: str, size: int) -> StoredImage | None:
+        """Find matching content while the caller holds the destination lock."""
+        for item in self.list():
+            if item.size != size:
+                continue
+            if item.sha256 == sha256:
+                return item
+            if item.sha256 is not None:
+                continue
+            try:
+                with self.open_read(item.filename) as file_handle:
+                    existing_sha256 = _sha256_file(file_handle)
+            except (DestinationError, OSError) as exc:
+                log.warning(
+                    "cannot hash legacy item for deduplication: %s (%s)",
+                    item.filename,
+                    exc,
+                )
+                continue
+            if existing_sha256 == sha256:
+                return item
+        return None
+
     def save(
         self,
         data: bytes,
@@ -3454,7 +3631,8 @@ class LocalDestination(Destination):
         filename: str | None = None,
         *,
         allow_replace: bool = False,
-        adopt_existing: bool = False,
+        register_existing: bool = False,
+        sha256: str | None = None,
     ) -> StoredImage:
         self._ensure_dir()
         if filename is not None:
@@ -3467,7 +3645,8 @@ class LocalDestination(Destination):
                     info,
                     filename,
                     allow_replace=allow_replace,
-                    adopt_existing=adopt_existing,
+                    register_existing=register_existing,
+                    sha256=sha256,
                 )
         ext = info.ext
         last_exc: Exception | None = None
@@ -3481,6 +3660,7 @@ class LocalDestination(Destination):
                         info,
                         filename,
                         allow_replace=False,
+                        sha256=sha256,
                     )
                 except (StorageConflictError, ReplacementRequiredError) as exc:
                     # Generated names are retried on any occupied entry, just
@@ -3752,6 +3932,7 @@ class LocalDestination(Destination):
                     item.kind,
                     item.mime,
                     item.comment,
+                    sha256=item.sha256,
                 )
             except BaseException:
                 if not commit_published:
@@ -3837,6 +4018,7 @@ class LocalDestination(Destination):
                 item.kind,
                 item.mime,
                 comment,
+                sha256=item.sha256,
             )
 
     def delete(self, filename: str, *, allow_stale_sidecar: bool = False) -> None:

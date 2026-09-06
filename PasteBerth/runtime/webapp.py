@@ -53,6 +53,7 @@ _ROUTES: tuple[tuple[str, re.Pattern, str], ...] = tuple(
         ("GET", r"^/api/health$", "h_health"),
         ("GET", r"^/api/zones$", "h_zones"),
         ("GET", r"^/api/groups$", "h_groups"),
+        ("POST", r"^/api/drop/resolve$", "h_drop_resolve"),
         ("GET", rf"^/api/zones/{_ZONE_RE}/images$", "h_zone_images"),
         ("PATCH", rf"^/api/zones/{_ZONE_RE}/images/{_FILENAME_RE}/comment$", "h_zone_comment"),
         ("POST", rf"^/api/zones/{_ZONE_RE}/images/regularize$", "h_zone_regularize"),
@@ -1003,6 +1004,43 @@ def make_handler(cfg: Config, service: PasteService, sessions: SessionStore,
                 return
             self._json(200, {"groups": service.group_overview()})
 
+        def _h_drop_resolve(self) -> None:
+            if not self._require_direct_drop_auth():
+                return
+            ctype = (self.headers.get("Content-Type") or "").split(";", 1)[0].strip().lower()
+            if ctype != "application/json":
+                self._error(415, "unsupported_media_type", "Content-Type must be application/json")
+                return
+            try:
+                body, _ = self._read_body(max_bytes=cfg.limits.max_batch_body_bytes)
+            except BodyTooLarge:
+                self.close_connection = True
+                self._error(413, "too_large", "resolve request is too large")
+                return
+            except ClientAbort:
+                raise
+            try:
+                payload = json.loads(
+                    body.decode("utf-8"),
+                    object_pairs_hook=_json_object_without_duplicates,
+                )
+            except (UnicodeDecodeError, json.JSONDecodeError, ValueError, RecursionError):
+                self._error(400, "invalid_request", "resolve request must contain valid JSON")
+                return
+            if not isinstance(payload, dict) or set(payload) != {"directory"}:
+                self._error(400, "invalid_request", "resolve request must contain only 'directory'")
+                return
+            directory = payload["directory"]
+            if not isinstance(directory, str) or not directory:
+                self._error(400, "invalid_request", "directory must be a non-empty string")
+                return
+            try:
+                zone_id = service.zone_id_for_directory(directory)
+            except ServiceError as exc:
+                self._service_error(exc)
+                return
+            self._json(200, {"zone": zone_id})
+
         def _h_zone_images(self, zid: str) -> None:
             if not self._require_auth_api():
                 return
@@ -1059,7 +1097,7 @@ def make_handler(cfg: Config, service: PasteService, sessions: SessionStore,
             except ServiceError as exc:
                 self._service_error(exc)
                 return
-            self._json(201, item)
+            self._json(200 if item.get("duplicate") else 201, item)
 
         def _h_zone_upload(self, zid: str) -> None:
             if not self._require_auth_api():
@@ -1141,7 +1179,7 @@ def make_handler(cfg: Config, service: PasteService, sessions: SessionStore,
             except ServiceError as exc:
                 self._service_error(exc)
                 return
-            self._json(201, item)
+            self._json(200 if item.get("duplicate") else 201, item)
 
         def _read_filename_request(self) -> list[str] | None:
             try:

@@ -22,8 +22,10 @@ PASSWORD = "concurrence-test-000"
 UPLOAD_TIMEOUT = 60 if running_under_wine() else 15
 
 
-def _upload(port, cookie, zone):
-    body, ctype = build_multipart(data=make_png(3, 3))
+def _upload(port, cookie, zone, data=None):
+    body, ctype = build_multipart(
+        data=make_png(3, 3) if data is None else data,
+    )
     status, _, resp = request(
         port, "POST", f"/api/zones/{zone}/images",
         body=body, headers={"Content-Type": ctype}, cookie=cookie,
@@ -72,8 +74,12 @@ class Base(unittest.TestCase):
 class TestConcurrenceMemeZone(Base):
     def test_12_uploads_simultanes_retain_4(self):
         with ThreadPoolExecutor(max_workers=12) as pool:
-            results = list(pool.map(lambda _: _upload(
-                self.server.port, self.cookie, "a"), range(12)))
+            results = list(pool.map(lambda index: _upload(
+                self.server.port,
+                self.cookie,
+                "a",
+                make_png(3 + index, 3),
+            ), range(12)))
         statuses = [s for s, _ in results]
         self.assertTrue(all(s == 201 for s in statuses),
                         f"échecs d'upload : {statuses}")
@@ -101,8 +107,14 @@ class TestZonesParalleles(Base):
         with ThreadPoolExecutor(max_workers=16) as pool:
             futures = []
             for zone, rng in jobs:
-                for _ in rng:
-                    futures.append(pool.submit(_upload, self.server.port, self.cookie, zone))
+                for index in rng:
+                    futures.append(pool.submit(
+                        _upload,
+                        self.server.port,
+                        self.cookie,
+                        zone,
+                        make_png(3 + index, 3),
+                    ))
             outcomes = [f.result() for f in futures]
         self.assertTrue(all(s == 201 for s, _ in outcomes))
         counts = {}
@@ -121,8 +133,13 @@ class TestZonesParalleles(Base):
             return status, len(json_of(resp)["images"])
 
         with ThreadPoolExecutor(max_workers=12) as pool:
-            writers = [pool.submit(_upload, self.server.port, self.cookie, "a")
-                       for _ in range(10)]
+            writers = [pool.submit(
+                _upload,
+                self.server.port,
+                self.cookie,
+                "a",
+                make_png(3 + index, 3),
+            ) for index in range(10)]
             readers = [pool.submit(reader, i) for i in range(30)]
             write_results = [w.result() for w in writers]
             read_results = [r.result() for r in readers]

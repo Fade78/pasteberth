@@ -59,6 +59,25 @@ async function dispatchPaste(page) {
   }, ONE_PIXEL_PNG);
 }
 
+async function dispatchDistinctPaste(page, variant) {
+  await page.evaluate((variant) => {
+    const canvas = document.createElement("canvas");
+    canvas.width = variant + 1;
+    canvas.height = 1;
+    const context = canvas.getContext("2d");
+    context.fillStyle = `rgb(${(variant * 37) % 256}, ${(variant * 53) % 256}, ${(variant * 71) % 256})`;
+    context.fillRect(0, 0, canvas.width, canvas.height);
+    const encoded = canvas.toDataURL("image/png").split(",", 2)[1];
+    const bytes = Uint8Array.from(atob(encoded), (char) => char.charCodeAt(0));
+    const file = new File([bytes], "clipboard.png", { type: "image/png" });
+    const dataTransfer = new DataTransfer();
+    dataTransfer.items.add(file);
+    const event = new Event("paste", { bubbles: true, cancelable: true });
+    Object.defineProperty(event, "clipboardData", { value: dataTransfer });
+    window.dispatchEvent(event);
+  }, variant);
+}
+
 async function dispatchTextPaste(page, text, type = "text/plain") {
   await page.evaluate(({ text, type }) => {
     const dataTransfer = new DataTransfer();
@@ -732,13 +751,33 @@ test("le bouton d'une zone ouvre le sélecteur de fichiers multiple", async ({ p
   await expect(defaultZone.locator(".selection-summary-name")).toHaveCount(2);
 });
 
+test("affiche les détails d'upload depuis le compteur de zone", async ({ page }) => {
+  await openApp(page);
+  const defaultZone = page.locator('[data-zone="default"]');
+  const count = defaultZone.locator(".zone-count");
+  const panel = defaultZone.locator(".zone-capacity-panel");
+
+  await count.hover();
+  await expect(panel).toBeVisible();
+  await expect(panel).toContainText("Maximum upload:");
+  await expect(panel).toContainText("Retention: 5 files");
+  await expect(panel).not.toContainText(/free|available|disk/i);
+
+  await page.mouse.move(10, 10);
+  await expect(panel).not.toBeVisible();
+  await page.setViewportSize({ width: 390, height: 844 });
+  await count.click();
+  await expect(panel).toBeVisible();
+  await expect(count).toHaveAttribute("aria-expanded", "true");
+});
+
 test("avertit avant de dépasser la rétention d'une zone", async ({ page }) => {
   await openApp(page);
   const defaultZone = page.locator('[data-zone="default"]');
   await defaultZone.getByRole("button", { name: "Select zone Default" }).click();
 
   for (let index = 1; index <= 5; index += 1) {
-    await dispatchPaste(page);
+    await dispatchDistinctPaste(page, index);
     await expect(defaultZone.locator(".thumb-wrap")).toHaveCount(index);
   }
 
@@ -764,7 +803,7 @@ test("reste utilisable avec des cibles tactiles sur petit écran", async ({ page
       return { width: rect.width, height: rect.height };
     })
   ));
-  expect(targets.length).toBe(2);
+  expect(targets.length).toBe(3);
   expect(targets.every(({ width, height }) => width >= 44 && height >= 44)).toBe(true);
 
   const widths = await page.evaluate(() => ({
@@ -885,7 +924,7 @@ test("sélectionne une image depuis l'index", async ({ page }) => {
   await dispatchPaste(page);
   await expect(defaultZone.locator(".latest")).toBeVisible();
   const firstName = await defaultZone.locator(".fname").textContent();
-  await dispatchPaste(page);
+  await dispatchDistinctPaste(page, 2);
   await expect(defaultZone.locator(".thumb-wrap")).toHaveCount(2);
 
   await defaultZone.locator(".thumb-wrap").last().click();
@@ -1189,6 +1228,25 @@ test("un Ctrl-V maintenu ne depose le meme buffer qu'une fois", async ({ page })
   await expect(defaultZone.locator(".latest")).toBeVisible();
   await page.waitForTimeout(250);
   expect(uploads).toHaveLength(1);
+});
+
+test("le serveur deduplique deux collages successifs identiques", async ({ page }) => {
+  await openApp(page);
+  const defaultZone = page.locator('[data-zone="default"]');
+  await defaultZone.getByRole("button", { name: "Select zone Default" }).click();
+  const statuses = [];
+  page.on("response", response => {
+    if (response.request().method() === "POST" && response.url().includes("/api/zones/default/images")) {
+      statuses.push(response.status());
+    }
+  });
+
+  await dispatchPaste(page);
+  await dispatchPaste(page);
+
+  await expect.poll(() => statuses.length).toBe(2);
+  expect([...statuses].sort()).toEqual([200, 201]);
+  await expect(defaultZone.locator(".thumb-wrap")).toHaveCount(1);
 });
 
 test("conserve les retours de ligne et enregistre avec Ctrl-Entree", async ({ page }) => {

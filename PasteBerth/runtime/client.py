@@ -33,7 +33,7 @@ class ClientResponse:
 
 
 class PasteberthClient:
-    """Minimal client for login and multipart zone uploads."""
+    """Minimal client for login, uploads, and zone resolution."""
 
     def __init__(self, base_url: str, *, timeout: float = 60.0, insecure: bool = False):
         try:
@@ -198,6 +198,15 @@ class PasteberthClient:
             cookie=cookie,
         )
 
+    def resolve_directory(self, directory: str, *, cookie: str | None = None) -> ClientResponse:
+        body = json.dumps({"directory": directory}, separators=(",", ":")).encode("utf-8")
+        return self.request(
+            "POST",
+            "/api/drop/resolve",
+            body=body,
+            content_type="application/json",
+            cookie=cookie,
+        )
 
 def api_error(response: ClientResponse, fallback: str = "server request failed") -> ClientError:
     try:

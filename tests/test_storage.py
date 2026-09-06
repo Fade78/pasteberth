@@ -1,4 +1,5 @@
 """Tests du stockage : noms uniques, sidecars, rétention, ownership."""
+import hashlib
 import json
 import multiprocessing
 import os
@@ -63,7 +64,8 @@ class Base(unittest.TestCase):
 
 class TestSauvegarde(Base):
     def test_fichier_et_sidecar(self):
-        stored = self.save()[0]
+        data = make_png(2, 2)
+        stored = self.dest.save(data, INFO(2, 2))
         self.assertRegex(stored.filename, r"^\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}_[0-9a-f]{6}\.png$")
         self.assertTrue((self.dir / stored.filename).is_file())
         meta = json.loads((self.dir / (stored.filename + ".json")).read_text())
@@ -71,6 +73,9 @@ class TestSauvegarde(Base):
         self.assertEqual(meta["width"], 2)
         self.assertEqual(meta["size"], len(make_png(2, 2)))
         self.assertIn("T", meta["created_at"])
+        expected_sha256 = hashlib.sha256(data).hexdigest()
+        self.assertEqual(stored.sha256, expected_sha256)
+        self.assertEqual(meta["sha256"], expected_sha256)
         if platform_fs().backend_name == "windows":
             if running_under_wine():
                 self.skipTest("Wine ne persiste pas les ACL NTFS sur ce volume")
@@ -110,17 +115,35 @@ class TestSauvegarde(Base):
         self.assertEqual(len(names), 20)
 
     def test_sidecar_ancien_sans_kind_mime_accepte(self):
-        # Compatibilité : les sidecars v1.0.1/v1.0.2 (6 clés) restent lisibles.
+        # Compatibilité : les anciens sidecars sans kind/mime/hash restent lisibles.
         stored = self.save()[0]
         meta = json.loads((self.dir / (stored.filename + ".json")).read_text())
         del meta["kind"]
         del meta["mime"]
+        del meta["sha256"]
         (self.dir / (stored.filename + ".json")).write_text(json.dumps(meta))
         items = self.dest.list()
         self.assertEqual(len(items), 1)
         self.assertEqual(items[0].kind, "image")
         self.assertEqual(items[0].mime, "image/png")
+        self.assertIsNone(items[0].sha256)
         self.assertEqual(len(self.dest.read(stored.filename)), len(make_png(2, 2)))
+
+    def test_ancien_sidecar_est_compare_par_son_contenu(self):
+        data = make_png(2, 2)
+        stored = self.dest.save(data, INFO(2, 2))
+        sidecar = self.dir / (stored.filename + ".json")
+        meta = json.loads(sidecar.read_text())
+        del meta["sha256"]
+        sidecar.write_text(json.dumps(meta))
+
+        duplicate = self.dest.find_duplicate(
+            hashlib.sha256(data).hexdigest(),
+            len(data),
+        )
+
+        self.assertIsNotNone(duplicate)
+        self.assertEqual(duplicate.filename, stored.filename)
 
     def test_commentaire_unicode_est_persistant_sans_recrire_les_donnees(self):
         data = make_png(3, 2)
@@ -209,7 +232,7 @@ class TestSauvegarde(Base):
             self.dest.save(b"replacement", info, filename=foreign.name)
         self.assertEqual(foreign.read_bytes(), b"foreign")
 
-    def test_adoption_d_un_fichier_existant_cree_seulement_le_sidecar(self):
+    def test_registration_d_un_fichier_existant_cree_seulement_le_sidecar(self):
         data = b"already here"
         target = self.dir / "already.txt"
         target.write_bytes(data)
@@ -227,7 +250,7 @@ class TestSauvegarde(Base):
                 data,
                 info,
                 filename=target.name,
-                adopt_existing=True,
+                register_existing=True,
             )
 
         self.assertEqual(stored.filename, target.name)
@@ -238,7 +261,7 @@ class TestSauvegarde(Base):
         self.assertEqual(metadata["kind"], "text")
         self.assertEqual(metadata["size"], len(data))
 
-    def test_adoption_refuse_un_contenu_deja_modifie(self):
+    def test_registration_refuse_un_contenu_deja_modifie(self):
         target = self.dir / "already.txt"
         target.write_bytes(b"original")
         info = ImageInfo(
@@ -255,11 +278,45 @@ class TestSauvegarde(Base):
                 b"different",
                 info,
                 filename=target.name,
-                adopt_existing=True,
+                register_existing=True,
             )
 
         self.assertEqual(target.read_bytes(), b"original")
         self.assertFalse((self.dir / (target.name + ".json")).exists())
+
+    def test_registration_actualise_un_sidecar_existant_sans_recrire_la_donnee(self):
+        target = self.dir / "refresh.txt"
+        first = b"original"
+        second = b"updated content"
+        target.write_bytes(first)
+        info = ImageInfo(
+            fmt=None,
+            width=None,
+            height=None,
+            kind="text",
+            mime="text/plain",
+            ext=".txt",
+        )
+
+        self.dest.save(first, info, filename=target.name, register_existing=True)
+        self.dest.update_comment(target.name, "keep this comment")
+        inode = target.stat().st_ino
+        target.write_bytes(second)
+
+        stored = self.dest.save(
+            second,
+            info,
+            filename=target.name,
+            register_existing=True,
+        )
+
+        metadata = json.loads((self.dir / (target.name + ".json")).read_text())
+        self.assertEqual(stored.comment, "keep this comment")
+        self.assertEqual(metadata["comment"], "keep this comment")
+        self.assertEqual(metadata["size"], len(second))
+        self.assertEqual(metadata["sha256"], hashlib.sha256(second).hexdigest())
+        self.assertEqual(target.stat().st_ino, inode)
+        self.assertEqual(target.read_bytes(), second)
 
     def test_nom_explicit_abandonne_si_cible_etrangere_apparait(self):
         info = ImageInfo(

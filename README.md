@@ -39,7 +39,7 @@ service between independent servers.
 
 ## Quick Start
 
-The current public release is `2.1.7`. The documented v2.1.7 server runs on
+The current public release is `2.1.8`. The documented v2.1.8 server runs on
 Linux, requires Python 3.11 or newer, and has no third-party
 Python runtime dependency. A native Windows backend is included but has only
 been validated under Wine; macOS and native Windows remain outside the official
@@ -95,13 +95,16 @@ only, without `/paste`.
 ## What It Does
 
 - Paste images, text, or files with `Ctrl+V`/`Command+V` or drag and drop.
+- Avoid duplicate clipboard uploads server-side and record each new content's
+  SHA-256 digest in its JSON sidecar.
 - Keep independent zones per project with configurable retention.
 - Discover repository directories dynamically with repeatable `[[autozone]]`
   rules while keeping the sidecar storage contract.
 - Return exact filesystem references such as
   `@/srv/workspaces/project/captures/example.png`.
-- Preserve valid dropped filenames when requested, while protecting foreign
-  files from accidental replacement or deletion.
+  - Preserve valid dropped filenames when requested, while protecting foreign
+  files from accidental replacement or deletion; explicitly register an existing
+  file by creating or refreshing only its sidecar.
 - Select several items with click, `Shift`-click, or `Ctrl`/`Command`-click.
 - Copy a reference list, download a selection as a streamed ZIP, or delete it
   as a group.
@@ -140,26 +143,39 @@ returns the exact reference needed by the harness and copy actions.
 
 ## Server Handoff
 
-The CLI client uploads through the Pasteberth server. Use `--zone` with a zone
-ID and `--server` when the server is not described by the local configuration:
+Multi-file CLI uploads go through the Pasteberth server. Use a target directory
+to let the daemon resolve a static zone or eligible autozone, or use `--zone`
+with a zone ID. `--server` overrides the configured server URL:
 
 ```sh
-pasteberth drop --config config.toml \
-  --server https://pasteberth.example.internal \
-  --zone project-alpha /tmp/report.pdf /tmp/screenshot.png
+pasteberth drop --server https://pasteberth.example.internal \
+  --insecure /srv/pasteberth/project-alpha /tmp/report.pdf /tmp/screenshot.png
+
+pasteberth register /srv/pasteberth/project-alpha/existing.txt
 ```
 
-The source files remain unchanged. With a loopback server and a writable local
-zone, `drop` stages the data there and asks the daemon to create the managed
-data/sidecar pair; otherwise it uploads through HTTP. Foreign files remain
-protected and are never adopted, renamed, or deleted by `drop`. Remote or
-unwritable HTTP drops use the server session, with `PASTEBERTH_PASSWORD` or
-`--password-stdin` available for non-interactive use. `drop` prints one
-reference for each successful source.
+The source files remain unchanged. With a loopback server and a writable target,
+`drop` stages the data there and asks the daemon to create the managed data/
+sidecar pair; otherwise it uploads through HTTP. The daemon performs the target
+zone resolution, including canonical symlink handling, so a client-side config
+is not required. Without a config or `--server`, the client tries
+`https://127.0.0.1:8765`. A one-file `drop FILE` invocation is invalid; use
+`register FILE` for an existing regular file. `register` creates or refreshes
+only the sidecar, never rewrites, moves, or replaces the data file, and never
+contacts the daemon. The local command prints the absolute data-file path; the
+daemon will discover the sidecar on its next refresh. Remote or unwritable multi-file drops use the
+server session, with `PASTEBERTH_PASSWORD` or `--password-stdin` available for
+non-interactive use.
 
 Direct staging still calls the daemon through the configured server URL. If a
 trusted local HTTPS certificate is self-signed, add `--insecure`; this disables
 certificate verification only.
+
+Clipboard uploads and other uploads without a preserved filename are
+deduplicated per zone by the server. Repeating the same bytes returns the
+existing item with `duplicate: true` instead of creating a new item or
+consuming retention. Named file drops remain independent, so two intentionally
+different filenames may contain the same bytes.
 
 ### MCP stdio adapter
 
@@ -206,7 +222,7 @@ template is [`PasteBerth/support/deploy/pasteberth.service`](PasteBerth/support/
 
 ## Support Status
 
-| Area | v2.1.7 status |
+| Area | v2.1.8 status |
 |---|---|
 | Python | 3.11 or newer |
 | Server | Linux, officially tested |

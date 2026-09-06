@@ -29,6 +29,6 @@ fi
     || die "invalid deployment root (templates are missing): $DEPLOYMENT_ROOT"
 
 export PASTEBERTH_HOME="$DEPLOYMENT_ROOT"
-export PYTHONPATH="$(dirname -- "$DEPLOYMENT_ROOT")"
+export PYTHONPATH="$DEPLOYMENT_ROOT"
 export PYTHONDONTWRITEBYTECODE=1
-exec python3 -P -m PasteBerth.runtime "$@"
+exec python3 -P -m runtime "$@"
