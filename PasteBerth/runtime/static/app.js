@@ -2097,6 +2097,17 @@
 
   // ------------------------------------------------------------- upload
 
+  function filesFromDataTransfer(dataTransfer) {
+    if (!dataTransfer) return [];
+    const files = dataTransfer.files ? [...dataTransfer.files] : [];
+    if (files.length) return files;
+    const items = dataTransfer.items ? [...dataTransfer.items] : [];
+    return items
+      .filter(item => item.kind === "file" && typeof item.getAsFile === "function")
+      .map(item => item.getAsFile())
+      .filter(Boolean);
+  }
+
   function recordUploadedItem(zoneId, item) {
     const zone = state.zones.find(z => z.id === zoneId);
     if (!zone) return;
@@ -2150,6 +2161,7 @@
       autoCopy = true,
       notify = true,
       warnCapacity = true,
+      creationMethod = "web_paste",
     } = {},
   ) {
     if (!file) return;
@@ -2172,6 +2184,7 @@
       fd.append("image", file, file.name || "clipboard");
       if (preserveName) fd.append("preserve_name", "1");
       if (allowReplace) fd.append("replace", "1");
+      fd.append("creation_method", creationMethod);
       const item = await api(`/api/zones/${encodeURIComponent(zoneId)}/images`,
         { method: "POST", body: fd });
       refreshGeneration += 1;
@@ -2230,6 +2243,7 @@
             allowReplace: true,
             autoCopy,
             notify,
+            creationMethod,
           });
         }
       }
@@ -2244,11 +2258,18 @@
     }
   }
 
-  async function uploadBatch(zoneId, files) {
+  async function uploadBatch(
+    zoneId,
+    files,
+    { creationMethod = "web_mouse_drop" } = {},
+  ) {
     const batch = [...files].filter(Boolean);
     if (!batch.length) return;
     if (batch.length === 1) {
-      await upload(zoneId, batch[0], { preserveName: true });
+      await upload(zoneId, batch[0], {
+        preserveName: true,
+        creationMethod,
+      });
       return;
     }
     if (!confirmRetention(zoneId, countNewUploads(zoneId, batch, true))) return;
@@ -2267,6 +2288,7 @@
           autoCopy: false,
           notify: false,
           warnCapacity: false,
+          creationMethod,
         });
         if (item) successful.push(item);
         else failed += 1;
@@ -2484,11 +2506,13 @@
       }
       pasteShortcutHandled = true;
     }
-    const items = event.clipboardData && event.clipboardData.items;
-    if (!items) return;
+    const clipboardData = event.clipboardData;
+    const items = clipboardData && clipboardData.items;
+    const files = filesFromDataTransfer(clipboardData);
+    if (!items && !files.length) return;
     let imageItem = null;
     let hasPlainText = false;
-    for (const item of items) {
+    for (const item of items || []) {
       if (item.kind === "file" && /^image\//.test(item.type)) {
         if (!imageItem) imageItem = item;
       } else if (item.kind === "string" && item.type === "text/plain") {
@@ -2500,6 +2524,20 @@
       const zoneId = requireActiveZone();
       if (!zoneId) return;
       uploadMixedClipboard(zoneId, items);
+      return;
+    }
+    if (files.length === 1 && imageItem) {
+      event.preventDefault();
+      const zoneId = requireActiveZone();
+      if (!zoneId) return;
+      upload(zoneId, files[0], { creationMethod: "web_paste" });
+      return;
+    }
+    if (files.length) {
+      event.preventDefault();
+      const zoneId = requireActiveZone();
+      if (!zoneId) return;
+      uploadBatch(zoneId, files, { creationMethod: "web_paste" });
       return;
     }
     let file = null;
@@ -2637,6 +2675,7 @@
     const zoneTarget = event.target.closest(".zone, .tab-zone-link");
     if (!zoneTarget) return;
     event.preventDefault();
+    if (event.dataTransfer) event.dataTransfer.dropEffect = "copy";
     zoneTarget.classList.add("dragging");
     setActive(zoneTarget.dataset.zone);
   });
@@ -2655,11 +2694,14 @@
       toast("This zone is busy; try again shortly", "error");
       return;
     }
-    const files = event.dataTransfer && event.dataTransfer.files
-      ? [...event.dataTransfer.files]
-      : [];
-    if (!files.length) return;
-    uploadBatch(zoneTarget.dataset.zone, files);
+    const files = filesFromDataTransfer(event.dataTransfer);
+    if (!files.length) {
+      toast("The drop does not contain a file", "error");
+      return;
+    }
+    uploadBatch(zoneTarget.dataset.zone, files, {
+      creationMethod: "web_mouse_drop",
+    });
   });
 
   document.addEventListener("keydown", (event) => {

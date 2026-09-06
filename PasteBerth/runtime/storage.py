@@ -63,21 +63,20 @@ _META_KEYS_WITH_SHA256 = _META_KEYS | {"sha256"}
 _META_KEYS_NEW_WITH_SHA256 = _META_KEYS_NEW | {"sha256"}
 _META_KEYS_WITH_COMMENT_SHA256 = _META_KEYS_WITH_COMMENT | {"sha256"}
 _META_KEYS_NEW_WITH_COMMENT_SHA256 = _META_KEYS_NEW_WITH_COMMENT | {"sha256"}
+_META_OPTIONAL_KEYS = {"kind", "mime", "comment", "sha256", "creation_method", "replaced"}
 _MIME_RE = re.compile(r"^[A-Za-z0-9!#$%&'*+.^_`|~-]+/[A-Za-z0-9!#$%&'*+.^_`|~-]+$")
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 _TEXT_MIMES = {"application/json", "application/xml", "application/x-yaml"}
+CREATION_METHODS = frozenset(
+    {"web_mouse_drop", "web_paste", "filesystem_drop", "filesystem_register"}
+)
 
 
 def _meta_keys_ok(raw: dict) -> bool:
-    return set(raw) in (
-        _META_KEYS,
-        _META_KEYS_NEW,
-        _META_KEYS_WITH_COMMENT,
-        _META_KEYS_NEW_WITH_COMMENT,
-        _META_KEYS_WITH_SHA256,
-        _META_KEYS_NEW_WITH_SHA256,
-        _META_KEYS_WITH_COMMENT_SHA256,
-        _META_KEYS_NEW_WITH_COMMENT_SHA256,
+    keys = set(raw)
+    return (
+        _META_KEYS <= keys <= _META_KEYS | _META_OPTIONAL_KEYS
+        and ("kind" in keys) == ("mime" in keys)
     )
 
 
@@ -325,6 +324,8 @@ class StoredImage:
     comment: str = ""
     changed_at: datetime | None = None  # filesystem modification time when known
     sha256: str | None = None
+    creation_method: str | None = None
+    replaced: bool = False
 
 
 @dataclass(frozen=True)
@@ -392,6 +393,7 @@ class Destination(ABC):
         allow_replace: bool = False,
         register_existing: bool = False,
         sha256: str | None = None,
+        creation_method: str | None = None,
     ) -> StoredImage: ...
 
     @abstractmethod
@@ -2829,6 +2831,15 @@ class LocalDestination(Destination):
             not isinstance(sha256, str) or not _SHA256_RE.fullmatch(sha256)
         ):
             raise ValueError("invalid content SHA-256")
+        creation_method = raw.get("creation_method")
+        if creation_method is not None and (
+            not isinstance(creation_method, str)
+            or creation_method not in CREATION_METHODS
+        ):
+            raise ValueError("invalid creation method")
+        replaced = raw.get("replaced", False)
+        if not isinstance(replaced, bool):
+            raise ValueError("invalid replacement flag")
         return StoredImage(
             filename,
             created_at,
@@ -2840,6 +2851,8 @@ class LocalDestination(Destination):
             mime,
             comment,
             sha256=sha256,
+            creation_method=creation_method,
+            replaced=replaced,
         )
 
     def _require_owned(
@@ -3157,10 +3170,16 @@ class LocalDestination(Destination):
         filename: str,
         sha256: str | None = None,
         comment: str = "",
+        creation_method: str | None = None,
+        replaced: bool = False,
     ) -> tuple[StoredImage, dict]:
         created_at = datetime.now(timezone.utc)
         if sha256 is None:
             sha256 = hashlib.sha256(data).hexdigest()
+        if creation_method is not None and creation_method not in CREATION_METHODS:
+            raise ValueError("invalid creation method")
+        if creation_method is None:
+            replaced = False
         stored = StoredImage(
             filename=filename,
             created_at=created_at,
@@ -3172,8 +3191,10 @@ class LocalDestination(Destination):
             mime=info.mime,
             comment=comment,
             sha256=sha256,
+            creation_method=creation_method,
+            replaced=replaced,
         )
-        return stored, {
+        meta = {
             "filename": filename,
             "created_at": created_at.isoformat(timespec="microseconds"),
             "width": stored.width,
@@ -3185,6 +3206,10 @@ class LocalDestination(Destination):
             "comment": stored.comment,
             "sha256": stored.sha256,
         }
+        if creation_method is not None:
+            meta["creation_method"] = creation_method
+            meta["replaced"] = replaced
+        return stored, meta
 
     def _register_named(
         self,
@@ -3193,6 +3218,7 @@ class LocalDestination(Destination):
         info: ContentInfo,
         filename: str,
         sha256: str | None = None,
+        creation_method: str | None = None,
     ) -> StoredImage:
         """Create or refresh a sidecar without rewriting its data."""
         meta_name = self._meta_name(filename)
@@ -3248,6 +3274,7 @@ class LocalDestination(Destination):
                 filename,
                 sha256,
                 comment=comment,
+                creation_method=creation_method,
             )
             if meta_identity is None:
                 self._write_meta_atomic(directory_fd, meta)
@@ -3293,6 +3320,7 @@ class LocalDestination(Destination):
         allow_replace: bool = False,
         register_existing: bool = False,
         sha256: str | None = None,
+        creation_method: str | None = None,
     ) -> StoredImage:
         meta_name = self._meta_name(filename)
         if filename in self._active_transaction_names(directory_fd):
@@ -3304,7 +3332,14 @@ class LocalDestination(Destination):
         target_identity: tuple[int, int] | None = None
         meta_identity: tuple[int, int] | None = None
         if register_existing:
-            return self._register_named(directory_fd, data, info, filename, sha256)
+            return self._register_named(
+                directory_fd,
+                data,
+                info,
+                filename,
+                sha256,
+                creation_method=creation_method,
+            )
         if target_exists and not meta_exists:
             # Foreign file: never overwrite it; expose a client conflict (409).
             raise StorageConflictError(
@@ -3331,7 +3366,14 @@ class LocalDestination(Destination):
                     f"explicit replacement required for {filename!r}"
                 )
 
-        stored, meta = self._stored_item_and_meta(data, info, filename, sha256)
+        stored, meta = self._stored_item_and_meta(
+            data,
+            info,
+            filename,
+            sha256,
+            creation_method=creation_method,
+            replaced=target_exists,
+        )
         data_temp = self._write_data_temp(directory_fd, data)
         data_temp_identity = self._entry_identity(directory_fd, data_temp)
         try:
@@ -3635,6 +3677,7 @@ class LocalDestination(Destination):
         allow_replace: bool = False,
         register_existing: bool = False,
         sha256: str | None = None,
+        creation_method: str | None = None,
     ) -> StoredImage:
         self._ensure_dir()
         if filename is not None:
@@ -3649,6 +3692,7 @@ class LocalDestination(Destination):
                     allow_replace=allow_replace,
                     register_existing=register_existing,
                     sha256=sha256,
+                    creation_method=creation_method,
                 )
         ext = info.ext
         last_exc: Exception | None = None
@@ -3663,6 +3707,7 @@ class LocalDestination(Destination):
                         filename,
                         allow_replace=False,
                         sha256=sha256,
+                        creation_method=creation_method,
                     )
                 except (StorageConflictError, ReplacementRequiredError) as exc:
                     # Generated names are retried on any occupied entry, just
@@ -3935,6 +3980,8 @@ class LocalDestination(Destination):
                     item.mime,
                     item.comment,
                     sha256=item.sha256,
+                    creation_method=item.creation_method,
+                    replaced=item.replaced,
                 )
             except BaseException:
                 if not commit_published:
@@ -4021,6 +4068,8 @@ class LocalDestination(Destination):
                 item.mime,
                 comment,
                 sha256=item.sha256,
+                creation_method=item.creation_method,
+                replaced=item.replaced,
             )
 
     def delete(self, filename: str, *, allow_stale_sidecar: bool = False) -> None:

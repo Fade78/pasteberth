@@ -1104,6 +1104,7 @@ def make_handler(cfg: Config, service: PasteService, sessions: SessionStore,
                 return
             ctype_raw = self.headers.get("Content-Type") or ""
             ctype = ctype_raw.split(";")[0].strip().lower()
+            creation_method = "web_paste"
             body_limit = (
                 cfg.limits.max_multipart_body_bytes
                 if ctype == "multipart/form-data"
@@ -1152,6 +1153,13 @@ def make_handler(cfg: Config, service: PasteService, sessions: SessionStore,
                     allow_replace = (
                         fields.get("replace", (None, None, b""))[2].strip() == b"1"
                     )
+                    raw_creation_method = fields.get("creation_method")
+                    if raw_creation_method is not None:
+                        try:
+                            creation_method = raw_creation_method[2].decode("ascii")
+                        except UnicodeDecodeError:
+                            self._error(400, "invalid_request", "invalid creation method")
+                            return
                 elif ctype.startswith("image/") or ctype.startswith("text/") or ctype in (
                     "application/octet-stream",
                     "application/json",
@@ -1175,6 +1183,7 @@ def make_handler(cfg: Config, service: PasteService, sessions: SessionStore,
                     filename_client,
                     preserve_filename=preserve_name,
                     allow_replace=allow_replace and preserve_name,
+                    creation_method=creation_method,
                 )
             except ServiceError as exc:
                 self._service_error(exc)

@@ -478,6 +478,7 @@ def _cmd_register_path(args: argparse.Namespace, raw_path: str) -> int:
                 filename=path.name,
                 register_existing=True,
                 sha256=hashlib.sha256(data).hexdigest(),
+                creation_method="filesystem_register",
             )
     except (DestinationError, OSError, UnsupportedFilesystemError, ValueError) as exc:
         print(f"pasteberth: {raw_path}: {exc}", file=sys.stderr)

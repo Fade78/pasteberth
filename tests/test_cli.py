@@ -983,6 +983,9 @@ class TestFilesystemDrop(unittest.TestCase):
         target = self.zone / source.name
         self.assertEqual(target.read_text(encoding="utf-8"), "version 1\n")
         self.assertTrue((self.zone / (source.name + ".json")).is_file())
+        metadata = json.loads((self.zone / (source.name + ".json")).read_text())
+        self.assertEqual(metadata["creation_method"], "filesystem_drop")
+        self.assertFalse(metadata["replaced"])
         self.assertEqual(source.read_text(encoding="utf-8"), "version 1\n")
 
     def test_drop_refuse_le_namespace_pbdel(self):
@@ -1010,6 +1013,8 @@ class TestFilesystemDrop(unittest.TestCase):
         replaced = self._run_drop(source, replace=True)
         self.assertEqual(replaced.returncode, 0, replaced.stderr)
         self.assertEqual((self.zone / source.name).read_text(encoding="utf-8"), "version 2\n")
+        metadata = json.loads((self.zone / (source.name + ".json")).read_text())
+        self.assertTrue(metadata["replaced"])
 
     def test_fichier_etranger_jamais_ecrase_meme_avec_replace(self):
         foreign = self.zone / "foreign.txt"
@@ -1069,6 +1074,9 @@ class TestFilesystemDrop(unittest.TestCase):
         self.assertEqual(target.read_text(encoding="utf-8"), "explicit registration\n")
         sidecar = self.zone / (target.name + ".json")
         self.assertTrue(sidecar.exists())
+        metadata = json.loads(sidecar.read_text())
+        self.assertEqual(metadata["creation_method"], "filesystem_register")
+        self.assertFalse(metadata["replaced"])
         if platform_fs().backend_name != "windows":
             self.assertEqual(sidecar.stat().st_mode & 0o777, 0o660)
 

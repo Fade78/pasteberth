@@ -28,6 +28,7 @@ from .images import (
 )
 from .platformfs import platform_fs
 from .storage import (
+    CREATION_METHODS,
     DestinationError,
     DestinationBusyError,
     LocalDestination,
@@ -400,6 +401,7 @@ class PasteService:
         info,
         target_filename: str | None,
         allow_replace: bool,
+        creation_method: str,
     ) -> tuple[StoredImage, list[str], bool]:
         content_sha256 = hashlib.sha256(data).hexdigest()
         try:
@@ -419,6 +421,7 @@ class PasteService:
                     filename=target_filename,
                     allow_replace=allow_replace,
                     sha256=content_sha256,
+                    creation_method=creation_method,
                 )
                 retention_deleted = destination.apply_retention(zone.retain, stored.filename)
         except StorageLowError as exc:
@@ -576,10 +579,13 @@ class PasteService:
         preserve_filename: bool = False,
         *,
         allow_replace: bool = False,
+        creation_method: str = "filesystem_drop",
         blocking: bool = True,
     ) -> dict:
         if not self.has_zone(zid):
             raise ServiceError("unknown_zone", f"unknown zone: {zid}")
+        if not isinstance(creation_method, str) or creation_method not in CREATION_METHODS:
+            raise ServiceError("invalid_request", "invalid creation method")
         info, target_filename = self._prepare_upload(
             data, declared_mime, filename_hint, preserve_filename
         )
@@ -594,6 +600,7 @@ class PasteService:
                 info,
                 target_filename,
                 allow_replace,
+                creation_method,
             )
         payload = self.item_payload(zid, stored, zone=zone, destination=destination)
         if retention_deleted:
@@ -637,6 +644,7 @@ class PasteService:
                     info,
                     target_filename,
                     allow_replace,
+                    "filesystem_drop",
                 )
                 destination.discard_direct_drop(stage_name, stage_identity)
             except StorageLowError as exc:
@@ -949,6 +957,8 @@ class PasteService:
             "format": item.fmt,
             "kind": item.kind,
             "mime": item.mime,
+            "creation_method": item.creation_method,
+            "replaced": item.replaced,
             "comment": item.comment,
             "preview_url": public_path(
                 self.cfg.url_prefix,

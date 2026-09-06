@@ -485,6 +485,8 @@ class TestModeAnonymeLoopback(Base):
         self.assertEqual(status, 201)
         item = json_of(resp)
         ref = item["reference"]
+        self.assertEqual(item["creation_method"], "web_paste")
+        self.assertFalse(item["replaced"])
         self.assertTrue(ref.startswith("@"))
         self.assertEqual(ref[1:], str(self.zones_dirs["default"] / item["filename"]))
         # preview
@@ -976,7 +978,10 @@ class TestUploadsFormats(Base):
 
     def test_nom_du_fichier_glisse_et_ecrasement(self):
         def upload(data, replace=False):
-            fields = {"preserve_name": "1"}
+            fields = {
+                "preserve_name": "1",
+                "creation_method": "web_mouse_drop",
+            }
             if replace:
                 fields["replace"] = "1"
             body, ctype = build_multipart(
@@ -997,6 +1002,8 @@ class TestUploadsFormats(Base):
         item = json_of(first)
         self.assertEqual(item["filename"], "rapport final.txt")
         self.assertEqual(item["kind"], "text")
+        self.assertEqual(item["creation_method"], "web_mouse_drop")
+        self.assertFalse(item["replaced"])
 
         status, _, second = upload(b"version 2")
         self.assertEqual(status, 428)
@@ -1007,10 +1014,16 @@ class TestUploadsFormats(Base):
         replacement = json_of(second)
         self.assertEqual(replacement["filename"], item["filename"])
         self.assertEqual(replacement["size"], len(b"version 2"))
+        self.assertTrue(replacement["replaced"])
         self.assertEqual(
             replacement["preview_url"],
             "/previews/default/rapport%20final.txt",
         )
+        metadata = json.loads(
+            (self.zones_dirs["default"] / (item["filename"] + ".json")).read_text()
+        )
+        self.assertEqual(metadata["creation_method"], "web_mouse_drop")
+        self.assertTrue(metadata["replaced"])
 
         status, _, listed = self.req("GET", "/api/zones/default/images")
         self.assertEqual(status, 200)

@@ -121,6 +121,8 @@ class TestSauvegarde(Base):
         del meta["kind"]
         del meta["mime"]
         del meta["sha256"]
+        meta.pop("creation_method", None)
+        meta.pop("replaced", None)
         (self.dir / (stored.filename + ".json")).write_text(json.dumps(meta))
         items = self.dest.list()
         self.assertEqual(len(items), 1)
@@ -208,12 +210,17 @@ class TestSauvegarde(Base):
             info,
             filename="archive final.zip",
             allow_replace=True,
+            creation_method="web_mouse_drop",
         )
 
         self.assertEqual(first.filename, "archive final.zip")
         self.assertEqual(second.filename, first.filename)
         self.assertEqual(self.dest.read(first.filename), b"new")
         self.assertEqual([item.filename for item in self.dest.list()], [first.filename])
+        metadata = json.loads((self.dir / (first.filename + ".json")).read_text())
+        self.assertEqual(metadata["creation_method"], "web_mouse_drop")
+        self.assertTrue(metadata["replaced"])
+        self.assertTrue(second.replaced)
         self.assertEqual(list(self.dir.glob(".pb*")), [])
 
     def test_nom_explicit_necrase_pas_un_fichier_etranger(self):
@@ -251,6 +258,7 @@ class TestSauvegarde(Base):
                 info,
                 filename=target.name,
                 register_existing=True,
+                creation_method="filesystem_register",
             )
 
         self.assertEqual(stored.filename, target.name)
@@ -260,6 +268,8 @@ class TestSauvegarde(Base):
         metadata = json.loads((self.dir / (target.name + ".json")).read_text())
         self.assertEqual(metadata["kind"], "text")
         self.assertEqual(metadata["size"], len(data))
+        self.assertEqual(metadata["creation_method"], "filesystem_register")
+        self.assertFalse(metadata["replaced"])
 
     def test_registration_refuse_un_contenu_deja_modifie(self):
         target = self.dir / "already.txt"

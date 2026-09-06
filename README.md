@@ -70,7 +70,7 @@ data file untouched. The daemon discovers the pair on its next refresh.
 
 ## Quick Start
 
-The current public release is `2.1.11`. The documented v2.1.11 server runs on
+The current public release is `2.1.12`. The documented v2.1.12 server runs on
 Linux, requires Python 3.11 or newer, and has no third-party
 Python runtime dependency. A native Windows backend is included but has only
 been validated under Wine; macOS and native Windows remain outside the official
@@ -128,6 +128,8 @@ only, without `/paste`.
 - Paste images, text, or files with `Ctrl+V`/`Command+V` or drag and drop.
 - Avoid duplicate clipboard uploads server-side and record each new content's
   SHA-256 digest in its JSON sidecar.
+- Record whether an item came from a web paste, web file drop, filesystem drop,
+  or filesystem registration, and whether a named item replaced an existing one.
 - Keep independent zones per project with configurable retention.
 - Discover repository directories dynamically with repeatable `[[autozone]]`
   rules while keeping the sidecar storage contract; matching projects appear on
@@ -256,7 +258,7 @@ template is [`PasteBerth/support/deploy/pasteberth.service`](PasteBerth/support/
 
 ## Support Status
 
-| Area | v2.1.11 status |
+| Area | v2.1.12 status |
 |---|---|
 | Python | 3.11 or newer |
 | Server | Linux, officially tested |

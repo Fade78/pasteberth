@@ -4,6 +4,22 @@ This file records user-visible changes to Pasteberth.
 
 ## [Unreleased]
 
+## [2.1.12] - 2026-09-07
+
+### Clipboard and Drop
+
+- accept arbitrary clipboard files, including ZIP archives and checksum files;
+- accept filesystem drops exposed through `DataTransfer.items` when the browser
+  does not populate `DataTransfer.files`;
+- report an explicit error when a drop contains no file.
+
+### Sidecar Provenance
+
+- record the creation method as `web_mouse_drop`, `web_paste`,
+  `filesystem_drop`, or `filesystem_register`;
+- record whether a named managed file was replaced with the boolean `replaced`;
+- keep `duplicate` separate from `replaced` for anonymous content deduplication.
+
 ## [2.1.11] - 2026-09-06
 
 ### Clipboard Feedback

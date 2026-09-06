@@ -1,7 +1,7 @@
 # Pasteberth Operator Guide
 
 This guide is the detailed reference for installing, configuring, operating,
-and integrating Pasteberth 2.1.11. The short project overview is in
+and integrating Pasteberth 2.1.12. The short project overview is in
 [`README.md`](README.md); user-visible release history is in
 [`CHANGELOG.md`](CHANGELOG.md).
 
@@ -82,14 +82,14 @@ contexts:
 
 ## 2. Requirements and Support
 
-The 2.1.11 implementation requires:
+The 2.1.12 implementation requires:
 
 - Python 3.11 or newer;
 - a local filesystem supported by the active platform backend;
 - a modern browser for the Web UI;
 - no third-party Python runtime dependency.
 
-Linux is the current official and tested server platform for v2.1.11. The
+Linux is the current official and tested server platform for v2.1.12. The
 Windows backend has broad Wine coverage, but native Windows/NTFS validation is
 still outstanding and macOS support is not implemented. Do not infer support
 for every network or exotic filesystem from the operating system name.
@@ -101,7 +101,7 @@ Firefox when the corresponding Playwright browser is installed.
 
 ### 3.1 Deployable copy
 
-The supported v2.1.11 installation is the tracked `PasteBerth/` directory. It is
+The supported v2.1.12 installation is the tracked `PasteBerth/` directory. It is
 the complete code-only deployment unit: it needs no root access, installation
 script, Python package installation, or build step.
 
@@ -286,7 +286,7 @@ Each `[[zones]]` table defines one independent project area:
 |---|---:|---|
 | `id` | required | Lowercase API/UI identifier, up to 64 characters. |
 | `label` | `id` | Human-readable UI label. |
-| `type` | `local` | Only `local` is implemented in v2.1.11. |
+| `type` | `local` | Only `local` is implemented in v2.1.12. |
 | `directory` | required | Absolute path as seen by the server and the harness. |
 | `retain` | `10` | Number of managed items retained in the zone. |
 | `reference_prefix` | `@` | Text prepended to one returned reference. |
@@ -406,6 +406,11 @@ Click a zone or its selection button to make it the active paste target. Then:
 - paste with `Ctrl+V` or `Command+V`;
 - drop one or more files directly on a zone;
 - use the file picker for one or more files.
+
+Clipboard pastes accept images, text, and arbitrary files such as ZIP archives
+or checksum files. Browser file drops use the original filename when it is
+valid; a browser that exposes dropped files through `DataTransfer.items` is
+supported as well as one that populates `DataTransfer.files`.
 
 Focusing an action button or history item does not change the active paste
 target. A direct drop always targets the zone under the pointer. Several files
@@ -717,7 +722,12 @@ zone/
 ```
 
 The sidecar records metadata such as `filename`, `created_at`, `size`,
-`width`, `height`, `format`, `kind`, `mime`, and the content `sha256`. Older
+`width`, `height`, `format`, `kind`, `mime`, and the content `sha256`. New
+sidecars also record `creation_method` (`web_mouse_drop`, `web_paste`,
+`filesystem_drop`, or `filesystem_register`) and the boolean `replaced`, which
+is true only when a named managed file was replaced. `duplicate` remains a
+response flag for anonymous content deduplication and does not rewrite the
+existing sidecar. Older
 valid sidecar schemas without the digest remain readable; when needed, legacy
 content is hashed on demand for duplicate detection. Pasteberth recognizes an
 item only when the data file and sidecar are coherent. For a direct local
@@ -984,7 +994,10 @@ loopback peer, while an authenticated session may use the route remotely.
 
 The multipart field is `image`. `preserve_name=1` retains a valid dropped
 filename; `replace=1` together with `preserve_name=1` explicitly authorizes
-replacing a coherent managed pair.
+replacing a coherent managed pair. Clients may send `creation_method` with one
+of `web_mouse_drop`, `web_paste`, `filesystem_drop`, or
+`filesystem_register`; browser requests default to `web_paste`, and filesystem
+clients should send `filesystem_drop`.
 
 ```sh
 curl -b cookies.txt \
@@ -1040,6 +1053,8 @@ The response includes fields such as:
   "format": "png",
   "kind": "image",
   "mime": "image/png",
+  "creation_method": "web_paste",
+  "replaced": false,
   "comment": "Reference capture",
   "changed_at": "2026-08-25T01:22:31.412000+00:00",
   "preview_url": "/previews/default/2026-08-25_01-22-31_a81c42.png",
@@ -1245,7 +1260,7 @@ restart the service.
 
 The next major platform goal is native Windows and macOS support with the same
 transaction and security guarantees. That work is intentionally separate from
-the v2.1.11 support matrix and must not be represented as already supported.
+the v2.1.12 support matrix and must not be represented as already supported.
 The repository contains opt-in `platform_windows` and `platform_macos` CI jobs;
 enable them only after registering native runners with
 `PASTEBERTH_NATIVE_WINDOWS_CI=1` or `PASTEBERTH_NATIVE_MACOS_CI=1`.

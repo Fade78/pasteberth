@@ -59,6 +59,17 @@ async function dispatchPaste(page) {
   }, ONE_PIXEL_PNG);
 }
 
+async function dispatchClipboardFile(page, name, bytes, type) {
+  await page.evaluate(({ name, bytes, type }) => {
+    const file = new File([Uint8Array.from(bytes)], name, { type });
+    const dataTransfer = new DataTransfer();
+    dataTransfer.items.add(file);
+    const event = new Event("paste", { bubbles: true, cancelable: true });
+    Object.defineProperty(event, "clipboardData", { value: dataTransfer });
+    window.dispatchEvent(event);
+  }, { name, bytes, type });
+}
+
 async function dispatchDistinctPaste(page, variant) {
   await page.evaluate((variant) => {
     const canvas = document.createElement("canvas");
@@ -175,6 +186,22 @@ async function dispatchDrop(page, selector) {
     });
     element.dispatchEvent(event);
   }, ONE_PIXEL_PNG);
+}
+
+async function dispatchItemsOnlyDrop(page, selector) {
+  await page.locator(selector).evaluate((element) => {
+    const file = new File([new Uint8Array([0, 1, 2, 3])], "items-only.zip", {
+      type: "application/zip",
+    });
+    const event = new Event("drop", { bubbles: true, cancelable: true });
+    Object.defineProperty(event, "dataTransfer", {
+      value: {
+        files: [],
+        items: [{ kind: "file", getAsFile: () => file }],
+      },
+    });
+    element.dispatchEvent(event);
+  });
 }
 
 async function dispatchMultiDrop(page, selector) {
@@ -702,6 +729,19 @@ test("colle une image et ouvre son aperçu au clavier", async ({ page }) => {
   await page.getByRole("button", { name: "Close" }).click();
 });
 
+test("colle des fichiers binaires et texte depuis le presse-papiers", async ({ page }) => {
+  await openApp(page);
+  await page.getByRole("button", { name: "Select zone Default" }).click();
+  const defaultZone = page.locator('[data-zone="default"]');
+
+  await dispatchClipboardFile(page, "archive.zip", [0, 1, 2, 3], "application/zip");
+  await expect(defaultZone.locator(".fname")).toHaveText("archive.zip");
+
+  const checksum = Array.from(Buffer.from("0123456789abcdef\n"));
+  await dispatchClipboardFile(page, "archive.sha256", checksum, "text/plain");
+  await expect(defaultZone.locator(".fname")).toHaveText("archive.sha256");
+});
+
 test("dépose plusieurs fichiers séquentiellement et permet la sélection groupée", async ({ page }) => {
   await openApp(page);
   const defaultZone = page.locator('[data-zone="default"]');
@@ -941,6 +981,18 @@ test("accepte le glisser-déposer sur une zone", async ({ page }) => {
   await expect(secondary.locator(".fname")).toHaveText("dropped.png");
   await expect(secondary.locator(".zone-select")).toHaveAttribute("aria-current", "true");
   await expect(secondary.locator(".new-badge")).toHaveCount(0);
+});
+
+test("accepte un glisser-déposer exposé uniquement par les items", async ({ page }) => {
+  await openApp(page);
+  const defaultZone = page.locator('[data-zone="default"]');
+  const uploadRequest = page.waitForRequest(request => (
+    request.method() === "POST" && request.url().includes("/api/zones/default/images")
+  ));
+
+  await dispatchItemsOnlyDrop(page, '[data-zone="default"]');
+  await uploadRequest;
+  await expect(defaultZone.locator(".fname")).toHaveText("items-only.zip");
 });
 
 test("ne confirme pas la copie automatique si le geste de drop a expire", async ({ page }) => {

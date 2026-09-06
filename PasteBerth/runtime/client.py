@@ -138,6 +138,7 @@ class PasteberthClient:
         declared_mime: str,
         *,
         replace: bool = False,
+        creation_method: str = "filesystem_drop",
         cookie: str | None = None,
     ) -> ClientResponse:
         boundary = "pasteberth" + secrets.token_hex(12)
@@ -159,6 +160,10 @@ class PasteberthClient:
             chunks.append(
                 f'\r\n--{boundary}\r\nContent-Disposition: form-data; name="replace"\r\n\r\n1'.encode()
             )
+        chunks.append(
+            f'\r\n--{boundary}\r\nContent-Disposition: form-data; '
+            f'name="creation_method"\r\n\r\n{creation_method}'.encode()
+        )
         chunks.append(f"\r\n--{boundary}--\r\n".encode())
         body = b"".join(chunks)
         path = "/api/zones/" + urllib.parse.quote(zone_id, safe="") + "/images"
