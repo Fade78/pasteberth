@@ -1,7 +1,7 @@
 # Pasteberth Operator Guide
 
 This guide is the detailed reference for installing, configuring, operating,
-and integrating Pasteberth 2.1.9. The short project overview is in
+and integrating Pasteberth 2.1.10. The short project overview is in
 [`README.md`](README.md); user-visible release history is in
 [`CHANGELOG.md`](CHANGELOG.md).
 
@@ -47,6 +47,12 @@ The reverse flow is also supported:
 2. Pasteberth publishes it into a configured zone and creates its sidecar.
 3. A browser user sees the new item and can download it.
 
+For a tree of projects, configure one `[[autozone]]` rule instead of adding one
+static zone per project. When a new project creates a matching exchange
+directory, the service discovers it during its next zone read. A visible Web UI
+polls that read every 10 seconds, so the new project normally appears without a
+service restart or configuration edit.
+
 The browser never needs to access the returned filesystem path. The path is
 intended for the harness on the machine where Pasteberth runs.
 
@@ -69,19 +75,21 @@ contexts:
 - It is not a public file host, CDN, or object store.
 - It is not a synchronization service between server instances.
 - It does not provide individual Web accounts in v1.
-- It does not watch arbitrary directories for changes.
+- It does not run a filesystem watcher for arbitrary directories. Configured
+  `[[autozone]]` rules are rescanned during service reads, including the Web UI's
+  periodic refresh.
 - It does not make the browser able to read a server filesystem path.
 
 ## 2. Requirements and Support
 
-The 2.1.9 implementation requires:
+The 2.1.10 implementation requires:
 
 - Python 3.11 or newer;
 - a local filesystem supported by the active platform backend;
 - a modern browser for the Web UI;
 - no third-party Python runtime dependency.
 
-Linux is the current official and tested server platform for v2.1.9. The
+Linux is the current official and tested server platform for v2.1.10. The
 Windows backend has broad Wine coverage, but native Windows/NTFS validation is
 still outstanding and macOS support is not implemented. Do not infer support
 for every network or exotic filesystem from the operating system name.
@@ -93,7 +101,7 @@ Firefox when the corresponding Playwright browser is installed.
 
 ### 3.1 Deployable copy
 
-The supported v2.1.9 installation is the tracked `PasteBerth/` directory. It is
+The supported v2.1.10 installation is the tracked `PasteBerth/` directory. It is
 the complete code-only deployment unit: it needs no root access, installation
 script, Python package installation, or build step.
 
@@ -278,7 +286,7 @@ Each `[[zones]]` table defines one independent project area:
 |---|---:|---|
 | `id` | required | Lowercase API/UI identifier, up to 64 characters. |
 | `label` | `id` | Human-readable UI label. |
-| `type` | `local` | Only `local` is implemented in v2.1.9. |
+| `type` | `local` | Only `local` is implemented in v2.1.10. |
 | `directory` | required | Absolute path as seen by the server and the harness. |
 | `retain` | `10` | Number of managed items retained in the zone. |
 | `reference_prefix` | `@` | Text prepended to one returned reference. |
@@ -292,13 +300,26 @@ Each `[[zones]]` table defines one independent project area:
 | `min_free_percent` | `2.0` | Required free-space reserve on the zone filesystem. |
 | `storage_mode` | `sidecar` | The managed-pair contract. Legacy `directory` values are normalized to `sidecar` with a warning. |
 | `max_items` | none | Legacy setting; ignored after normalization unless used to populate `retain`. |
-| `file_group` | none | Optional POSIX group name or numeric GID for files created by Pasteberth. The server account must be allowed to use the group. |
+| `file_group` | none | Optional POSIX group name or numeric GID for files created by Pasteberth. The daemon account and any other process that must read or modify those files must be allowed to use the group. |
 
 The directory is not a browser path. It is the exact server-side directory
 where the harness reads the stored content and where `drop` writes.
 Zone directories must be distinct. A private `0700` directory is recommended;
 deliberately shared directories are allowed but produce an audit warning when
 their permissions are broad.
+
+For a shared POSIX zone, use one common group, a `setgid` directory, and group
+membership for every writer and for the daemon process. A `file_group` setting
+does not grant access to the directory or add a group to a running process. The
+group must be present in the credentials of the actual daemon process, not only
+in the shell that ran `register`. Prefer ordinary group membership and
+filesystem `setgid` permissions over filesystem-specific ACLs when the zone must
+work across several filesystems.
+
+If a user is added to the shared group after a `systemd --user` manager has
+started, log out and in again (or reboot) before restarting Pasteberth. A
+`systemctl --user daemon-reload` only rereads the unit; it does not refresh the
+manager's supplementary groups.
 
 Example:
 
@@ -358,14 +379,18 @@ does not create directories or edit configuration, and a configuration may use
 autozones without any static `[[zones]]` entries. Each rule supplies a generated
 group and creates a sidecar-backed zone. If `color` is omitted, the zone color
 is assigned deterministically from the resolved access path and generated group
-name; an explicit `color` remains authoritative. The discovered directory must
+name, and generated colors are kept distinct within the group; an explicit
+`color` remains authoritative for the rule. The discovered directory must
 already be readable and traversable by the server account; discovery never
 changes its ownership or permissions.
 
 Regular files copied or moved directly into an autozone have no coherent
 sidecar, so they remain foreign and are ignored. Uploads through the browser,
-API, or CLI create the data/sidecar pair. The complete discovery contract,
-including aliases, diagnostics, permissions, and lifecycle, is in
+API, or CLI create the data/sidecar pair. A visible browser polls `/api/zones`
+every 10 seconds; that request rescans autozone rules, so a new matching
+project directory appears without a daemon restart. A hidden tab refreshes when
+it becomes visible. The complete discovery contract, including aliases,
+diagnostics, permissions, and lifecycle, is in
 [`docs/autozone-contract.md`](docs/autozone-contract.md).
 
 ## 5. Web UI
@@ -560,7 +585,8 @@ regular file. The parent directory must be readable, traversable, and writable
 by the current account. `register` is filesystem-only and does not contact the
 daemon. On POSIX, the sidecar uses the existing file's group when the current
 account belongs to that group, so a setgid shared zone can remain readable by
-the daemon. An existing sidecar is refreshed from the current file.
+the daemon. The daemon must also belong to that group and have directory
+traversal permission. An existing sidecar is refreshed from the current file.
 
 For the target-directory form, `drop` first stages each source in a private
 `.pbdrop-*.tmp` file when it is using a loopback daemon and the target is
@@ -1114,6 +1140,23 @@ that the file is regular, its sidecar is valid and readable, and no transaction
 marker is active. Foreign files and malformed sidecars are deliberately left
 alone.
 
+For a file created by `register` in a shared POSIX zone, check both the writer
+and the daemon process. A successful `register` only proves that the registering
+account could write the data and sidecar; it does not prove that the daemon can
+read them. Check the daemon's group list and its log:
+
+```sh
+systemctl --user show pasteberth --property=MainPID --value
+grep '^Groups:' /proc/$(systemctl --user show pasteberth --property=MainPID --value)/status
+journalctl --user -u pasteberth -n 50 --no-pager
+```
+
+The daemon must have the group that owns the shared files. After changing group
+membership, restart the user session or user manager before restarting
+Pasteberth. `sidecar unreadable` indicates an open or permission failure; a
+valid `sha256` field is accepted, and older sidecars without that field remain
+valid.
+
 ### A request returns `423 zone_busy`
 
 Another process is holding the zone's exclusive operation lock. Wait for the
@@ -1202,7 +1245,7 @@ restart the service.
 
 The next major platform goal is native Windows and macOS support with the same
 transaction and security guarantees. That work is intentionally separate from
-the v2.1.9 support matrix and must not be represented as already supported.
+the v2.1.10 support matrix and must not be represented as already supported.
 The repository contains opt-in `platform_windows` and `platform_macos` CI jobs;
 enable them only after registering native runners with
 `PASTEBERTH_NATIVE_WINDOWS_CI=1` or `PASTEBERTH_NATIVE_MACOS_CI=1`.

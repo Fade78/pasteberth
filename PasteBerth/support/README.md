@@ -36,3 +36,17 @@ resulting sidecar must be readable by the daemon.
 `config.example.toml`, `deploy/pasteberth.service`, and
 `completions/pasteberth.bash` are reference files. `pasteberth completion`
 prints the completion script directly for shell evaluation.
+
+For a shared POSIX zone, put the daemon account and every `register` writer in
+the directory's group and use a `setgid` directory. The group must be present
+in the running daemon process. After changing group membership, log out and in
+again (or reboot) before restarting a `systemd --user` service; reloading the
+unit alone does not refresh its supplementary groups. A successful `register`
+can otherwise create a sidecar that the daemon cannot read.
+
+An autozone rule can cover a whole project tree, for example
+`/home/me/Depots/*/work/exchange`. When a new matching project directory is
+created, the daemon discovers it during the next zone read and a visible browser
+normally shows it within the next 10-second poll. No configuration edit or
+service restart is needed; the directory must still be readable and satisfy the
+rule's depth and subtree constraints.

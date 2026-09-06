@@ -6,7 +6,7 @@ import logging
 import os
 import re
 from collections.abc import Hashable, Iterable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 from .config import AutoZoneConfig, GroupConfig, ZoneConfig
@@ -157,6 +157,61 @@ def _autozone_color(path: Path, group: str) -> str:
     return _AUTOZONE_COLORS[index]
 
 
+def _distinct_autozone_color(path: Path, group: str, used: set[str]) -> str:
+    """Choose a stable readable color that is not already used by the group."""
+    key = os.path.normcase(os.path.normpath(str(path))) + "\x00" + group
+    digest = hashlib.sha256(key.encode("utf-8")).digest()
+    start = int.from_bytes(digest[:8], "big") % len(_AUTOZONE_COLORS)
+    for offset in range(len(_AUTOZONE_COLORS)):
+        color = _AUTOZONE_COLORS[(start + offset) % len(_AUTOZONE_COLORS)]
+        if color not in used:
+            return color
+
+    # Keep producing dark, high-contrast colors when a group has more entries
+    # than the curated palette. The salt makes the fallback deterministic.
+    salt = 0
+    while True:
+        fallback = hashlib.sha256(f"{key}\x00{salt}".encode("utf-8")).digest()
+        color = "#" + "".join(f"{24 + (value % 80):02x}" for value in fallback[:3])
+        if color not in used:
+            return color
+        salt += 1
+
+
+def _assign_distinct_autozone_colors(
+    candidates: list[AutoZoneCandidate],
+    rules: tuple[AutoZoneConfig, ...],
+) -> list[AutoZoneCandidate]:
+    """Make generated colors distinct within every autozone group."""
+    used_by_group: dict[str, set[str]] = {}
+    generated: list[tuple[int, AutoZoneCandidate]] = []
+    for index, candidate in enumerate(candidates):
+        explicit = (
+            bool(candidate.rule_indexes)
+            and rules[candidate.rule_indexes[0]].color is not None
+        )
+        for group in candidate.groups:
+            used_by_group.setdefault(group, set())
+            if explicit:
+                used_by_group[group].add(candidate.zone.color)
+        if not explicit:
+            generated.append((index, candidate))
+
+    for index, candidate in generated:
+        blocked = set().union(
+            *(used_by_group[group] for group in candidate.groups)
+        )
+        group = candidate.groups[0] if candidate.groups else ""
+        color = _distinct_autozone_color(candidate.zone.directory, group, blocked)
+        candidates[index] = replace(
+            candidate,
+            zone=replace(candidate.zone, color=color),
+        )
+        for group in candidate.groups:
+            used_by_group[group].add(color)
+    return candidates
+
+
 def _zone_from_candidate(rule: AutoZoneConfig, path: Path, relative: str) -> ZoneConfig | None:
     zone_id = "-".join(relative.split("/")).lower()
     if not _ZONE_ID_RE.fullmatch(zone_id):
@@ -200,6 +255,7 @@ def discover_autozones(
     static_zones: Mapping[str, ZoneConfig] | Iterable[ZoneConfig] = (),
 ) -> tuple[list[AutoZoneCandidate], list[str]]:
     """Return a deterministic dynamic-zone snapshot and diagnostics."""
+    rules = tuple(rules)
     static_zone_values = tuple(
         static_zones.values() if isinstance(static_zones, Mapping) else static_zones
     )
@@ -269,7 +325,7 @@ def discover_autozones(
                 )
             continue
         result.append(candidates[0])
-    return result, diagnostics
+    return _assign_distinct_autozone_colors(result, tuple(rules)), diagnostics
 
 
 def merge_autozone_groups(

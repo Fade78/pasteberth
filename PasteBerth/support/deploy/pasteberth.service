@@ -18,6 +18,11 @@ NoNewPrivileges=true
 PrivateTmp=true
 RestrictSUIDSGID=true
 
+# For a shared POSIX zone, the user running this service must already belong
+# to the directory's group before the user manager starts. Log out and in
+# again (or reboot) after changing group membership; daemon-reload alone does
+# not refresh supplementary groups.
+
 # Optional hardening (uncomment and adapt paths to YOUR zones; otherwise the
 # service will refuse to start if a declared path is missing):
 #ProtectSystem=full

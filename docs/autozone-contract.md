@@ -26,6 +26,13 @@ Autozone discovery is read-only with respect to the directory tree and the
 configuration file. It does not create candidates, rewrite the configuration,
 or migrate an existing static zone.
 
+Discovery is refreshed automatically as the service reads its zone registry.
+The Web UI polls the zone overview every 10 seconds while visible, so a new
+matching project directory normally appears as a new zone on the next poll,
+without a service restart or configuration edit. A hidden tab refreshes when it
+becomes visible. The same refresh is used by directory resolution and other
+service operations that need the current autozone registry.
+
 ## 2. Configuration
 
 The spelling of the configuration table is `[[autozone]]` (singular table
@@ -76,7 +83,7 @@ group_show_count = true
 | `reference_list_suffix` | empty | Suffix for a copied reference list. |
 | `reference_separator` | `,` | Separator for a copied reference list. |
 | `allow_zip_download` | `true` | Whether multiple selected files can be downloaded as a ZIP. |
-| `color` | `#243447` | Zone color, subject to the existing contrast validation. |
+| `color` | none | Optional zone color, subject to the existing contrast validation. When omitted, generated colors are deterministic and distinct within the autozone group; an explicit value is used for every candidate from the rule. |
 | `group_layout` | `area` | Layout for a generated group only. |
 | `group_hide_empty` | `false` | Empty-group visibility for a generated group only. |
 | `group_show_count` | `true` | Zone-count visibility for a generated group only. |
@@ -87,7 +94,10 @@ value for `retain`. New configurations should use `retain` only.
 
 The server process must have read and execute permission on an autozone
 directory. `file_group` affects files created by Pasteberth, but cannot grant
-access to a parent directory or make an unreadable candidate discoverable.
+access to a parent directory or make an unreadable candidate discoverable. For
+a shared POSIX autozone, every writer and the daemon must be members of the
+directory's group; a `systemd --user` daemon must be restarted from a session
+that has the group in its credentials after membership changes.
 
 The ordinary global and zone validation rules still apply: NUL characters,
 relative paths, invalid colors, invalid percentages, invalid regular
@@ -280,7 +290,19 @@ watcher, SSE endpoint, or batch worker is required by this contract.
 On each normal zone-overview refresh, Pasteberth reevaluates autozone rules at
 most once for that refresh cycle. The current browser interval is 10 seconds,
 so a newly created candidate normally appears within one visible polling
-interval. A removed or invalid candidate disappears on the same schedule.
+interval, without a daemon restart or configuration edit. A hidden tab refreshes
+when it becomes visible. A removed or invalid candidate disappears on the same
+schedule. Discovery does not watch arbitrary filesystem events; service reads
+provide the refresh boundary.
+
+At each discovery refresh, Pasteberth replaces the dynamic candidate snapshot:
+
+1. A new directory that matches the rule, is accessible, and has no user
+   subdirectory becomes a zone.
+2. A directory that no longer matches, becomes inaccessible, or gains a
+   subdirectory is removed from the zone registry.
+3. Existing static zones keep precedence over an autozone candidate at the same
+   resolved path.
 
 The service maintains an in-memory dynamic registry containing the current
 zone configuration, destination, locks, and group memberships. The registry is

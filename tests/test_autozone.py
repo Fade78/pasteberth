@@ -117,13 +117,17 @@ class TestAutozoneDiscovery(unittest.TestCase):
             if candidate.zone.directory == second
         )
 
-        self.assertEqual(first_color, _autozone_color(first, "Repositories"))
         self.assertEqual(first_color, next(
             candidate.zone.color
             for candidate in discover_autozones((first_rule,))[0]
             if candidate.zone.directory == first
         ))
-        self.assertEqual(second_color, _autozone_color(second, "Repositories"))
+        self.assertEqual(second_color, next(
+            candidate.zone.color
+            for candidate in discover_autozones((first_rule,))[0]
+            if candidate.zone.directory == second
+        ))
+        self.assertNotEqual(first_color, second_color)
         self.assertNotEqual(
             _autozone_color(Path("/var/lib/pasteberth/repo-a"), "Repositories"),
             _autozone_color(Path("/var/lib/pasteberth/repo-b"), "Repositories"),
@@ -132,6 +136,16 @@ class TestAutozoneDiscovery(unittest.TestCase):
             _autozone_color(Path("/var/lib/pasteberth/repo-a"), "Repositories"),
             _autozone_color(Path("/var/lib/pasteberth/repo-a"), "Other"),
         )
+
+    def test_omitted_colors_are_distinct_within_a_group(self):
+        for index in range(20):
+            (self.tmp / f"repo-{index}" / "work" / "exchange").mkdir(parents=True)
+
+        candidates, _ = discover_autozones((rule(self.tmp),))
+        colors = [candidate.zone.color for candidate in candidates]
+
+        self.assertEqual(len(colors), 20)
+        self.assertEqual(len(colors), len(set(colors)))
 
     def test_explicit_autozone_color_is_preserved(self):
         candidate_path = self.tmp / "repo" / "work" / "exchange"
@@ -269,3 +283,14 @@ retain = 2
 
         shutil.rmtree(self.candidate)
         self.assertFalse(self.service.has_zone(zone_id))
+
+    def test_new_matching_project_is_discovered_without_restart(self):
+        new_candidate = self.tmp / "new-repo" / "work" / "exchange"
+        new_candidate.mkdir(parents=True)
+
+        self.assertTrue(self.service.has_zone("new-repo-work-exchange"))
+        overview = self.service.overview()
+        self.assertIn(
+            "new-repo-work-exchange",
+            {zone["id"] for zone in overview["zones"]},
+        )

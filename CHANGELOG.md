@@ -4,6 +4,21 @@ This file records user-visible changes to Pasteberth.
 
 ## [Unreleased]
 
+## [2.1.10] - 2026-09-06
+
+### Autozone Discovery
+
+- document that visible browser polling refreshes autozone discovery, so a new
+  matching project directory appears without a daemon restart or configuration
+  edit;
+- assign deterministic, distinct default colors to generated zones within an autozone
+  group while preserving an explicit rule-level `color` override.
+
+### Shared POSIX Documentation
+
+- document the group-membership requirement for every process that reads or
+  writes a shared POSIX zone, including `systemd --user` daemons.
+
 ## [2.1.9] - 2026-09-06
 
 ### Shared Zone Locks

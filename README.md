@@ -37,9 +37,40 @@ needs to access the returned filesystem path.
 Pasteberth is not a public file host, CDN, cloud drive, or synchronization
 service between independent servers.
 
+## Use Cases
+
+### Browser to a terminal harness
+
+Paste an image, a text selection, or a file in the browser. Pasteberth stores a
+managed file in the selected zone and returns the exact server-side path. A
+terminal harness can read that path without giving the browser access to the
+filesystem.
+
+### Add project workspaces without editing configuration
+
+Use one `[[autozone]]` rule for a project tree such as
+`/home/me/Depots/*/work/exchange`. When a new project creates a matching,
+readable exchange directory, Pasteberth discovers it on the next zone refresh;
+a visible browser normally sees it within the next 10-second poll. No daemon
+restart and no configuration edit are required. The new directory is exposed as
+a zone and placed in the configured autozone group.
+
+### Agent or script to a browser
+
+Use `drop` from a script, CLI/TUI harness, or agent to publish a report or
+artifact into a zone. The browser sees the new history item and can preview or
+download it. Trusted local agents can use the optional MCP stdio adapter with
+the same upload path and protections.
+
+### Register an existing file
+
+Use `register FILE` when a file already exists in a shared exchange directory.
+It validates the file and creates or refreshes only its sidecar, leaving the
+data file untouched. The daemon discovers the pair on its next refresh.
+
 ## Quick Start
 
-The current public release is `2.1.9`. The documented v2.1.9 server runs on
+The current public release is `2.1.10`. The documented v2.1.10 server runs on
 Linux, requires Python 3.11 or newer, and has no third-party
 Python runtime dependency. A native Windows backend is included but has only
 been validated under Wine; macOS and native Windows remain outside the official
@@ -99,10 +130,13 @@ only, without `/paste`.
   SHA-256 digest in its JSON sidecar.
 - Keep independent zones per project with configurable retention.
 - Discover repository directories dynamically with repeatable `[[autozone]]`
-  rules while keeping the sidecar storage contract.
+  rules while keeping the sidecar storage contract; matching projects appear on
+  the next service read without a restart or configuration edit.
+- Give autozone zones deterministic, distinct default colors within their group; an
+  explicit `color` remains an intentional override for the whole rule.
 - Return exact filesystem references such as
   `@/srv/workspaces/project/captures/example.png`.
-  - Preserve valid dropped filenames when requested, while protecting foreign
+- Preserve valid dropped filenames when requested, while protecting foreign
   files from accidental replacement or deletion; explicitly register an existing
   file by creating or refreshing only its sidecar.
 - Select several items with click, `Shift`-click, or `Ctrl`/`Command`-click.
@@ -222,7 +256,7 @@ template is [`PasteBerth/support/deploy/pasteberth.service`](PasteBerth/support/
 
 ## Support Status
 
-| Area | v2.1.9 status |
+| Area | v2.1.10 status |
 |---|---|
 | Python | 3.11 or newer |
 | Server | Linux, officially tested |

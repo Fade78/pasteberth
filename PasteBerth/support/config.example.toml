@@ -108,7 +108,8 @@ max_sessions = 4096               # use "unlimited" to disable FIFO eviction
 # color             : zone background (#RRGGBB); text contrast is calculated
 # create_directory  : create the directory if missing (default true)
 # min_free_percent  : minimum filesystem free space before upload (default 2 %)
-# file_group        : optional POSIX group name or numeric GID for created files
+# file_group        : optional POSIX group name or numeric GID for created files;
+#                     the daemon and other readers must belong to this group
 # Legacy storage_mode = "directory" and max_items values are normalized to sidecar.
 # Non-private modes produce an audit warning but do not prevent startup.
 # Mode 0700 is recommended.
