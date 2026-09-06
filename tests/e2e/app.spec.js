@@ -943,6 +943,23 @@ test("accepte le glisser-déposer sur une zone", async ({ page }) => {
   await expect(secondary.locator(".new-badge")).toHaveCount(0);
 });
 
+test("ne confirme pas la copie automatique si le geste de drop a expire", async ({ page }) => {
+  await page.addInitScript(() => {
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: {
+        writeText: async () => { throw new Error("clipboard permission denied"); },
+      },
+    });
+    Document.prototype.execCommand = () => true;
+  });
+  await openApp(page);
+  await dispatchDrop(page, '[data-zone="secondary"]');
+
+  await expect(page.locator('[data-zone="secondary"] .latest')).toBeVisible();
+  await expect(page.locator("#toast")).toContainText("Link NOT copied");
+});
+
 test("conserve le nom et confirme le remplacement d'un binaire déposé", async ({ page }) => {
   await openApp(page);
   await dispatchBinaryDrop(page, '.zone[data-zone="default"]');

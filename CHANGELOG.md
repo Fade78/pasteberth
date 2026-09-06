@@ -4,6 +4,14 @@ This file records user-visible changes to Pasteberth.
 
 ## [Unreleased]
 
+## [2.1.11] - 2026-09-06
+
+### Clipboard Feedback
+
+- do not report that an automatically copied reference succeeded when the
+  browser rejects the asynchronous Clipboard API call after a file drop;
+- keep the manual `Copy link` action available with its user-gesture fallback.
+
 ## [2.1.10] - 2026-09-06
 
 ### Autozone Discovery

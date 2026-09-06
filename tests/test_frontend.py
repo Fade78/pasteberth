@@ -50,6 +50,13 @@ class TestContratsFrontend(unittest.TestCase):
         self.assertIn('"image/png"', self.app_js)
         self.assertIn("execCommand(\"copy\")", self.app_js.replace("'", '"'))
 
+    def test_drop_n_annonce_pas_un_faux_succes_clipboard(self):
+        self.assertIn("allowLegacyFallback", self.app_js)
+        self.assertIn(
+            'writeClipboard(item.reference, { allowLegacyFallback: false })',
+            self.app_js,
+        )
+
     def test_effacement_clipboard(self):
         self.assertIn("function clearClipboard", self.app_js)
         self.assertIn('writeClipboard("")', self.app_js)

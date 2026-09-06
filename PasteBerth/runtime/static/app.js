@@ -214,13 +214,14 @@
 
   // ---------------------------------------------------------------- clipboard
 
-  async function writeClipboard(text) {
+  async function writeClipboard(text, { allowLegacyFallback = true } = {}) {
     if (navigator.clipboard && window.isSecureContext !== false) {
       try {
         await navigator.clipboard.writeText(text);
         return true;
-      } catch (_) { /* try the fallback */ }
+      } catch (_) { /* use the legacy fallback only when allowed */ }
     }
+    if (!allowLegacyFallback) return false;
     return legacyCopy(text);
   }
 
@@ -2194,7 +2195,7 @@
       if (autoCopy) {
         // Best-effort automatic copy: report failures explicitly; the Copy link
         // button remains available.
-        writeClipboard(item.reference).then(ok => {
+        writeClipboard(item.reference, { allowLegacyFallback: false }).then(ok => {
           if (ok) toast(retentionWarning ? `${retentionWarning}; Link copied` : "Link copied",
             retentionWarning ? "warning" : "info");
           else toast(

@@ -70,7 +70,7 @@ data file untouched. The daemon discovers the pair on its next refresh.
 
 ## Quick Start
 
-The current public release is `2.1.10`. The documented v2.1.10 server runs on
+The current public release is `2.1.11`. The documented v2.1.11 server runs on
 Linux, requires Python 3.11 or newer, and has no third-party
 Python runtime dependency. A native Windows backend is included but has only
 been validated under Wine; macOS and native Windows remain outside the official
@@ -256,7 +256,7 @@ template is [`PasteBerth/support/deploy/pasteberth.service`](PasteBerth/support/
 
 ## Support Status
 
-| Area | v2.1.10 status |
+| Area | v2.1.11 status |
 |---|---|
 | Python | 3.11 or newer |
 | Server | Linux, officially tested |
