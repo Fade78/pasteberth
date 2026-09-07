@@ -4,6 +4,14 @@ This file records user-visible changes to Pasteberth.
 
 ## [Unreleased]
 
+## [2.1.15] - 2026-09-07
+
+### Release Integrity
+
+- reject deployment manifests from modified or untracked source bundles;
+- keep keyboard and preview link-copy actions on the same attempt-tracking path;
+- clear stale copy feedback while a newer clipboard attempt is pending.
+
 ## [2.1.14] - 2026-09-07
 
 ### Release Corrections

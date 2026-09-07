@@ -202,6 +202,11 @@
 
   function beginCopyAttempt(zoneId, itemId) {
     const key = copyFeedbackKey(zoneId, itemId);
+    const previousTimer = state.copyFeedbackTimers[key];
+    if (previousTimer) clearTimeout(previousTimer);
+    delete state.copyFeedbackTimers[key];
+    delete state.copyFeedbackByItem[key];
+    applyCopyFeedback(copyButtonForItem(zoneId, itemId), null);
     const attempt = ++copyAttemptSequence;
     state.copyAttemptByItem[key] = attempt;
     return attempt;
@@ -310,7 +315,7 @@
     return ok;
   }
 
-  async function copyLink(reference, button = null) {
+  async function copyLink(reference, button = null, announce = false) {
     const latest = button?.closest(".latest[data-item-id]");
     const zone = button?.closest(".zone[data-zone]");
     const attempt = latest && zone
@@ -324,6 +329,10 @@
         ok ? "copied" : "manual-attention",
         attempt,
       );
+      if (announce) {
+        if (ok) toast("Link copied: " + shortRef(reference));
+        else toast("Could not copy the link — select it manually", "error");
+      }
     } else if (ok) toast("Link copied: " + shortRef(reference));
     else toast("Could not copy the link — select it manually", "error");
     return ok;
@@ -2738,7 +2747,7 @@
       const item = itemForControl(zoomBtn);
       const zoneId = zoneForControl(zoomBtn);
       if (item && item.kind === "image") {
-        openPreview(item.preview_url, item.reference, item.filename, zoneId);
+        openPreview(item.preview_url, item.reference, item.filename, zoneId, item.id);
       } else if (item) openContentPreview(item, zoneId);
       return;
     }
@@ -2759,7 +2768,7 @@
       const item = itemForControl(bigThumb);
       const zoneId = zoneForControl(bigThumb);
       if (item && item.kind === "image") {
-        openPreview(item.preview_url, item.reference, item.filename, zoneId);
+        openPreview(item.preview_url, item.reference, item.filename, zoneId, item.id);
       } else if (item) openContentPreview(item, zoneId);
       return;
     }
@@ -2781,7 +2790,7 @@
       const item = itemForControl(bigThumb);
       const zoneId = zoneForControl(bigThumb);
       if (item && item.kind === "image") {
-        openPreview(item.preview_url, item.reference, item.filename, zoneId);
+        openPreview(item.preview_url, item.reference, item.filename, zoneId, item.id);
       } else if (item) openContentPreview(item, zoneId);
       return;
     }
@@ -2883,7 +2892,10 @@
       if (zone) setActive(zone.id, { announce: true });
     } else if (event.key === "c" || event.key === "C") {
       const zone = getVisibleZones().find(z => z.id === state.activeId);
-      if (zone && zone.images.length) copyLink(selectedItem(zone).reference);
+      if (zone && zone.images.length) {
+        const item = selectedItem(zone);
+        copyLink(item.reference, copyButtonForItem(zone.id, item.id), true);
+      }
     }
   });
 
@@ -2923,7 +2935,17 @@
     return previewGeneration;
   }
 
-  function openPreview(url, reference, filename, zoneId) {
+  function setPreviewCopyTarget(zoneId, itemId) {
+    if (zoneId && itemId) {
+      pvCopy.dataset.zone = zoneId;
+      pvCopy.dataset.itemId = itemId;
+    } else {
+      delete pvCopy.dataset.zone;
+      delete pvCopy.dataset.itemId;
+    }
+  }
+
+  function openPreview(url, reference, filename, zoneId, itemId) {
     invalidatePreviewLoad();
     setRawHtmlButton(false);
     const storedFilename = filename || decodeURIComponent(url.split("/").pop());
@@ -2931,6 +2953,7 @@
     pvImg.hidden = false;
     pvText.hidden = true;
     pvRef.textContent = reference;
+    setPreviewCopyTarget(zoneId, itemId);
     pvRef.hidden = !state.showFullPath;
     setPreviewCopyLabel("image");
     pvDownload.textContent = downloadLabel(storedFilename);
@@ -2969,6 +2992,7 @@
     setPreviewSource(pvImg, "");
     setPreviewCopyLabel(item.kind);
     pvRef.textContent = item.reference;
+    setPreviewCopyTarget(zoneId, item.id);
     pvRef.hidden = !state.showFullPath;
     pvDownload.textContent = downloadLabel(item.filename);
     pvDownload.setAttribute("aria-label", downloadLabel(item.filename));
@@ -3015,6 +3039,7 @@
   function closePreview() {
     invalidatePreviewLoad();
     setRawHtmlButton(false);
+    setPreviewCopyTarget(null, null);
     if (!closeDialog(pv)) {
       setPreviewSource(pvImg, "");
       pvText.hidden = true;
@@ -3023,7 +3048,12 @@
       restoreDialogInvoker(pv);
     }
   }
-  pvCopy.addEventListener("click", () => copyLink(pvRef.textContent));
+  pvCopy.addEventListener("click", () => {
+    const button = pvCopy.dataset.zone && pvCopy.dataset.itemId
+      ? copyButtonForItem(pvCopy.dataset.zone, pvCopy.dataset.itemId)
+      : null;
+    copyLink(pvRef.textContent, button, true);
+  });
   pvCopyImage.addEventListener("click", () => copyContent(pvCopyImage.dataset.kind, pvCopyImage.dataset.preview, pvCopyImage.dataset.mime));
   pvDownload.addEventListener("click", () => downloadContent(pvDownload.dataset.preview, pvDownload.dataset.filename));
   pvClear.addEventListener("click", clearClipboard);

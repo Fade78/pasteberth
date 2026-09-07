@@ -731,6 +731,34 @@ test("colle une image et ouvre son aperçu au clavier", async ({ page }) => {
   await page.getByRole("button", { name: "Close" }).click();
 });
 
+test("ignore le résultat tardif d'une copie automatique dépassée", async ({ page }) => {
+  await page.addInitScript(() => {
+    window.__clipboardWrites = [];
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: {
+        writeText: text => new Promise(resolve => {
+          window.__clipboardWrites.push({ text, resolve });
+        }),
+      },
+    });
+  });
+  await openApp(page);
+  const defaultZone = page.locator('[data-zone="default"]');
+  await dispatchDrop(page, '[data-zone="default"]');
+  await expect(defaultZone.locator(".latest")).toBeVisible();
+  await page.waitForFunction(() => window.__clipboardWrites.length === 1);
+
+  await defaultZone.getByRole("button", { name: "Copy link" }).click();
+  await page.waitForFunction(() => window.__clipboardWrites.length === 2);
+  await page.evaluate(() => window.__clipboardWrites[1].resolve(true));
+  await expect(defaultZone.locator(".copy-status")).toHaveText("Link copied");
+
+  await page.evaluate(() => window.__clipboardWrites[0].resolve(false));
+  await page.waitForTimeout(100);
+  await expect(defaultZone.locator(".copy-status")).toHaveText("Link copied");
+});
+
 test("colle des fichiers binaires et texte depuis le presse-papiers", async ({ page }) => {
   await openApp(page);
   await page.getByRole("button", { name: "Select zone Default" }).click();

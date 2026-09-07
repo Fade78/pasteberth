@@ -62,6 +62,31 @@ def validate_release_identity(runtime: str, project: str, tag: str | None) -> No
         raise SystemExit(f"expected exact release tag {expected_tag!r}, got {tag!r}")
 
 
+def validate_source_bundle(repo: Path, source: Path, source_files: dict[str, str]) -> None:
+    source_name = source.relative_to(repo).as_posix().rstrip("/")
+    listing = git(repo, "ls-tree", "-r", "--name-only", "HEAD", "--", source_name)
+    prefix = source_name + "/"
+    tracked_files = {
+        path[len(prefix):]
+        for path in (listing or "").splitlines()
+        if path.startswith(prefix)
+    }
+    actual_files = set(source_files)
+    if actual_files != tracked_files:
+        raise SystemExit(
+            "source bundle is not the tagged Git tree: "
+            f"missing={sorted(tracked_files - actual_files)}, "
+            f"extra={sorted(actual_files - tracked_files)}"
+        )
+    result = subprocess.run(
+        ["git", "diff", "--quiet", "HEAD", "--", source_name],
+        cwd=repo,
+        check=False,
+    )
+    if result.returncode != 0:
+        raise SystemExit("source bundle has tracked changes after the release tag")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--source", type=Path, required=True)
@@ -73,6 +98,8 @@ def main() -> int:
         raise SystemExit("source and destination must be existing directories")
 
     source_files = file_digests(source)
+    repo = source.parent
+    validate_source_bundle(repo, source, source_files)
     destination_files = {
         name: digest
         for name, digest in file_digests(destination).items()
@@ -90,7 +117,6 @@ def main() -> int:
             f"missing={missing}, extra={extra}, changed={changed}"
         )
 
-    repo = source.parent
     version = runtime_version(source)
     tag = git(repo, "describe", "--tags", "--exact-match", "HEAD")
     validate_release_identity(version, project_version(repo), tag)
@@ -99,7 +125,7 @@ def main() -> int:
         "version": version,
         "source_commit": git(repo, "rev-parse", "HEAD"),
         "source_tag": tag,
-        "source_dirty": bool(git(repo, "status", "--porcelain")),
+        "source_dirty": False,
         "bundle_files": source_files,
     }
     (destination / "BUILD_INFO.json").write_text(
