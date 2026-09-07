@@ -6,6 +6,7 @@ import argparse
 import hashlib
 import json
 import re
+import stat
 import subprocess
 import tomllib
 from datetime import datetime, timezone
@@ -37,6 +38,30 @@ def file_digests(root: Path) -> dict[str, str]:
         and "__pycache__" not in path.parts
         and path.suffix != ".pyc"
     }
+
+
+def file_modes(root: Path) -> dict[str, int]:
+    return {
+        path.relative_to(root).as_posix(): stat.S_IMODE(path.stat().st_mode)
+        for path in sorted(root.rglob("*"))
+        if path.is_file()
+        and "__pycache__" not in path.parts
+        and path.suffix != ".pyc"
+    }
+
+
+def source_checkout_dirty(root: Path) -> bool:
+    try:
+        result = subprocess.run(
+            ["git", "status", "--porcelain", "--untracked-files=all"],
+            cwd=root,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+    except (OSError, subprocess.CalledProcessError) as exc:
+        raise SystemExit("could not determine source checkout status") from exc
+    return bool(result.stdout.strip())
 
 
 def runtime_version(source: Path) -> str:
@@ -116,6 +141,23 @@ def main() -> int:
             "deployment bundle differs from source: "
             f"missing={missing}, extra={extra}, changed={changed}"
         )
+    source_modes = file_modes(source)
+    destination_modes = {
+        name: mode
+        for name, mode in file_modes(destination).items()
+        if name != "BUILD_INFO.json"
+    }
+    if source_modes != destination_modes:
+        missing = sorted(set(source_modes) - set(destination_modes))
+        extra = sorted(set(destination_modes) - set(source_modes))
+        changed = sorted(
+            name for name in set(source_modes) & set(destination_modes)
+            if source_modes[name] != destination_modes[name]
+        )
+        raise SystemExit(
+            "deployment bundle file modes differ from source: "
+            f"missing={missing}, extra={extra}, changed={changed}"
+        )
 
     version = runtime_version(source)
     tag = git(repo, "describe", "--tags", "--exact-match", "HEAD")
@@ -125,7 +167,7 @@ def main() -> int:
         "version": version,
         "source_commit": git(repo, "rev-parse", "HEAD"),
         "source_tag": tag,
-        "source_dirty": bool(git(repo, "status", "--porcelain")),
+        "source_dirty": source_checkout_dirty(repo),
         "bundle_files": source_files,
     }
     (destination / "BUILD_INFO.json").write_text(

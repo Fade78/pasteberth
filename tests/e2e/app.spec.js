@@ -772,9 +772,14 @@ test("le raccourci clavier invalide une copie automatique dépassée", async ({ 
   await expect(defaultZone.locator(".latest")).toBeVisible();
   await page.waitForFunction(() => window.__clipboardWrites.length === 1);
 
+  await defaultZone.locator(".latest").evaluate(latest => latest.remove());
+  await expect(defaultZone.locator(".latest")).toHaveCount(0);
   await page.keyboard.press("c");
   await page.waitForFunction(() => window.__clipboardWrites.length === 2);
   await page.evaluate(() => window.__clipboardWrites[1].resolve(true));
+  await page.getByRole("button", { name: "Secondary (1)" }).click();
+  await page.getByRole("button", { name: "All (2)" }).click();
+  await expect(defaultZone.locator(".latest")).toBeVisible();
   await expect(defaultZone.locator(".copy-status")).toHaveText("Link copied");
   await page.evaluate(() => window.__clipboardWrites[0].reject(new Error("stale copy")));
   await page.waitForTimeout(100);
@@ -792,10 +797,17 @@ test("la copie depuis l'aperçu invalide une copie automatique dépassée", asyn
 
   await defaultZone.locator(".thumb-big").press("Enter");
   await expect(page.locator("#pv")).toBeVisible();
+  await defaultZone.locator(".latest").evaluate(latest => latest.remove());
+  await expect(defaultZone.locator(".latest")).toHaveCount(0);
   await page.locator("#pv-copy").click();
   await page.waitForFunction(() => window.__clipboardWrites.length === 2);
   await page.evaluate(() => window.__clipboardWrites[1].resolve(true));
   await expect(page.locator("#pv-toast")).toContainText("Link copied");
+  await page.locator("#pv-close").click();
+  await page.getByRole("button", { name: "Secondary (1)" }).click();
+  await page.getByRole("button", { name: "All (2)" }).click();
+  await expect(defaultZone.locator(".latest")).toBeVisible();
+  await expect(defaultZone.locator(".copy-status")).toHaveText("Link copied");
   await page.evaluate(() => window.__clipboardWrites[0].reject(new Error("stale copy")));
   await page.waitForTimeout(100);
   await expect(defaultZone.locator(".copy-status")).toHaveText("Link copied");

@@ -4,6 +4,14 @@ This file records user-visible changes to Pasteberth.
 
 ## [Unreleased]
 
+## [2.1.17] - 2026-09-07
+
+### Release Verification
+
+- fail closed when Git checkout status cannot be determined;
+- validate deployment file modes and destination bundle tampering;
+- exercise copy feedback after the originating card is temporarily absent.
+
 ## [2.1.16] - 2026-09-07
 
 ### Copy And Deployment Checks
