@@ -558,6 +558,10 @@ code, kbd {
   padding-top: 0;
 }
 
+.selection-actions .bulk-actions > button {
+  align-self: stretch;
+}
+
 .selection-actions .bulk-summary {
   margin-right: 0;
 }

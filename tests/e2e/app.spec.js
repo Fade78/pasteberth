@@ -979,6 +979,11 @@ test("copie, télécharge et supprime la sélection d'une zone", async ({ page }
   await dispatchMultiDrop(page, '[data-zone="default"]');
   await expect(defaultZone.locator(".bulk-summary")).toHaveText("2 files selected");
 
+  const bulkButtonWidths = await defaultZone.locator(".bulk-actions > button").evaluateAll(
+    buttons => buttons.map(button => Math.round(button.getBoundingClientRect().width)),
+  );
+  expect(new Set(bulkButtonWidths).size).toBe(1);
+
   await defaultZone.getByRole("button", { name: "Copy 2 links" }).click();
   await expect(page.locator("#toast")).toContainText("2 links copied");
 
