@@ -97,7 +97,20 @@ class TestDeploymentReleaseIdentity(unittest.TestCase):
             (source / "runtime" / "__init__.py").write_text(
                 '__version__ = "2.1.17"\n# changed\n', encoding="utf-8"
             )
-            with self.assertRaisesRegex(SystemExit, "tracked changes"):
+            with self.assertRaisesRegex(SystemExit, "content differs from tagged Git tree"):
+                _write_manifest(source, destination)
+
+    def test_main_rejects_source_content_when_git_index_ignores_it(self):
+        with tempfile.TemporaryDirectory() as raw_root:
+            source, destination = _release_tree(Path(raw_root))
+            target = source / "runtime" / "__init__.py"
+            target.write_text('__version__ = "2.1.17"\n# changed\n', encoding="utf-8")
+            subprocess.run(
+                ["git", "update-index", "--assume-unchanged", "PasteBerth/runtime/__init__.py"],
+                cwd=source.parent,
+                check=True,
+            )
+            with self.assertRaisesRegex(SystemExit, "content differs from tagged Git tree"):
                 _write_manifest(source, destination)
 
     def test_main_rejects_a_source_mode_mismatch_even_when_git_ignores_modes(self):
@@ -143,6 +156,14 @@ class TestDeploymentReleaseIdentity(unittest.TestCase):
             target.symlink_to(source / "runtime" / "__init__.py")
             with self.assertRaisesRegex(SystemExit, "contains a symlink"):
                 _write_manifest(source, destination)
+
+    def test_main_rejects_symlinked_bundle_roots(self):
+        with tempfile.TemporaryDirectory() as raw_root:
+            source, destination = _release_tree(Path(raw_root))
+            source_link = source.parent / "source-link"
+            source_link.symlink_to(source, target_is_directory=True)
+            with self.assertRaisesRegex(SystemExit, "source path contains a symlink"):
+                _write_manifest(source_link, destination)
 
     def test_main_rejects_a_missing_source_commit(self):
         with tempfile.TemporaryDirectory() as raw_root:

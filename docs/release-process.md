@@ -27,10 +27,11 @@ cat "$HOME/PasteBerth/BUILD_INFO.json"
 runtime version, source commit, exact tag, bundle integrity, checkout state, and
 the SHA-256 digest of every source bundle file. The script refuses to write the
 record when the destination does not match the source bundle or when the
-bundle differs from the tagged Git tree, including regular-file modes. Git
-symlinks and other non-regular bundle entries are rejected, and checkout status
-is fail-closed. Unrelated files elsewhere in the checkout are included in
-`source_dirty`.
+bundle differs from the tagged Git tree, including direct blob content and
+regular-file modes. Git symlinks and other non-regular bundle entries are
+rejected, and checkout status is fail-closed. Generated `__pycache__/` and
+`.pyc` files are intentionally excluded from the bundle digest. Unrelated
+files elsewhere in the checkout are included in `source_dirty`.
 
 Restart the service only after the manifest has been written, then verify the
 active process and repeat `pasteberth --version` against the deployed wrapper.

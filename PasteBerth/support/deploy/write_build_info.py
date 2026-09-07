@@ -16,6 +16,7 @@ from pathlib import Path
 
 
 VERSION_RE = re.compile(r'^__version__\s*=\s*["\']([^"\']+)["\']\s*$', re.MULTILINE)
+NOFOLLOW_FLAGS = getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_BINARY", 0)
 
 
 def git(root: Path, *args: str) -> str | None:
@@ -32,24 +33,62 @@ def git(root: Path, *args: str) -> str | None:
     return result.stdout.strip() or None
 
 
+def _bundle_paths(root: Path):
+    for path in sorted(root.rglob("*")):
+        if "__pycache__" in path.parts or path.suffix == ".pyc":
+            continue
+        try:
+            mode = os.lstat(path).st_mode
+        except OSError as exc:
+            raise SystemExit(f"could not inspect bundle file: {path}") from exc
+        if stat.S_ISLNK(mode):
+            raise SystemExit(f"bundle contains a symlink: {path.relative_to(root)}")
+        if stat.S_ISREG(mode):
+            yield path
+        elif not stat.S_ISDIR(mode):
+            raise SystemExit(f"bundle contains a non-regular file: {path.relative_to(root)}")
+
+
+def _open_regular_file(path: Path) -> tuple[int, int]:
+    try:
+        fd = os.open(path, os.O_RDONLY | NOFOLLOW_FLAGS)
+        mode = os.fstat(fd).st_mode
+    except OSError as exc:
+        raise SystemExit(f"could not open bundle file: {path}") from exc
+    if not stat.S_ISREG(mode):
+        os.close(fd)
+        raise SystemExit(f"bundle file is not regular: {path}")
+    return fd, mode
+
+
+def _file_digest(path: Path) -> str:
+    fd, _ = _open_regular_file(path)
+    digest = hashlib.sha256()
+    try:
+        with os.fdopen(fd, "rb") as stream:
+            fd = -1
+            for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+                digest.update(chunk)
+    finally:
+        if fd >= 0:
+            os.close(fd)
+    return digest.hexdigest()
+
+
 def file_digests(root: Path) -> dict[str, str]:
     return {
-        path.relative_to(root).as_posix(): hashlib.sha256(path.read_bytes()).hexdigest()
-        for path in sorted(root.rglob("*"))
-        if path.is_file()
-        and "__pycache__" not in path.parts
-        and path.suffix != ".pyc"
+        path.relative_to(root).as_posix(): _file_digest(path)
+        for path in _bundle_paths(root)
     }
 
 
 def file_modes(root: Path) -> dict[str, int]:
-    return {
-        path.relative_to(root).as_posix(): stat.S_IMODE(path.stat().st_mode)
-        for path in sorted(root.rglob("*"))
-        if path.is_file()
-        and "__pycache__" not in path.parts
-        and path.suffix != ".pyc"
-    }
+    modes = {}
+    for path in _bundle_paths(root):
+        fd, mode = _open_regular_file(path)
+        os.close(fd)
+        modes[path.relative_to(root).as_posix()] = stat.S_IMODE(mode)
+    return modes
 
 
 def validate_regular_tree(root: Path) -> None:
@@ -72,6 +111,21 @@ def source_checkout_dirty(root: Path) -> bool:
     except (OSError, subprocess.CalledProcessError) as exc:
         raise SystemExit("could not determine source checkout status") from exc
     return bool(result.stdout.strip())
+
+
+def absolute_without_symlinks(path: Path, label: str) -> Path:
+    absolute = Path(os.path.abspath(path))
+    current = absolute
+    while True:
+        try:
+            if stat.S_ISLNK(os.lstat(current).st_mode):
+                raise SystemExit(f"{label} path contains a symlink: {current}")
+        except FileNotFoundError:
+            pass
+        if current.parent == current:
+            break
+        current = current.parent
+    return absolute
 
 
 def runtime_version(source: Path) -> str:
@@ -99,13 +153,27 @@ def validate_release_identity(runtime: str, project: str, tag: str | None) -> No
 
 def validate_source_bundle(repo: Path, source: Path, source_files: dict[str, str]) -> None:
     source_name = source.relative_to(repo).as_posix().rstrip("/")
-    listing = git(repo, "ls-tree", "-r", "--name-only", "HEAD", "--", source_name)
     prefix = source_name + "/"
-    tracked_files = {
-        path[len(prefix):]
-        for path in (listing or "").splitlines()
-        if path.startswith(prefix)
-    }
+    listing = git(
+        repo,
+        "ls-tree",
+        "-r",
+        "-z",
+        "--format=%(objectmode) %(objectname) %(path)",
+        "HEAD",
+        "--",
+        source_name,
+    )
+    if listing is None:
+        raise SystemExit("could not determine tagged source bundle")
+    tracked_entries = {}
+    for record in listing.split("\0"):
+        if not record:
+            continue
+        mode, object_name, path = record.split(" ", 2)
+        if path.startswith(prefix):
+            tracked_entries[path[len(prefix):]] = (stat.S_IMODE(int(mode, 8)), object_name)
+    tracked_files = set(tracked_entries)
     actual_files = set(source_files)
     if actual_files != tracked_files:
         raise SystemExit(
@@ -113,22 +181,7 @@ def validate_source_bundle(repo: Path, source: Path, source_files: dict[str, str
             f"missing={sorted(tracked_files - actual_files)}, "
             f"extra={sorted(actual_files - tracked_files)}"
         )
-    mode_listing = git(
-        repo,
-        "ls-tree",
-        "-r",
-        "--format=%(objectmode) %(path)",
-        "HEAD",
-        "--",
-        source_name,
-    )
-    if mode_listing is None:
-        raise SystemExit("could not determine tagged source file modes")
-    tracked_modes = {}
-    for line in mode_listing.splitlines():
-        mode, path = line.split(" ", 1)
-        if path.startswith(prefix):
-            tracked_modes[path[len(prefix):]] = stat.S_IMODE(int(mode, 8))
+    tracked_modes = {path: values[0] for path, values in tracked_entries.items()}
     actual_modes = file_modes(source)
     if actual_modes != tracked_modes:
         missing = sorted(set(tracked_modes) - set(actual_modes))
@@ -141,13 +194,16 @@ def validate_source_bundle(repo: Path, source: Path, source_files: dict[str, str
             "source bundle file modes differ from tagged Git tree: "
             f"missing={missing}, extra={extra}, changed={changed}"
         )
-    result = subprocess.run(
-        ["git", "diff", "--quiet", "HEAD", "--", source_name],
-        cwd=repo,
-        check=False,
-    )
-    if result.returncode != 0:
-        raise SystemExit("source bundle has tracked changes after the release tag")
+    changed = []
+    for path, (_, object_name) in tracked_entries.items():
+        current_object = git(repo, "hash-object", "--no-filters", "--", f"{source_name}/{path}")
+        if current_object != object_name:
+            changed.append(path)
+    if changed:
+        raise SystemExit(
+            "source bundle content differs from tagged Git tree: "
+            f"changed={sorted(changed)}"
+        )
 
 
 def main() -> int:
@@ -155,8 +211,8 @@ def main() -> int:
     parser.add_argument("--source", type=Path, required=True)
     parser.add_argument("--destination", type=Path, required=True)
     args = parser.parse_args()
-    source = args.source.resolve()
-    destination = args.destination.resolve()
+    source = absolute_without_symlinks(args.source, "source")
+    destination = absolute_without_symlinks(args.destination, "destination")
     if not source.is_dir() or not destination.is_dir():
         raise SystemExit("source and destination must be existing directories")
 
