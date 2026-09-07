@@ -315,17 +315,20 @@
     return ok;
   }
 
-  async function copyLink(reference, button = null, announce = false) {
+  async function copyLink(reference, button = null, announce = false, target = null) {
     const latest = button?.closest(".latest[data-item-id]");
     const zone = button?.closest(".zone[data-zone]");
-    const attempt = latest && zone
-      ? beginCopyAttempt(zone.dataset.zone, latest.dataset.itemId)
+    const zoneId = zone?.dataset.zone || target?.zoneId;
+    const itemId = latest?.dataset.itemId || target?.itemId;
+    const hasTarget = Boolean(zoneId && itemId);
+    const attempt = hasTarget
+      ? beginCopyAttempt(zoneId, itemId)
       : null;
     const ok = await writeClipboard(reference);
-    if (latest && zone) {
+    if (hasTarget) {
       setCopyFeedback(
-        zone.dataset.zone,
-        latest.dataset.itemId,
+        zoneId,
+        itemId,
         ok ? "copied" : "manual-attention",
         attempt,
       );
@@ -2894,7 +2897,12 @@
       const zone = getVisibleZones().find(z => z.id === state.activeId);
       if (zone && zone.images.length) {
         const item = selectedItem(zone);
-        copyLink(item.reference, copyButtonForItem(zone.id, item.id), true);
+        copyLink(
+          item.reference,
+          copyButtonForItem(zone.id, item.id),
+          true,
+          { zoneId: zone.id, itemId: item.id },
+        );
       }
     }
   });
@@ -3052,7 +3060,12 @@
     const button = pvCopy.dataset.zone && pvCopy.dataset.itemId
       ? copyButtonForItem(pvCopy.dataset.zone, pvCopy.dataset.itemId)
       : null;
-    copyLink(pvRef.textContent, button, true);
+    copyLink(
+      pvRef.textContent,
+      button,
+      true,
+      { zoneId: pvCopy.dataset.zone, itemId: pvCopy.dataset.itemId },
+    );
   });
   pvCopyImage.addEventListener("click", () => copyContent(pvCopyImage.dataset.kind, pvCopyImage.dataset.preview, pvCopyImage.dataset.mime));
   pvDownload.addEventListener("click", () => downloadContent(pvDownload.dataset.preview, pvDownload.dataset.filename));

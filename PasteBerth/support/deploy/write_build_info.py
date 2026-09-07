@@ -125,7 +125,7 @@ def main() -> int:
         "version": version,
         "source_commit": git(repo, "rev-parse", "HEAD"),
         "source_tag": tag,
-        "source_dirty": False,
+        "source_dirty": bool(git(repo, "status", "--porcelain")),
         "bundle_files": source_files,
     }
     (destination / "BUILD_INFO.json").write_text(

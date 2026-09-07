@@ -4,6 +4,17 @@ This file records user-visible changes to Pasteberth.
 
 ## [Unreleased]
 
+## [2.1.16] - 2026-09-07
+
+### Copy And Deployment Checks
+
+- preserve copy-attempt invalidation for keyboard and preview actions even when
+  their originating card is temporarily absent;
+- distinguish bundle integrity from unrelated checkout changes in deployment
+  manifests;
+- cover delayed clipboard rejection through the visible, keyboard, and preview
+  copy paths.
+
 ## [2.1.15] - 2026-09-07
 
 ### Release Integrity

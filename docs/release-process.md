@@ -24,9 +24,11 @@ cat "$HOME/PasteBerth/BUILD_INFO.json"
 ```
 
 `BUILD_INFO.json` is generated only in the deployment directory. It records the
-runtime version, source commit, exact tag when available, dirty-tree state, and
+runtime version, source commit, exact tag, bundle integrity, checkout state, and
 the SHA-256 digest of every source bundle file. The script refuses to write the
-record when the destination does not match the source bundle.
+record when the destination does not match the source bundle or when the
+bundle differs from the tagged Git tree. Unrelated files elsewhere in the
+checkout are included in `source_dirty`.
 
 Restart the service only after the manifest has been written, then verify the
 active process and repeat `pasteberth --version` against the deployed wrapper.

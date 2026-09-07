@@ -16,6 +16,20 @@ async function openApp(page) {
   await expect(page.locator("#status-text")).toHaveText("online");
 }
 
+async function deferClipboard(page) {
+  await page.addInitScript(() => {
+    window.__clipboardWrites = [];
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: {
+        writeText: text => new Promise((resolve, reject) => {
+          window.__clipboardWrites.push({ text, resolve, reject });
+        }),
+      },
+    });
+  });
+}
+
 async function addTertiaryTabZone(page) {
   await page.route("**/api/zones/tertiary/images", async (route) => {
     if (route.request().method() !== "GET") {
@@ -732,17 +746,7 @@ test("colle une image et ouvre son aperçu au clavier", async ({ page }) => {
 });
 
 test("ignore le résultat tardif d'une copie automatique dépassée", async ({ page }) => {
-  await page.addInitScript(() => {
-    window.__clipboardWrites = [];
-    Object.defineProperty(navigator, "clipboard", {
-      configurable: true,
-      value: {
-        writeText: text => new Promise(resolve => {
-          window.__clipboardWrites.push({ text, resolve });
-        }),
-      },
-    });
-  });
+  await deferClipboard(page);
   await openApp(page);
   const defaultZone = page.locator('[data-zone="default"]');
   await dispatchDrop(page, '[data-zone="default"]');
@@ -754,7 +758,45 @@ test("ignore le résultat tardif d'une copie automatique dépassée", async ({ p
   await page.evaluate(() => window.__clipboardWrites[1].resolve(true));
   await expect(defaultZone.locator(".copy-status")).toHaveText("Link copied");
 
-  await page.evaluate(() => window.__clipboardWrites[0].resolve(false));
+  await page.evaluate(() => window.__clipboardWrites[0].reject(new Error("stale copy")));
+  await page.waitForTimeout(100);
+  await expect(defaultZone.locator(".copy-status")).toHaveText("Link copied");
+});
+
+test("le raccourci clavier invalide une copie automatique dépassée", async ({ page }) => {
+  await deferClipboard(page);
+  await openApp(page);
+  const defaultZone = page.locator('[data-zone="default"]');
+  await defaultZone.getByRole("button", { name: "Select zone Default" }).click();
+  await dispatchDrop(page, '[data-zone="default"]');
+  await expect(defaultZone.locator(".latest")).toBeVisible();
+  await page.waitForFunction(() => window.__clipboardWrites.length === 1);
+
+  await page.keyboard.press("c");
+  await page.waitForFunction(() => window.__clipboardWrites.length === 2);
+  await page.evaluate(() => window.__clipboardWrites[1].resolve(true));
+  await expect(defaultZone.locator(".copy-status")).toHaveText("Link copied");
+  await page.evaluate(() => window.__clipboardWrites[0].reject(new Error("stale copy")));
+  await page.waitForTimeout(100);
+  await expect(defaultZone.locator(".copy-status")).toHaveText("Link copied");
+});
+
+test("la copie depuis l'aperçu invalide une copie automatique dépassée", async ({ page }) => {
+  await deferClipboard(page);
+  await openApp(page);
+  const defaultZone = page.locator('[data-zone="default"]');
+  await defaultZone.getByRole("button", { name: "Select zone Default" }).click();
+  await dispatchPaste(page);
+  await expect(defaultZone.locator(".latest")).toBeVisible();
+  await page.waitForFunction(() => window.__clipboardWrites.length === 1);
+
+  await defaultZone.locator(".thumb-big").press("Enter");
+  await expect(page.locator("#pv")).toBeVisible();
+  await page.locator("#pv-copy").click();
+  await page.waitForFunction(() => window.__clipboardWrites.length === 2);
+  await page.evaluate(() => window.__clipboardWrites[1].resolve(true));
+  await expect(page.locator("#pv-toast")).toContainText("Link copied");
+  await page.evaluate(() => window.__clipboardWrites[0].reject(new Error("stale copy")));
   await page.waitForTimeout(100);
   await expect(defaultZone.locator(".copy-status")).toHaveText("Link copied");
 });
