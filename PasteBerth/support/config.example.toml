@@ -131,30 +131,28 @@ color = "#304237"
 min_free_percent = 2.0
 # file_group = "pasteberth"
 
-# ----------------------------------------------------------- dynamic zones
+# -------------------------------------------------------- zone collections
 # Discovery follows existing directories only and never creates candidates.
-# [[autozone]]
+# Collection IDs start with '@' and can be selected by a group pattern.
+# [[zone_collection]]
+# id = "@repositories"
 # base_directory = "/home/me/Depots"
 # pattern = "^[^/]+/work/exchange$"
 # max_depth = 4
-# group = "Repositories"
 # label_mode = "git-or-relative"
 # retain = 10
 # file_group = "pasteberth"
 # min_free_percent = 2.0
-# group_layout = "tab"
-# group_hide_empty = false
-# group_show_count = true
 
 # --------------------------------------------------------------- zone groups
-# A group selects zones and controls their layout. A zone can belong to several
-# groups. If no [[groups]] section is present, an implicit "All" group exists
-# but is not shown in the UI.
+# A group selects zones or zone collections and controls their layout. A zone
+# can belong to several groups.
 #
 # name        : display name in the UI
 # selection   : all, pattern, or other (default: pattern)
-# pattern     : Python regular expressions for selection = "pattern"
-#               (re.search semantics, case-sensitive; use ^ and $ to anchor)
+# pattern     : Python regular expressions matched against zone and collection
+#               IDs for selection = "pattern" (re.search semantics,
+#               case-sensitive; use ^ and $ to anchor)
 # layout      : area or tab (default: area)
 # hide_empty  : hide the group tab when no zones match (default: false)
 # show_count  : show zone count as "(N)" in the group tab (default: true)
@@ -162,6 +160,11 @@ min_free_percent = 2.0
 [[groups]]
 name = "All"
 selection = "all"
+
+[[groups]]
+name = "Repositories"
+selection = "pattern"
+pattern = ["^@repositories$"]
 layout = "area"
 hide_empty = false
 show_count = true

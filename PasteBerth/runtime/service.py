@@ -14,12 +14,12 @@ from contextlib import contextmanager
 from pathlib import Path
 from urllib.parse import quote
 
-from .autozone import (
-    AutoZoneCandidate,
-    discover_autozones,
-    merge_autozone_groups,
+from .zone_collection import (
+    ZoneCollectionCandidate,
+    discover_zone_collections,
+    resolve_collection_members,
 )
-from .config import Config, ZoneConfig, public_path, resolve_group_zone_ids
+from .config import Config, GroupConfig, ZoneConfig, public_path, resolve_group_zone_ids
 from .content import classify
 from .images import (
     InvalidImageError,
@@ -105,16 +105,16 @@ class PasteService:
     def __init__(self, cfg: Config):
         self.cfg = cfg
         self._registry_lock = threading.RLock()
-        self._autozone_refresh_lock = threading.Lock()
+        self._zone_collection_refresh_lock = threading.Lock()
         self._zone_cfg: dict[str, ZoneConfig] = {}
         self._destinations: dict[str, LocalDestination] = {}
         self._locks: dict[str, threading.RLock] = {}
         self._space_locks: dict[int, _DeviceSpaceLock] = {}
         self._operation_state: dict[str, str] = {}
         self._operation_state_lock = threading.Lock()
-        self._autozone_diagnostics: tuple[str, ...] = ()
+        self._zone_collection_diagnostics: tuple[str, ...] = ()
         self._install_registry(cfg.zones, (), initial=True)
-        self._refresh_autozones()
+        self._refresh_zone_collections()
 
     def _new_destination(self, zone: ZoneConfig) -> LocalDestination:
         common = {
@@ -128,28 +128,32 @@ class PasteService:
             **common,
         )
 
-    @staticmethod
-    def _destination_matches(destination: LocalDestination, zone: ZoneConfig) -> bool:
-        if getattr(destination, "directory", None) != zone.directory.resolve():
+    def _destination_matches(self, destination: LocalDestination, zone: ZoneConfig) -> bool:
+        if not isinstance(destination, LocalDestination):
             return False
-        return isinstance(destination, LocalDestination)
+        if destination.directory != zone.directory.resolve():
+            return False
+        return (
+            destination.create_directory == zone.create_directory
+            and destination.limits == self.cfg.limits
+            and destination.max_image_pixels == self.cfg.max_image_pixels
+            and destination.file_group == zone.file_group
+        )
 
     def _effective_groups(
         self,
         zones: dict[str, ZoneConfig],
-        candidates: tuple[AutoZoneCandidate, ...],
-    ):
-        return merge_autozone_groups(
+        candidates: tuple[ZoneCollectionCandidate, ...],
+    ) -> tuple[dict[str, tuple[str, ...]], tuple[GroupConfig, ...]]:
+        return (
+            resolve_collection_members(candidates, zones),
             self.cfg.groups,
-            self.cfg.autozones,
-            zones,
-            candidates,
         )
 
     def _install_registry(
         self,
         static_zones: dict[str, ZoneConfig],
-        candidates: tuple[AutoZoneCandidate, ...],
+        candidates: tuple[ZoneCollectionCandidate, ...],
         *,
         initial: bool = False,
     ) -> None:
@@ -178,7 +182,7 @@ class PasteService:
             except (DestinationError, OSError):
                 if zid in static_zones or initial:
                     raise
-                log.warning("autozone destination unavailable: %s", zone.directory)
+                log.warning("zone collection destination unavailable: %s", zone.directory)
                 continue
 
         active_zones = {
@@ -190,7 +194,10 @@ class PasteService:
             except (DestinationError, OSError):
                 if zid in static_zones or initial:
                     raise
-                log.warning("autozone filesystem unavailable: %s", active_zones[zid].directory)
+                log.warning(
+                    "zone collection filesystem unavailable: %s",
+                    active_zones[zid].directory,
+                )
                 destinations.pop(zid, None)
                 active_zones.pop(zid, None)
                 continue
@@ -198,10 +205,14 @@ class PasteService:
         active_candidates = tuple(
             candidate for candidate in candidates if candidate.zone.id in active_zones
         )
-        effective_groups, group_diagnostics = self._effective_groups(
+        collection_members, effective_groups = self._effective_groups(
             active_zones, active_candidates
         )
-        group_zone_ids = resolve_group_zone_ids(effective_groups, active_zones)
+        group_zone_ids = resolve_group_zone_ids(
+            effective_groups,
+            active_zones,
+            collection_members,
+        )
         zone_groups: dict[str, list[str]] = {zid: [] for zid in active_zones}
         for group in effective_groups:
             for zid in group_zone_ids[group.name]:
@@ -217,24 +228,22 @@ class PasteService:
             self._zone_groups = {
                 zid: tuple(groups) for zid, groups in zone_groups.items()
             }
-        if group_diagnostics:
-            log.warning("%s", "; ".join(group_diagnostics))
 
-    def _refresh_autozones(self) -> None:
-        if not self.cfg.autozones:
+    def _refresh_zone_collections(self) -> None:
+        if not self.cfg.zone_collections:
             return
-        with self._autozone_refresh_lock:
-            candidates, diagnostics = discover_autozones(
-                self.cfg.autozones,
+        with self._zone_collection_refresh_lock:
+            candidates, diagnostics = discover_zone_collections(
+                self.cfg.zone_collections,
                 self.cfg.zones,
             )
             candidate_tuple = tuple(candidates)
             self._install_registry(self.cfg.zones, candidate_tuple)
             diagnostic_tuple = tuple(diagnostics)
-            if diagnostic_tuple != self._autozone_diagnostics:
+            if diagnostic_tuple != self._zone_collection_diagnostics:
                 for message in diagnostic_tuple:
                     log.warning("%s", message)
-                self._autozone_diagnostics = diagnostic_tuple
+                self._zone_collection_diagnostics = diagnostic_tuple
 
     def _valid_filename(self, name: object) -> bool:
         return valid_filename(
@@ -305,7 +314,7 @@ class PasteService:
     ):
         """Coordinate a zone operation in this process and on disk."""
         if refresh:
-            self._refresh_autozones()
+            self._refresh_zone_collections()
         with self._registry_lock:
             zone = self._zone_cfg.get(zid)
             destination = self._destinations.get(zid)
@@ -450,9 +459,14 @@ class PasteService:
         return self.cfg.auth.enabled
 
     def has_zone(self, zid: str) -> bool:
-        self._refresh_autozones()
+        self._refresh_zone_collections()
         with self._registry_lock:
             return zid in self._zone_cfg
+
+    def active_zone_count(self) -> int:
+        """Return the number of zones in the current registry snapshot."""
+        with self._registry_lock:
+            return len(self._zone_cfg)
 
     def zone_id_for_directory(self, directory: str | Path) -> str:
         """Resolve a client path against the daemon's configured zones."""
@@ -461,7 +475,7 @@ class PasteService:
         except (OSError, RuntimeError, ValueError) as exc:
             raise ServiceError("invalid_request", f"invalid zone directory: {directory}") from exc
         target_key = os.path.normcase(os.path.normpath(str(target)))
-        self._refresh_autozones()
+        self._refresh_zone_collections()
         with self._registry_lock:
             zones = tuple(self._zone_cfg.items())
         for zid, zone in zones:
@@ -499,7 +513,7 @@ class PasteService:
         ]
 
     def overview(self, *, blocking: bool = True) -> dict:
-        self._refresh_autozones()
+        self._refresh_zone_collections()
         with self._registry_lock:
             snapshot = tuple(
                 (
@@ -565,7 +579,7 @@ class PasteService:
 
     def group_overview(self) -> list[dict]:
         """Return groups without reading storage destinations."""
-        self._refresh_autozones()
+        self._refresh_zone_collections()
         return self._group_overview_from_registry()
 
     # --------------------------------------------------------------- upload

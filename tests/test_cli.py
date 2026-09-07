@@ -564,7 +564,9 @@ class TestConfigurationDepot(unittest.TestCase):
 
         proc = run_cli(
             ["audit", "--config", str(target)],
-            env={"PASTEBERTH_CONFIG": None},
+            env={
+                "PASTEBERTH_CONFIG": None,
+            },
         )
 
         self.assertEqual(proc.returncode, 2)
@@ -1201,7 +1203,7 @@ class TestFilesystemDrop(unittest.TestCase):
         self.assertTrue((self.zone / "report.txt").exists())
         self.assertEqual((self.zone / "target.txt").read_text(encoding="utf-8"), "foreign")
 
-class TestFilesystemDropAutozone(unittest.TestCase):
+class TestFilesystemDropZoneCollection(unittest.TestCase):
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
         self.tmp = Path(self._tmp.name)
@@ -1217,10 +1219,10 @@ allow_unauthenticated_local = true
 [auth]
 enabled = false
 
-[[autozone]]
+[[zone_collection]]
+id = "@repositories"
 base_directory = {str(self.tmp)!r}
 pattern = "^[^/]+/work/exchange$"
-group = "Repositories"
 retain = 2
 ''',
             encoding="utf-8",
@@ -1252,7 +1254,7 @@ retain = 2
             "published",
         )
 
-    def test_autozone_reconnait_un_alias_du_chemin_fourni(self):
+    def test_zone_collection_reconnait_un_alias_du_chemin_fourni(self):
         if platform_fs().backend_name == "windows":
             self.skipTest("les liens de répertoire ne sont pas couverts ici")
         alias = self.tmp / "project-alias"
@@ -1323,7 +1325,10 @@ retain = 2
                 str(target),
                 str(source),
             ],
-            env={"PASTEBERTH_CONFIG": None},
+            env={
+                "PASTEBERTH_CONFIG": None,
+                "XDG_CONFIG_HOME": str(self.tmp / "empty-drop-config-home"),
+            },
         )
 
         self.assertEqual(proc.returncode, 2)
@@ -1401,7 +1406,11 @@ class TestFilesystemDropDirectoryAlias(unittest.TestCase):
             [
                 "register",
                 str(self.configured_alias / target.name),
-            ]
+            ],
+            env={
+                "PASTEBERTH_CONFIG": None,
+                "XDG_CONFIG_HOME": str(self.tmp / "empty-register-config-home"),
+            },
         )
 
         self.assertEqual(proc.returncode, 0, proc.stderr)

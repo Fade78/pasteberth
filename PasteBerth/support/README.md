@@ -27,7 +27,7 @@ locations are under the XDG configuration and data directories.
 For multi-file filesystem drops, the client can omit its configuration when it
 shares the machine and target filesystem with the daemon. Without `--server`,
 it tries `https://127.0.0.1:8765`; the daemon resolves the supplied target
-against its configured static zones and `[[autozone]]` candidates. Use
+against its configured static zones and `[[zone_collection]]` candidates. Use
 `--insecure` for the trusted self-signed local certificate, or pass an explicit
 `--server URL`. A one-file `drop FILE` is invalid because `drop` is always
 server-backed. Use `register FILE` for a local-only sidecar operation; the
@@ -44,9 +44,9 @@ again (or reboot) before restarting a `systemd --user` service; reloading the
 unit alone does not refresh its supplementary groups. A successful `register`
 can otherwise create a sidecar that the daemon cannot read.
 
-An autozone rule can cover a whole project tree, for example
+A zone collection can cover a whole project tree, for example
 `/home/me/Depots/*/work/exchange`. When a new matching project directory is
 created, the daemon discovers it during the next zone read and a visible browser
 normally shows it within the next 10-second poll. No configuration edit or
-service restart is needed; the directory must still be readable and satisfy the
-rule's depth and subtree constraints.
+service restart is needed; the directory must still be readable, writable, and
+traversable and satisfy the rule's depth and subtree constraints.

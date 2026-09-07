@@ -1,4 +1,4 @@
-"""Read-only discovery of sidecar-backed dynamic zones."""
+"""Read-only discovery of sidecar-backed zone collections."""
 from __future__ import annotations
 
 import hashlib
@@ -9,13 +9,13 @@ from collections.abc import Hashable, Iterable, Mapping
 from dataclasses import dataclass, replace
 from pathlib import Path
 
-from .config import AutoZoneConfig, GroupConfig, ZoneConfig
+from .config import ZoneCollectionConfig, ZoneConfig
 
 
-log = logging.getLogger("pasteberth.autozone")
+log = logging.getLogger("pasteberth.zone_collection")
 
 _ZONE_ID_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
-_AUTOZONE_COLORS = (
+_ZONE_COLLECTION_COLORS = (
     "#243447", "#304c61", "#3f5f75", "#4d426b",
     "#5c3f63", "#633f4b", "#65452f", "#5d542f",
     "#3f5e45", "#2f5e5d", "#3e506b", "#51405f",
@@ -23,12 +23,30 @@ _AUTOZONE_COLORS = (
 
 
 @dataclass(frozen=True)
-class AutoZoneCandidate:
-    """One accepted directory and the autozone groups that selected it."""
+class ZoneCollectionCandidate:
+    """One accepted directory and the collections that contain it."""
 
     zone: ZoneConfig
-    groups: tuple[str, ...]
+    collection_ids: tuple[str, ...]
     rule_indexes: tuple[int, ...]
+
+
+def _zone_settings_signature(rule: ZoneCollectionConfig) -> tuple[object, ...]:
+    """Return the zone behavior controlled by a collection rule."""
+    return (
+        rule.label_mode,
+        rule.storage_mode,
+        rule.retain,
+        rule.file_group,
+        rule.min_free_percent,
+        rule.reference_prefix,
+        rule.reference_suffix,
+        rule.reference_list_prefix,
+        rule.reference_list_suffix,
+        rule.reference_separator,
+        rule.allow_zip_download,
+        rule.color,
+    )
 
 
 def _directory_key(path: Path) -> Hashable:
@@ -80,11 +98,11 @@ def _candidate_subtree_ok(path: Path) -> tuple[bool, str | None]:
     return True, None
 
 
-def _scan_rule(
-    rule: AutoZoneConfig,
+def _scan_collection(
+    rule: ZoneCollectionConfig,
     rule_index: int,
 ) -> tuple[list[tuple[Path, str, Hashable]], list[str]]:
-    prefix = f"autozone #{rule_index + 1}"
+    prefix = f"zone collection #{rule_index + 1}"
     try:
         base = rule.base_directory.resolve(strict=True)
     except (OSError, RuntimeError, ValueError) as exc:
@@ -132,8 +150,8 @@ def _scan_rule(
                 )
             relative = _relative_path(resolved, base)
             if relative is None:
-                # Following a link outside the rule base is safe but cannot
-                # produce a path relative to this rule.
+                # Following a link outside the collection base is safe but cannot
+                # produce a path relative to this collection.
                 continue
             depth = len(relative.split("/")) if relative else 0
             if depth == 0 or depth > rule.max_depth:
@@ -150,25 +168,27 @@ def _scan_rule(
     return matches, diagnostics
 
 
-def _autozone_color(path: Path, group: str) -> str:
-    key = os.path.normcase(os.path.normpath(str(path))) + "\x00" + group
+def _zone_collection_color(path: Path, collection_id: str) -> str:
+    key = os.path.normcase(os.path.normpath(str(path))) + "\x00" + collection_id
     digest = hashlib.sha256(key.encode("utf-8")).digest()
-    index = int.from_bytes(digest[:8], "big") % len(_AUTOZONE_COLORS)
-    return _AUTOZONE_COLORS[index]
+    index = int.from_bytes(digest[:8], "big") % len(_ZONE_COLLECTION_COLORS)
+    return _ZONE_COLLECTION_COLORS[index]
 
 
-def _distinct_autozone_color(path: Path, group: str, used: set[str]) -> str:
-    """Choose a stable readable color that is not already used by the group."""
-    key = os.path.normcase(os.path.normpath(str(path))) + "\x00" + group
+def _distinct_zone_collection_color(
+    path: Path, collection_id: str, used: set[str]
+) -> str:
+    """Choose a stable readable color that is not already used by the collection."""
+    key = os.path.normcase(os.path.normpath(str(path))) + "\x00" + collection_id
     digest = hashlib.sha256(key.encode("utf-8")).digest()
-    start = int.from_bytes(digest[:8], "big") % len(_AUTOZONE_COLORS)
-    for offset in range(len(_AUTOZONE_COLORS)):
-        color = _AUTOZONE_COLORS[(start + offset) % len(_AUTOZONE_COLORS)]
+    start = int.from_bytes(digest[:8], "big") % len(_ZONE_COLLECTION_COLORS)
+    for offset in range(len(_ZONE_COLLECTION_COLORS)):
+        color = _ZONE_COLLECTION_COLORS[(start + offset) % len(_ZONE_COLLECTION_COLORS)]
         if color not in used:
             return color
 
-    # Keep producing dark, high-contrast colors when a group has more entries
-    # than the curated palette. The salt makes the fallback deterministic.
+    # Keep producing dark, high-contrast colors when a collection has more
+    # entries than the curated palette. The salt makes the fallback deterministic.
     salt = 0
     while True:
         fallback = hashlib.sha256(f"{key}\x00{salt}".encode("utf-8")).digest()
@@ -178,41 +198,43 @@ def _distinct_autozone_color(path: Path, group: str, used: set[str]) -> str:
         salt += 1
 
 
-def _assign_distinct_autozone_colors(
-    candidates: list[AutoZoneCandidate],
-    rules: tuple[AutoZoneConfig, ...],
-) -> list[AutoZoneCandidate]:
-    """Make generated colors distinct within every autozone group."""
-    used_by_group: dict[str, set[str]] = {}
-    generated: list[tuple[int, AutoZoneCandidate]] = []
+def _assign_distinct_zone_collection_colors(
+    candidates: list[ZoneCollectionCandidate],
+    rules: tuple[ZoneCollectionConfig, ...],
+) -> list[ZoneCollectionCandidate]:
+    """Make generated colors distinct within every zone collection."""
+    used_by_collection: dict[str, set[str]] = {}
+    generated: list[tuple[int, ZoneCollectionCandidate]] = []
     for index, candidate in enumerate(candidates):
         explicit = (
             bool(candidate.rule_indexes)
             and rules[candidate.rule_indexes[0]].color is not None
         )
-        for group in candidate.groups:
-            used_by_group.setdefault(group, set())
+        for collection_id in candidate.collection_ids:
+            used_by_collection.setdefault(collection_id, set())
             if explicit:
-                used_by_group[group].add(candidate.zone.color)
+                used_by_collection[collection_id].add(candidate.zone.color)
         if not explicit:
             generated.append((index, candidate))
 
     for index, candidate in generated:
         blocked = set().union(
-            *(used_by_group[group] for group in candidate.groups)
+            *(used_by_collection[collection_id] for collection_id in candidate.collection_ids)
         )
-        group = candidate.groups[0] if candidate.groups else ""
-        color = _distinct_autozone_color(candidate.zone.directory, group, blocked)
+        collection_id = candidate.collection_ids[0] if candidate.collection_ids else ""
+        color = _distinct_zone_collection_color(candidate.zone.directory, collection_id, blocked)
         candidates[index] = replace(
             candidate,
             zone=replace(candidate.zone, color=color),
         )
-        for group in candidate.groups:
-            used_by_group[group].add(color)
+        for collection_id in candidate.collection_ids:
+            used_by_collection[collection_id].add(color)
     return candidates
 
 
-def _zone_from_candidate(rule: AutoZoneConfig, path: Path, relative: str) -> ZoneConfig | None:
+def _zone_from_candidate(
+    rule: ZoneCollectionConfig, path: Path, relative: str
+) -> ZoneConfig | None:
     zone_id = "-".join(relative.split("/")).lower()
     if not _ZONE_ID_RE.fullmatch(zone_id):
         return None
@@ -228,7 +250,7 @@ def _zone_from_candidate(rule: AutoZoneConfig, path: Path, relative: str) -> Zon
         reference_list_suffix=rule.reference_list_suffix,
         reference_separator=rule.reference_separator,
         allow_zip_download=rule.allow_zip_download,
-        color=rule.color if rule.color is not None else _autozone_color(path, rule.group),
+        color=rule.color if rule.color is not None else _zone_collection_color(path, rule.id),
         create_directory=False,
         min_free_percent=rule.min_free_percent,
         storage_mode="sidecar",
@@ -250,10 +272,10 @@ def _static_directory_keys(
     return paths
 
 
-def discover_autozones(
-    rules: Iterable[AutoZoneConfig],
+def discover_zone_collections(
+    rules: Iterable[ZoneCollectionConfig],
     static_zones: Mapping[str, ZoneConfig] | Iterable[ZoneConfig] = (),
-) -> tuple[list[AutoZoneCandidate], list[str]]:
+) -> tuple[list[ZoneCollectionCandidate], list[str]]:
     """Return a deterministic dynamic-zone snapshot and diagnostics."""
     rules = tuple(rules)
     static_zone_values = tuple(
@@ -263,15 +285,17 @@ def discover_autozones(
     static = _static_directory_keys(static_zones)
     static_ids = set(static_zones)
     diagnostics: list[str] = []
-    records_by_identity: dict[Hashable, list[tuple[int, AutoZoneConfig, Path, str]]] = {}
+    records_by_identity: dict[
+        Hashable, list[tuple[int, ZoneCollectionConfig, Path, str]]
+    ] = {}
     for rule_index, rule in enumerate(rules):
-        matches, rule_diagnostics = _scan_rule(rule, rule_index)
+        matches, rule_diagnostics = _scan_collection(rule, rule_index)
         diagnostics.extend(rule_diagnostics)
         for path, relative, identity in sorted(matches, key=lambda match: match[1]):
             normalized = os.path.normcase(os.path.normpath(str(path)))
             if any(normalized == static_path or identity == static_identity for static_path, static_identity in static):
                 diagnostics.append(
-                    f"autozone #{rule_index + 1}: candidate {relative!r} ignored: "
+                    f"zone collection #{rule_index + 1}: candidate {relative!r} ignored: "
                     "static zone has precedence"
                 )
                 continue
@@ -280,125 +304,95 @@ def discover_autozones(
             )
 
     canonical: list[
-        tuple[int, AutoZoneConfig, Path, str, Hashable, tuple[str, ...], tuple[int, ...]]
+        tuple[
+            int,
+            ZoneCollectionConfig,
+            Path,
+            str,
+            Hashable,
+            tuple[str, ...],
+            tuple[int, ...],
+        ]
     ] = []
     for identity, records in records_by_identity.items():
         records.sort(key=lambda record: (record[3], record[0], str(record[2])))
         rule_index, rule, path, relative = records[0]
+        settings = {_zone_settings_signature(record[1]) for record in records}
+        if len(settings) > 1:
+            collection_ids = ", ".join(
+                sorted(dict.fromkeys(record[1].id for record in records))
+            )
+            diagnostics.append(
+                f"zone collection candidate {path} ignored: collections "
+                f"{collection_ids} define conflicting zone settings"
+            )
+            continue
         if len(records) > 1:
             aliases = ", ".join(record[3] for record in records[1:])
             diagnostics.append(
-                f"autozone #{rule_index + 1}: candidate {relative!r} is canonical; "
+                f"zone collection #{rule_index + 1}: candidate {relative!r} is canonical; "
                 f"resolved aliases ignored: {aliases}"
             )
-        groups = tuple(dict.fromkeys(record[1].group for record in records))
+        collection_ids = tuple(dict.fromkeys(record[1].id for record in records))
         rule_indexes = tuple(dict.fromkeys(record[0] for record in records))
-        canonical.append((rule_index, rule, path, relative, identity, groups, rule_indexes))
+        canonical.append((rule_index, rule, path, relative, identity, collection_ids, rule_indexes))
 
-    by_id: dict[str, list[AutoZoneCandidate]] = {}
-    for rule_index, rule, path, relative, identity, groups, rule_indexes in canonical:
+    by_id: dict[str, list[ZoneCollectionCandidate]] = {}
+    for rule_index, rule, path, relative, identity, collection_ids, rule_indexes in canonical:
         zone = _zone_from_candidate(rule, path, relative)
         zone_id = "-".join(relative.split("/")).lower()
         if zone is None:
             diagnostics.append(
-                f"autozone #{rule_index + 1}: candidate {relative!r} ignored: "
+                f"zone collection #{rule_index + 1}: candidate {relative!r} ignored: "
                 f"generated zone ID {zone_id!r} is invalid or longer than 64 characters"
             )
             continue
         if zone.id in static_ids:
             diagnostics.append(
-                f"autozone #{rule_index + 1}: candidate {relative!r} ignored: "
+                f"zone collection #{rule_index + 1}: candidate {relative!r} ignored: "
                 f"generated zone ID {zone.id!r} collides with static zone"
             )
             continue
         by_id.setdefault(zone.id, []).append(
-            AutoZoneCandidate(zone=zone, groups=groups, rule_indexes=rule_indexes)
+            ZoneCollectionCandidate(
+                zone=zone,
+                collection_ids=collection_ids,
+                rule_indexes=rule_indexes,
+            )
         )
 
-    result: list[AutoZoneCandidate] = []
+    result: list[ZoneCollectionCandidate] = []
     for zone_id, candidates in sorted(by_id.items()):
         if len(candidates) > 1:
             for candidate in candidates:
                 diagnostics.append(
-                    f"autozone candidate {candidate.zone.directory} ignored: "
-                    f"generated zone ID {zone_id!r} collides with another autozone"
+                    f"zone collection candidate {candidate.zone.directory} ignored: "
+                    f"generated zone ID {zone_id!r} collides with another zone collection"
                 )
             continue
         result.append(candidates[0])
-    return _assign_distinct_autozone_colors(result, tuple(rules)), diagnostics
+    return _assign_distinct_zone_collection_colors(result, tuple(rules)), diagnostics
 
 
-def merge_autozone_groups(
-    configured_groups: Iterable[GroupConfig],
-    rules: Iterable[AutoZoneConfig],
-    zones: Mapping[str, ZoneConfig],
-    candidates: Iterable[AutoZoneCandidate],
-) -> tuple[tuple[GroupConfig, ...], list[str]]:
-    """Add dynamic memberships and generate groups for unnamed rules."""
-    configured = tuple(configured_groups)
-    rules = tuple(rules)
-    active_ids = set(zones)
+def resolve_collection_members(
+    candidates: Iterable[ZoneCollectionCandidate],
+    zone_ids: Iterable[str],
+) -> dict[str, tuple[str, ...]]:
+    """Build ordered collection membership from the active candidate snapshot."""
+    ordered_zone_ids = tuple(zone_ids)
+    active_ids = set(ordered_zone_ids)
     members: dict[str, list[str]] = {}
     for candidate in candidates:
-        if candidate.zone.id not in active_ids:
+        zone_id = candidate.zone.id
+        if zone_id not in active_ids:
             continue
-        for group_name in candidate.groups:
-            group_members = members.setdefault(group_name, [])
-            if candidate.zone.id not in group_members:
-                group_members.append(candidate.zone.id)
-
-    def ordered_members(group_name: str) -> tuple[str, ...]:
-        selected = set(members.get(group_name, ()))
-        return tuple(zone_id for zone_id in zones if zone_id in selected)
-
-    ordinary_names = {group.name for group in configured}
-    groups = [
-        GroupConfig(
-            name=group.name,
-            selection=group.selection,
-            pattern=group.pattern,
-            pattern_defined=group.pattern_defined,
-            layout=group.layout,
-            hide_empty=group.hide_empty,
-            show_count=group.show_count,
-            members=ordered_members(group.name),
+        for collection_id in candidate.collection_ids:
+            collection_members = members.setdefault(collection_id, [])
+            if zone_id not in collection_members:
+                collection_members.append(zone_id)
+    return {
+        collection_id: tuple(
+            zone_id for zone_id in ordered_zone_ids if zone_id in set(collection_zone_ids)
         )
-        for group in configured
-    ]
-    generated: dict[str, GroupConfig] = {}
-    diagnostics: list[str] = []
-    for rule_index, rule in enumerate(rules):
-        if rule.group in ordinary_names:
-            continue
-        existing = generated.get(rule.group)
-        if existing is None:
-            generated[rule.group] = GroupConfig(
-                name=rule.group,
-                selection="autozone",
-                members=ordered_members(rule.group),
-                layout=rule.group_layout,
-                hide_empty=rule.group_hide_empty,
-                show_count=rule.group_show_count,
-            )
-            continue
-        if (
-            existing.layout != rule.group_layout
-            or existing.hide_empty != rule.group_hide_empty
-            or existing.show_count != rule.group_show_count
-        ):
-            diagnostics.append(
-                f"autozone #{rule_index + 1}: generated group {rule.group!r} "
-                "options differ from the first rule; first rule wins"
-            )
-        generated[rule.group] = GroupConfig(
-            name=existing.name,
-            selection=existing.selection,
-            pattern=existing.pattern,
-            pattern_defined=existing.pattern_defined,
-            layout=existing.layout,
-            hide_empty=existing.hide_empty,
-            show_count=existing.show_count,
-            members=ordered_members(rule.group),
-        )
-    groups.extend(generated.values())
-    return tuple(groups), diagnostics
+        for collection_id, collection_zone_ids in members.items()
+    }

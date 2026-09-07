@@ -47,7 +47,7 @@ The reverse flow is also supported:
 2. Pasteberth publishes it into a configured zone and creates its sidecar.
 3. A browser user sees the new item and can download it.
 
-For a tree of projects, configure one `[[autozone]]` rule instead of adding one
+For a tree of projects, configure one `[[zone_collection]]` rule instead of adding one
 static zone per project. When a new project creates a matching exchange
 directory, the service discovers it during its next zone read. A visible Web UI
 polls that read every 10 seconds, so the new project normally appears without a
@@ -76,7 +76,7 @@ contexts:
 - It is not a synchronization service between server instances.
 - It does not provide individual Web accounts in v1.
 - It does not run a filesystem watcher for arbitrary directories. Configured
-  `[[autozone]]` rules are rescanned during service reads, including the Web UI's
+  `[[zone_collection]]` rules are rescanned during service reads, including the Web UI's
   periodic refresh.
 - It does not make the browser able to read a server filesystem path.
 
@@ -364,7 +364,8 @@ Groups control which zones are visible and how they are laid out:
 
 Without a `[[groups]]` section, all zones are displayed through an implicit
 `All` view and no group bar is shown. An `all` group contains every zone. A
-`pattern` group matches zone IDs, not labels. An `other` group contains zones
+`pattern` group matches zone or collection IDs, not labels; matching a collection
+selects all of its zones. An `other` group contains zones
 not selected by any `pattern` group; `all` groups are deliberately ignored for
 that calculation.
 
@@ -373,27 +374,34 @@ ignored patterns on `all`/`other`, and equivalent effective selections.
 The Group options menu can show or hide the left zone column for a `tab` group;
 that preference is kept separately for each group in the browser.
 
-### 4.6 Automatic zones
+### 4.6 Zone collections
 
-Repeatable `[[autozone]]` rules expose existing directories below an absolute
-`base_directory` when their resolved relative path matches `pattern`. Discovery
-does not create directories or edit configuration, and a configuration may use
-autozones without any static `[[zones]]` entries. Each rule supplies a generated
-group and creates a sidecar-backed zone. If `color` is omitted, the zone color
-is assigned deterministically from the resolved access path and generated group
-name, and generated colors are kept distinct within the group; an explicit
-`color` remains authoritative for the rule. The discovered directory must
-already be readable and traversable by the server account; discovery never
-changes its ownership or permissions.
+Repeatable `[[zone_collection]]` rules expose existing directories below an
+absolute `base_directory` when their resolved relative path matches `pattern`.
+Each collection has an ID such as `@repositories`; it does not own or generate
+a group. A `selection = "pattern"` group can match that ID and selects every
+zone discovered by the collection. A configuration may use collections without
+any static `[[zones]]` entries.
 
-Regular files copied or moved directly into an autozone have no coherent
+Several collections may contain the same zone. Their zone behavior must agree;
+when retention, references, permissions, or another zone setting conflicts, the
+candidate is rejected and reported by `audit`.
+
+Discovery does not create directories or edit configuration. If `color` is
+omitted, the zone color is deterministic and distinct within its collections;
+an explicit `color` remains authoritative for the rule. The discovered
+directory must already be readable, writable, and traversable by the server
+account; discovery alone may succeed without write permission, but uploads and
+sidecars will not.
+
+Regular files copied or moved directly into a collection zone have no coherent
 sidecar, so they remain foreign and are ignored. Uploads through the browser,
 API, or CLI create the data/sidecar pair. A visible browser polls `/api/zones`
-every 10 seconds; that request rescans autozone rules, so a new matching
-project directory appears without a daemon restart. A hidden tab refreshes when
-it becomes visible. The complete discovery contract, including aliases,
-diagnostics, permissions, and lifecycle, is in
-[`docs/autozone-contract.md`](docs/autozone-contract.md).
+every 10 seconds; that request rescans collections, so a new matching project
+directory appears without a daemon restart. A hidden tab refreshes when it
+becomes visible. The complete discovery contract, including aliases,
+diagnostics, permissions, group expansion, and lifecycle, is in
+[`docs/zone-collection-contract.md`](docs/zone-collection-contract.md).
 
 ## 5. Web UI
 
@@ -580,7 +588,7 @@ pasteberth register [--config PATH] FILE
 
 Without `--zone` and with multiple positional arguments, the first positional
 argument is the target directory and the daemon resolves its canonical path
-against static zones and eligible `[[autozone]]` candidates. This resolution is
+against static zones and eligible `[[zone_collection]]` candidates. This resolution is
 performed by the daemon, so the client does not need a configuration file;
 symlinked spellings of the configured and supplied paths resolve to the same
 zone. With `--zone ID`, positional arguments are source files and the ID is sent
@@ -978,7 +986,7 @@ effective `upload_limit_bytes` value. That value is the smaller of the hard
 upload limit and the bytes that can be accepted without crossing the configured
 free-space safeguards; raw disk capacity is not returned.
 The loopback-only `POST /api/drop/resolve` endpoint accepts a target directory
-and returns its configured zone ID after static/autozone and canonical-path
+and returns its configured zone ID after static/collection and canonical-path
 resolution. It is used by the filesystem client when the client has no local
 configuration; it never authorizes an arbitrary target directory.
 The `/api/zones` response also includes the same `images` array used to compute

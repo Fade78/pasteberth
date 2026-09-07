@@ -33,7 +33,7 @@ from pathlib import Path
 import socket
 
 from . import __version__
-from .autozone import discover_autozones, merge_autozone_groups
+from .zone_collection import discover_zone_collections, resolve_collection_members
 from .client import ClientError, PasteberthClient, api_error
 from .auth import (
     LoginRateLimiter,
@@ -170,7 +170,7 @@ def _cmd_serve(args: argparse.Namespace) -> int:
         "https" if cfg.tls.enabled else "http",
         cfg.listen_address,
         cfg.port,
-        len(cfg.zones),
+        service.active_zone_count(),
         "enabled" if cfg.auth.enabled else "DISABLED",
     )
     if not cfg.auth.enabled and not cfg.allow_unauthenticated_remote:
@@ -226,7 +226,9 @@ def _zone_for_directory(cfg, raw_directory: str):
         raise ConfigError(f"invalid zone directory: {raw_directory!r} ({exc})") from exc
     normalized = Path(os.path.normpath(str(directory)))
     zones = dict(cfg.zones)
-    candidates, _diagnostics = discover_autozones(cfg.autozones, cfg.zones)
+    candidates, _diagnostics = discover_zone_collections(
+        cfg.zone_collections, cfg.zones
+    )
     for candidate in candidates:
         zones.setdefault(candidate.zone.id, candidate.zone)
     for zone in zones.values():
@@ -241,7 +243,9 @@ def _zone_for_id(cfg, zone_id: str):
     zone = cfg.zones.get(zone_id)
     if zone is not None:
         return zone
-    candidates, _diagnostics = discover_autozones(cfg.autozones, cfg.zones)
+    candidates, _diagnostics = discover_zone_collections(
+        cfg.zone_collections, cfg.zones
+    )
     for candidate in candidates:
         if candidate.zone.id == zone_id:
             return candidate.zone
@@ -853,11 +857,12 @@ create_directory = true
 min_free_percent = 2.0
 
 # Dynamic sidecar zones are optional. Discovery never creates directories.
-# [[autozone]]
+# A collection ID starts with '@' and can be selected by a group pattern.
+# [[zone_collection]]
+# id = "@repositories"
 # base_directory = "/absolute/path/to/parent"
 # pattern = "^[^/]+/work/exchange$"
 # max_depth = 4
-# group = "Repositories"
 # label_mode = "git-or-relative"
 # retain = 10
 # file_group = "pasteberth"
@@ -870,6 +875,12 @@ min_free_percent = 2.0
 # selection = "pattern"
 # pattern = ["^lightwebpres.*$"]
 # layout = "tab"
+#
+# [[groups]]
+# name = "Repositories"
+# selection = "pattern"
+# pattern = ["^@repositories$"]
+# layout = "area"
 #
 # [[groups]]
 # name = "Other"
@@ -1210,21 +1221,17 @@ def _network_warning(cfg) -> str | None:
 def _audit_groups(cfg, candidates=None, zones=None) -> list[str]:
     warnings: list[str] = []
     if candidates is None:
-        candidates, diagnostics = discover_autozones(cfg.autozones, cfg.zones)
+        candidates, diagnostics = discover_zone_collections(
+            cfg.zone_collections, cfg.zones
+        )
     else:
         diagnostics = ()
     if zones is None:
         zones = dict(cfg.zones)
         for candidate in candidates:
             zones.setdefault(candidate.zone.id, candidate.zone)
-    groups, group_diagnostics = merge_autozone_groups(
-        cfg.groups,
-        cfg.autozones,
-        zones,
-        candidates,
-    )
     warnings.extend(diagnostics)
-    warnings.extend(group_diagnostics)
+    groups = cfg.groups
 
     all_groups = [group for group in groups if group.selection == "all"]
     other_groups = [group for group in groups if group.selection == "other"]
@@ -1250,7 +1257,8 @@ def _audit_groups(cfg, candidates=None, zones=None) -> list[str]:
                 f"selection='{group.selection}'"
             )
 
-    memberships = resolve_group_zone_ids(groups, zones)
+    collection_members = resolve_collection_members(candidates, zones)
+    memberships = resolve_group_zone_ids(groups, zones, collection_members)
     seen_pattern_memberships: dict[tuple[str, ...], str] = {}
     seen_effective_memberships: dict[tuple[str, ...], dict[str, str]] = {}
     for group in groups:
@@ -1356,34 +1364,38 @@ def _cmd_audit(args: argparse.Namespace) -> int:
             "the server will reject all content"
         )
     fs = platform_fs()
-    for index, rule in enumerate(cfg.autozones, start=1):
+    for index, rule in enumerate(cfg.zone_collections, start=1):
         if rule.file_group is None:
             continue
         try:
             fs.validate_group(rule.file_group)
         except (OSError, UnsupportedFilesystemError) as exc:
             errors.append(
-                f"autozone #{index}: file_group {rule.file_group!r} is unusable ({exc})"
+                f"zone collection #{index}: file_group {rule.file_group!r} is unusable ({exc})"
             )
-    auto_candidates, auto_diagnostics = discover_autozones(cfg.autozones, cfg.zones)
-    warnings.extend(auto_diagnostics)
-    per_rule_counts = [0] * len(cfg.autozones)
-    for candidate in auto_candidates:
+    collection_candidates, collection_diagnostics = discover_zone_collections(
+        cfg.zone_collections, cfg.zones
+    )
+    warnings.extend(collection_diagnostics)
+    per_rule_counts = [0] * len(cfg.zone_collections)
+    for candidate in collection_candidates:
         for rule_index in candidate.rule_indexes:
             if 0 <= rule_index < len(per_rule_counts):
                 per_rule_counts[rule_index] += 1
     for index, count in enumerate(per_rule_counts):
-        warnings.append(f"autozone #{index + 1}: {count} candidate(s) currently discovered")
-    auto_zones = dict(cfg.zones)
-    for candidate in auto_candidates:
-        auto_zones.setdefault(candidate.zone.id, candidate.zone)
-    warnings.extend(_audit_groups(cfg, auto_candidates, auto_zones))
+        warnings.append(
+            f"zone collection #{index + 1}: {count} candidate(s) currently discovered"
+        )
+    all_zones = dict(cfg.zones)
+    for candidate in collection_candidates:
+        all_zones.setdefault(candidate.zone.id, candidate.zone)
+    warnings.extend(_audit_groups(cfg, collection_candidates, all_zones))
 
     for zone in cfg.zones.values():
         zone_errors, zone_warnings = _audit_zone(cfg, zone)
         errors.extend(zone_errors)
         warnings.extend(zone_warnings)
-    for candidate in auto_candidates:
+    for candidate in collection_candidates:
         zone_errors, zone_warnings = _audit_zone(cfg, candidate.zone)
         errors.extend(zone_errors)
         warnings.extend(zone_warnings)
@@ -1515,7 +1527,7 @@ def build_parser() -> argparse.ArgumentParser:
             "Publish one or more regular source files into a zone managed by the daemon.\n\n"
             "With --zone ID, positional arguments are source files only.\n"
             "Without --zone, the first positional argument is a target directory\n"
-            "that the daemon resolves against its static zones and autozones; the\n"
+            "that the daemon resolves against its static zones and zone collections; the\n"
             "remaining arguments are source files. A single positional argument is\n"
             "invalid; use register FILE for an existing local file.\n\n"
             "For a loopback server with a writable target, Pasteberth stages\n"

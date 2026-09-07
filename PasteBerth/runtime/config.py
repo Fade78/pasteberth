@@ -11,7 +11,7 @@ import math
 import os
 import re
 import socket
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -37,7 +37,8 @@ _LOG_LEVELS = {"DEBUG", "INFO", "WARNING", "ERROR"}
 _GROUP_SELECTIONS = {"all", "pattern", "other"}
 _GROUP_LAYOUTS = {"area", "tab"}
 _STORAGE_MODES = {"directory", "sidecar"}
-_AUTOZONE_LABEL_MODES = {"git-or-relative", "relative"}
+_ZONE_COLLECTION_LABEL_MODES = {"git-or-relative", "relative"}
+_COLLECTION_ID_RE = re.compile(r"^@[a-z0-9][a-z0-9_-]{0,63}$")
 _FILE_GROUP_RE = re.compile(r"^[A-Za-z0-9_.@+-]{1,128}$")
 _URL_PREFIX_RE = re.compile(r"/(?:[A-Za-z0-9._~-]+)(?:/[A-Za-z0-9._~-]+)*")
 
@@ -147,11 +148,11 @@ class ZoneConfig:
 
 
 @dataclass(frozen=True)
-class AutoZoneConfig:
+class ZoneCollectionConfig:
+    id: str
     base_directory: Path
     pattern: str
     max_depth: int
-    group: str
     label_mode: str = "git-or-relative"
     storage_mode: str = "sidecar"
     retain: int = 10
@@ -178,7 +179,6 @@ class GroupConfig:
     layout: str = "area"
     hide_empty: bool = False
     show_count: bool = True
-    members: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -242,7 +242,7 @@ class Config:
     auth: AuthConfig
     tls: TLSConfig
     zones: dict[str, ZoneConfig]
-    autozones: tuple[AutoZoneConfig, ...]
+    zone_collections: tuple[ZoneCollectionConfig, ...]
     groups: tuple[GroupConfig, ...]
     log_level: str
     config_path: Path
@@ -606,21 +606,29 @@ def _parse_zone(raw_zone: object, index: int, warnings: list[str]) -> ZoneConfig
     )
 
 
-def _parse_autozone(raw_autozone: object, index: int, warnings: list[str]) -> AutoZoneConfig:
-    where = f"[[autozone]] #{index + 1}"
-    table = _expect_table(raw_autozone, where)
+def _parse_zone_collection(
+    raw_collection: object, index: int, warnings: list[str]
+) -> ZoneCollectionConfig:
+    where = f"[[zone_collection]] #{index + 1}"
+    table = _expect_table(raw_collection, where)
     _warn_unknown(
         table,
         {
-            "base_directory", "pattern", "max_depth", "group", "label_mode",
+            "id", "base_directory", "pattern", "max_depth", "label_mode",
             "storage_mode", "max_items", "min_free_percent", "retain", "file_group",
             "reference_prefix", "reference_suffix", "reference_list_prefix",
             "reference_list_suffix", "reference_separator", "allow_zip_download",
-            "color", "group_layout", "group_hide_empty", "group_show_count",
+            "color",
         },
         where,
         warnings,
     )
+    collection_id = _get_str(table, "id", where)
+    if not _COLLECTION_ID_RE.fullmatch(collection_id):
+        raise ConfigError(
+            f"{where}: invalid collection ID: {collection_id!r} "
+            "(must start with '@' and use a-z, digits, '-', '_')"
+        )
     base_raw = _get_str(table, "base_directory", where)
     if "\x00" in base_raw:
         raise ConfigError(f"{where}: 'base_directory' contains a NUL character")
@@ -642,12 +650,11 @@ def _parse_autozone(raw_autozone: object, index: int, warnings: list[str]) -> Au
     max_depth = table.get("max_depth", 4)
     if isinstance(max_depth, bool) or not isinstance(max_depth, int) or max_depth < 1:
         raise ConfigError(f"{where}: 'max_depth' must be a positive integer")
-    group = _get_str(table, "group", where)
     file_group = _get_file_group(table, where)
     label_mode = _get_str(table, "label_mode", where, default="git-or-relative").lower()
-    if label_mode not in _AUTOZONE_LABEL_MODES:
+    if label_mode not in _ZONE_COLLECTION_LABEL_MODES:
         raise ConfigError(
-            f"{where}: 'label_mode' must be one of {sorted(_AUTOZONE_LABEL_MODES)}"
+            f"{where}: 'label_mode' must be one of {sorted(_ZONE_COLLECTION_LABEL_MODES)}"
         )
     requested_storage_mode = _get_str(table, "storage_mode", where, default="sidecar").lower()
     if requested_storage_mode not in _STORAGE_MODES:
@@ -657,15 +664,21 @@ def _parse_autozone(raw_autozone: object, index: int, warnings: list[str]) -> Au
     storage_mode = "sidecar"
     if requested_storage_mode == "directory":
         warnings.append(
-            f"{where}: directory storage is no longer supported for autozones; "
+            f"{where}: directory storage is no longer supported for zone collections; "
             "using sidecar storage"
         )
     retain_value = table.get("retain")
     legacy_max_items = table.get("max_items")
+    if legacy_max_items is not None and (
+        isinstance(legacy_max_items, bool)
+        or not isinstance(legacy_max_items, int)
+        or legacy_max_items < 1
+    ):
+        raise ConfigError(f"{where}: 'max_items' must be a positive integer")
     if retain_value is None and legacy_max_items is not None:
         retain_value = legacy_max_items
         warnings.append(
-            f"{where}: 'max_items' is deprecated for autozones; using it as 'retain'"
+            f"{where}: 'max_items' is deprecated for zone collections; using it as 'retain'"
         )
     retain = 10 if retain_value is None else retain_value
     if isinstance(retain, bool) or not isinstance(retain, int) or retain < 1:
@@ -698,18 +711,11 @@ def _parse_autozone(raw_autozone: object, index: int, warnings: list[str]) -> Au
             raise ConfigError(
                 f"{where}: 'color' does not provide sufficient text contrast: {color!r}"
             )
-    group_layout = _get_str(table, "group_layout", where, default="area").lower()
-    if group_layout not in _GROUP_LAYOUTS:
-        raise ConfigError(
-            f"{where}: 'group_layout' must be one of {sorted(_GROUP_LAYOUTS)}"
-        )
-    group_hide_empty = _get_bool(table, "group_hide_empty", where, default=False)
-    group_show_count = _get_bool(table, "group_show_count", where, default=True)
-    return AutoZoneConfig(
+    return ZoneCollectionConfig(
+        id=collection_id,
         base_directory=base_directory,
         pattern=pattern,
         max_depth=max_depth,
-        group=group,
         label_mode=label_mode,
         storage_mode=storage_mode,
         retain=retain,
@@ -722,9 +728,6 @@ def _parse_autozone(raw_autozone: object, index: int, warnings: list[str]) -> Au
         reference_separator=separator,
         allow_zip_download=allow_zip_download,
         color=color,
-        group_layout=group_layout,
-        group_hide_empty=group_hide_empty,
-        group_show_count=group_show_count,
     )
 
 
@@ -793,40 +796,36 @@ def _parse_groups(raw: object, warnings: list[str]) -> tuple[GroupConfig, ...]:
 
 
 def resolve_group_zone_ids(
-    groups: tuple[GroupConfig, ...], zone_ids: Iterable[str],
+    groups: tuple[GroupConfig, ...],
+    zone_ids: Iterable[str],
+    collection_members: Mapping[str, Iterable[str]] | None = None,
 ) -> dict[str, tuple[str, ...]]:
-    """Compute effective group zones without accessing storage."""
+    """Resolve groups against zone IDs and optional zone-collection IDs."""
     ordered_zone_ids = tuple(zone_ids)
+    collection_members_by_id = collection_members or {}
+    ordered_collection_ids = tuple(collection_members_by_id)
     pattern_zone_ids: set[str] = set()
     resolved: dict[str, tuple[str, ...]] = {}
     for group in groups:
-        explicit_zone_ids = set(group.members)
         if group.selection == "all":
             resolved[group.name] = ordered_zone_ids
-        elif group.selection == "autozone":
-            resolved[group.name] = tuple(
-                zid for zid in ordered_zone_ids if zid in explicit_zone_ids
-            )
         elif group.selection == "pattern":
             expressions = tuple(re.compile(pattern) for pattern in group.pattern)
-            matching = tuple(
-                zid
-                for zid in ordered_zone_ids
-                if zid in explicit_zone_ids
-                or any(expression.search(zid) for expression in expressions)
-            )
-            resolved[group.name] = matching
-            pattern_zone_ids.update(
-                zid
-                for zid in matching
+            selected = {
+                zid for zid in ordered_zone_ids
                 if any(expression.search(zid) for expression in expressions)
-            )
+            }
+            for collection_id in ordered_collection_ids:
+                if any(expression.search(collection_id) for expression in expressions):
+                    selected.update(collection_members_by_id[collection_id])
+            matching = tuple(zid for zid in ordered_zone_ids if zid in selected)
+            resolved[group.name] = matching
+            pattern_zone_ids.update(matching)
     for group in groups:
         if group.selection == "other":
-            explicit_zone_ids = set(group.members)
             resolved[group.name] = tuple(
                 zid for zid in ordered_zone_ids
-                if zid in explicit_zone_ids or zid not in pattern_zone_ids
+                if zid not in pattern_zone_ids
             )
     return resolved
 
@@ -912,6 +911,12 @@ def load_config(path: Path) -> Config:
     except (tomllib.TOMLDecodeError, UnicodeDecodeError) as exc:
         raise ConfigError(f"invalid TOML in {path}: {exc}") from exc
 
+    if "autozone" in data:
+        raise ConfigError(
+            "the legacy dynamic-zone key 'autozone' was removed; "
+            "use [[zone_collection]] with an @-prefixed id"
+        )
+
     warnings: list[str] = []
     _warn_unknown(
         data,
@@ -922,7 +927,7 @@ def load_config(path: Path) -> Config:
           "show_full_path", "allow_unauthenticated_local", "allow_unauthenticated_remote",
          "allow_insecure_http_remote", "accept_bin", "accept_img", "accept_doc",
          "auth", "tls",
-         "zones", "autozone", "groups", "log_level"},
+          "zones", "zone_collection", "groups", "log_level"},
         "config",
         warnings,
     )
@@ -978,15 +983,18 @@ def load_config(path: Path) -> Config:
             raise ConfigError(f"duplicate zone ID: {zone.id!r}")
         zones[zone.id] = zone
 
-    raw_autozones = data.get("autozone", [])
-    if not isinstance(raw_autozones, list):
-        raise ConfigError("'autozone' must be a list of tables")
-    autozones = tuple(
-        _parse_autozone(raw_autozone, index, warnings)
-        for index, raw_autozone in enumerate(raw_autozones)
+    raw_collections = data.get("zone_collection", [])
+    if not isinstance(raw_collections, list):
+        raise ConfigError("'zone_collection' must be a list of tables")
+    zone_collections = tuple(
+        _parse_zone_collection(raw_collection, index, warnings)
+        for index, raw_collection in enumerate(raw_collections)
     )
-    if not zones and not autozones:
-        raise ConfigError("configuration must define [[zones]] or [[autozone]]")
+    collection_ids = [collection.id for collection in zone_collections]
+    if len(collection_ids) != len(set(collection_ids)):
+        raise ConfigError("duplicate zone collection ID")
+    if not zones and not zone_collections:
+        raise ConfigError("configuration must define [[zones]] or [[zone_collection]]")
 
     groups = _parse_groups(data.get("groups"), warnings)
 
@@ -1009,7 +1017,7 @@ def load_config(path: Path) -> Config:
         auth=auth,
         tls=tls,
         zones=zones,
-        autozones=autozones,
+        zone_collections=zone_collections,
         groups=groups,
         log_level=log_level,
         config_path=path,
@@ -1147,7 +1155,7 @@ def build_default_config() -> Config:
                 color="#304237",
             )
         },
-        autozones=(),
+        zone_collections=(),
         groups=(),
         log_level="INFO",
         config_path=config_path,

@@ -30,7 +30,7 @@ Pasteberth is the small, targeted handoff layer between those two sides:
 
 A zone is a directory on the machine running Pasteberth. Every zone uses a
 managed data file plus a JSON sidecar for metadata and ownership; dynamic
-`[[autozone]]` rules only discover the directories. Files copied or moved into a
+`[[zone_collection]]` rules only discover the directories. Files copied or moved into a
 zone outside Pasteberth remain foreign and are ignored. The browser never
 needs to access the returned filesystem path.
 
@@ -48,12 +48,13 @@ filesystem.
 
 ### Add project workspaces without editing configuration
 
-Use one `[[autozone]]` rule for a project tree such as
+Use one `[[zone_collection]]` rule for a project tree such as
 `/home/me/Depots/*/work/exchange`. When a new project creates a matching,
-readable exchange directory, Pasteberth discovers it on the next zone refresh;
+readable and writable exchange directory, Pasteberth discovers it on the next zone refresh;
 a visible browser normally sees it within the next 10-second poll. No daemon
 restart and no configuration edit are required. The new directory is exposed as
-a zone and placed in the configured autozone group.
+a zone. Add an explicit group whose pattern selects the collection ID, such as
+`^@repositories$`, when the zones should appear in a group.
 
 ### Agent or script to a browser
 
@@ -131,11 +132,11 @@ only, without `/paste`.
 - Record whether an item came from a web paste, web file drop, filesystem drop,
   or filesystem registration, and whether a named item replaced an existing one.
 - Keep independent zones per project with configurable retention.
-- Discover repository directories dynamically with repeatable `[[autozone]]`
+- Discover repository directories dynamically with repeatable `[[zone_collection]]`
   rules while keeping the sidecar storage contract; matching projects appear on
   the next service read without a restart or configuration edit.
-- Give autozone zones deterministic, distinct default colors within their group; an
-  explicit `color` remains an intentional override for the whole rule.
+- Give collection zones deterministic, distinct default colors within their
+  collection; an explicit `color` remains an intentional override for the rule.
 - Return exact filesystem references such as
   `@/srv/workspaces/project/captures/example.png`.
 - Preserve valid dropped filenames when requested, while protecting foreign
@@ -180,7 +181,7 @@ returns the exact reference needed by the harness and copy actions.
 ## Server Handoff
 
 Multi-file CLI uploads go through the Pasteberth server. Use a target directory
-to let the daemon resolve a static zone or eligible autozone, or use `--zone`
+to let the daemon resolve a static zone or eligible collection zone, or use `--zone`
 with a zone ID. `--server` overrides the configured server URL:
 
 ```sh
