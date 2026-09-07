@@ -259,6 +259,8 @@ class TestContratsFrontend(unittest.TestCase):
 
     def test_echec_copie_signeale(self):
         self.assertIn("Automatic copy failed", self.app_js)
+        self.assertIn("Copy failed - try again", self.app_js)
+        self.assertIn("beginCopyAttempt", self.app_js)
         self.assertIn("copy-status", self.app_js)
         self.assertIn("copy-attention", self.style_css)
 

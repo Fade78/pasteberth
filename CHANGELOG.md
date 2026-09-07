@@ -4,6 +4,15 @@ This file records user-visible changes to Pasteberth.
 
 ## [Unreleased]
 
+## [2.1.14] - 2026-09-07
+
+### Release Corrections
+
+- distinguish failed manual link copies from failed automatic copies;
+- ignore stale asynchronous copy results after a newer copy attempt;
+- require matching runtime, packaging, and Git tag versions when writing the
+  deployment manifest.
+
 ## [2.1.13] - 2026-09-07
 
 ### Browser Feedback and Testing

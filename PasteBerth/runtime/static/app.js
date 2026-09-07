@@ -28,6 +28,7 @@
     newItemIdsByZone: Object.create(null),
     copyFeedbackByItem: Object.create(null),
     copyFeedbackTimers: Object.create(null),
+    copyAttemptByItem: Object.create(null),
     retryTimer: null,
     busyRefreshTimer: null,
     toastTimer: null,
@@ -50,6 +51,7 @@
   let activeRefreshController = null;
   let bootInFlight = false;
   let previewGeneration = 0;
+  let copyAttemptSequence = 0;
   let activePreviewController = null;
   let groupOptionsClose = null;
 
@@ -170,27 +172,44 @@
     if (!button) return;
     const statusEl = button.parentElement?.querySelector(".copy-status");
     button.classList.toggle("copy-success", status === "copied");
-    button.classList.toggle("copy-attention", status === "attention");
+    button.classList.toggle(
+      "copy-attention",
+      status === "attention" || status === "manual-attention",
+    );
     if (statusEl) {
       statusEl.hidden = !status;
-      statusEl.classList.toggle("error", status === "attention");
+      statusEl.classList.toggle(
+        "error",
+        status === "attention" || status === "manual-attention",
+      );
       statusEl.textContent = status === "copied"
         ? "Link copied"
         : status === "attention"
           ? "Automatic copy failed - click Copy link"
+          : status === "manual-attention"
+            ? "Copy failed - try again"
           : "";
     }
     if (!status) button.removeAttribute("title");
     else if (status === "copied") button.title = "Link copied";
-    else button.title = "Automatic copy failed; click Copy link";
+    else if (status === "attention") button.title = "Automatic copy failed; click Copy link";
+    else button.title = "Copy failed; try again";
   }
 
   function copyFeedbackFor(zoneId, itemId) {
     return state.copyFeedbackByItem[copyFeedbackKey(zoneId, itemId)] || null;
   }
 
-  function setCopyFeedback(zoneId, itemId, status) {
+  function beginCopyAttempt(zoneId, itemId) {
     const key = copyFeedbackKey(zoneId, itemId);
+    const attempt = ++copyAttemptSequence;
+    state.copyAttemptByItem[key] = attempt;
+    return attempt;
+  }
+
+  function setCopyFeedback(zoneId, itemId, status, attempt = null) {
+    const key = copyFeedbackKey(zoneId, itemId);
+    if (attempt !== null && state.copyAttemptByItem[key] !== attempt) return;
     const previousTimer = state.copyFeedbackTimers[key];
     if (previousTimer) clearTimeout(previousTimer);
     delete state.copyFeedbackTimers[key];
@@ -199,8 +218,10 @@
     applyCopyFeedback(copyButtonForItem(zoneId, itemId), status);
     if (!status) return;
     state.copyFeedbackTimers[key] = setTimeout(() => {
+      if (attempt !== null && state.copyAttemptByItem[key] !== attempt) return;
       delete state.copyFeedbackTimers[key];
       delete state.copyFeedbackByItem[key];
+      delete state.copyAttemptByItem[key];
       applyCopyFeedback(copyButtonForItem(zoneId, itemId), null);
     }, 2600);
   }
@@ -290,11 +311,19 @@
   }
 
   async function copyLink(reference, button = null) {
-    const ok = await writeClipboard(reference);
     const latest = button?.closest(".latest[data-item-id]");
     const zone = button?.closest(".zone[data-zone]");
+    const attempt = latest && zone
+      ? beginCopyAttempt(zone.dataset.zone, latest.dataset.itemId)
+      : null;
+    const ok = await writeClipboard(reference);
     if (latest && zone) {
-      setCopyFeedback(zone.dataset.zone, latest.dataset.itemId, ok ? "copied" : "attention");
+      setCopyFeedback(
+        zone.dataset.zone,
+        latest.dataset.itemId,
+        ok ? "copied" : "manual-attention",
+        attempt,
+      );
     } else if (ok) toast("Link copied: " + shortRef(reference));
     else toast("Could not copy the link — select it manually", "error");
     return ok;
@@ -2296,8 +2325,9 @@
       if (autoCopy) {
         // Best-effort automatic copy: report failures explicitly; the Copy link
         // button remains available.
+        const copyAttempt = beginCopyAttempt(zoneId, item.id);
         writeClipboard(item.reference, { allowLegacyFallback: false }).then(ok => {
-          setCopyFeedback(zoneId, item.id, ok ? "copied" : "attention");
+          setCopyFeedback(zoneId, item.id, ok ? "copied" : "attention", copyAttempt);
         });
       }
       return item;

@@ -1040,7 +1040,7 @@ test("ne confirme pas la copie automatique si le geste de drop a expire", async 
         writeText: async () => { throw new Error("clipboard permission denied"); },
       },
     });
-    Document.prototype.execCommand = () => true;
+    Document.prototype.execCommand = () => false;
   });
   await openApp(page);
   await dispatchDrop(page, '[data-zone="secondary"]');
@@ -1048,6 +1048,11 @@ test("ne confirme pas la copie automatique si le geste de drop a expire", async 
   await expect(page.locator('[data-zone="secondary"] .latest')).toBeVisible();
   await expect(page.locator('[data-zone="secondary"] .copy-status'))
     .toHaveText("Automatic copy failed - click Copy link");
+  await page.locator('[data-zone="secondary"]')
+    .getByRole("button", { name: "Copy link" })
+    .click();
+  await expect(page.locator('[data-zone="secondary"] .copy-status'))
+    .toHaveText("Copy failed - try again");
 });
 
 test("conserve le nom et confirme le remplacement d'un binaire déposé", async ({ page }) => {

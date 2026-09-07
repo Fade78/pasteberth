@@ -7,6 +7,7 @@ import hashlib
 import json
 import re
 import subprocess
+import tomllib
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -46,6 +47,21 @@ def runtime_version(source: Path) -> str:
     return match.group(1)
 
 
+def project_version(repo: Path) -> str:
+    with (repo / "pyproject.toml").open("rb") as stream:
+        return tomllib.load(stream)["project"]["version"]
+
+
+def validate_release_identity(runtime: str, project: str, tag: str | None) -> None:
+    if runtime != project:
+        raise SystemExit(
+            f"runtime version {runtime!r} does not match pyproject version {project!r}"
+        )
+    expected_tag = f"v{runtime}"
+    if tag != expected_tag:
+        raise SystemExit(f"expected exact release tag {expected_tag!r}, got {tag!r}")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--source", type=Path, required=True)
@@ -75,11 +91,14 @@ def main() -> int:
         )
 
     repo = source.parent
+    version = runtime_version(source)
+    tag = git(repo, "describe", "--tags", "--exact-match", "HEAD")
+    validate_release_identity(version, project_version(repo), tag)
     info = {
         "generated_at": datetime.now(timezone.utc).isoformat(),
-        "version": runtime_version(source),
+        "version": version,
         "source_commit": git(repo, "rev-parse", "HEAD"),
-        "source_tag": git(repo, "describe", "--tags", "--exact-match", "HEAD"),
+        "source_tag": tag,
         "source_dirty": bool(git(repo, "status", "--porcelain")),
         "bundle_files": source_files,
     }
