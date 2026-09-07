@@ -91,6 +91,16 @@ class TestDeploymentReleaseIdentity(unittest.TestCase):
             info = json.loads((destination / "BUILD_INFO.json").read_text(encoding="utf-8"))
             self.assertTrue(info["source_dirty"])
 
+    def test_main_excludes_python_cache_artifacts_from_the_bundle_digest(self):
+        with tempfile.TemporaryDirectory() as raw_root:
+            source, destination = _release_tree(Path(raw_root))
+            cache = source / "runtime" / "__pycache__"
+            cache.mkdir()
+            (cache / "generated.pyc").write_bytes(b"cache")
+            self.assertEqual(_write_manifest(source, destination), 0)
+            info = json.loads((destination / "BUILD_INFO.json").read_text(encoding="utf-8"))
+            self.assertNotIn("runtime/__pycache__/generated.pyc", info["bundle_files"])
+
     def test_main_rejects_a_dirty_bundle(self):
         with tempfile.TemporaryDirectory() as raw_root:
             source, destination = _release_tree(Path(raw_root))

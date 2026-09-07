@@ -7,9 +7,9 @@ import hashlib
 import json
 import os
 import re
+import secrets
 import stat
 import subprocess
-import tempfile
 import tomllib
 from datetime import datetime, timezone
 from pathlib import Path
@@ -17,6 +17,7 @@ from pathlib import Path
 
 VERSION_RE = re.compile(r'^__version__\s*=\s*["\']([^"\']+)["\']\s*$', re.MULTILINE)
 NOFOLLOW_FLAGS = getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_BINARY", 0)
+DIRECTORY_FLAGS = getattr(os, "O_DIRECTORY", 0)
 
 
 def git(root: Path, *args: str) -> str | None:
@@ -33,84 +34,176 @@ def git(root: Path, *args: str) -> str | None:
     return result.stdout.strip() or None
 
 
-def _bundle_paths(root: Path):
-    for path in sorted(root.rglob("*")):
-        if "__pycache__" in path.parts or path.suffix == ".pyc":
-            continue
-        try:
-            mode = os.lstat(path).st_mode
-        except OSError as exc:
-            raise SystemExit(f"could not inspect bundle file: {path}") from exc
-        if stat.S_ISLNK(mode):
-            raise SystemExit(f"bundle contains a symlink: {path.relative_to(root)}")
-        if stat.S_ISREG(mode):
-            yield path
-        elif not stat.S_ISDIR(mode):
-            raise SystemExit(f"bundle contains a non-regular file: {path.relative_to(root)}")
-
-
-def _open_regular_file(path: Path) -> tuple[int, int]:
-    try:
-        fd = os.open(path, os.O_RDONLY | NOFOLLOW_FLAGS)
-        mode = os.fstat(fd).st_mode
-    except OSError as exc:
-        raise SystemExit(f"could not open bundle file: {path}") from exc
-    if not stat.S_ISREG(mode):
-        os.close(fd)
-        raise SystemExit(f"bundle file is not regular: {path}")
-    return fd, mode
-
-
-def _file_digest(path: Path) -> str:
-    fd, _ = _open_regular_file(path)
-    digest = hashlib.sha256()
-    try:
-        with os.fdopen(fd, "rb") as stream:
-            fd = -1
-            for chunk in iter(lambda: stream.read(1024 * 1024), b""):
-                digest.update(chunk)
-    finally:
-        if fd >= 0:
-            os.close(fd)
-    return digest.hexdigest()
-
-
-def file_digests(root: Path) -> dict[str, str]:
-    return {
-        path.relative_to(root).as_posix(): _file_digest(path)
-        for path in _bundle_paths(root)
-    }
-
-
-def file_modes(root: Path) -> dict[str, int]:
-    modes = {}
-    for path in _bundle_paths(root):
-        fd, mode = _open_regular_file(path)
-        os.close(fd)
-        modes[path.relative_to(root).as_posix()] = stat.S_IMODE(mode)
-    return modes
-
-
-def validate_regular_tree(root: Path) -> None:
-    for path in root.rglob("*"):
-        if path.is_symlink():
-            raise SystemExit(f"bundle contains a symlink: {path.relative_to(root)}")
-        if not path.is_dir() and not path.is_file():
-            raise SystemExit(f"bundle contains a non-regular file: {path.relative_to(root)}")
-
-
-def source_checkout_dirty(root: Path) -> bool:
+def git_required(root: Path, *args: str) -> str:
     try:
         result = subprocess.run(
-            ["git", "status", "--porcelain", "--untracked-files=all"],
+            ["git", *args],
             cwd=root,
             check=True,
             capture_output=True,
             text=True,
         )
     except (OSError, subprocess.CalledProcessError) as exc:
+        raise SystemExit(f"could not run git {' '.join(args)}") from exc
+    return result.stdout
+
+
+def _open_directory(path: Path) -> int:
+    try:
+        fd = os.open(path, os.O_RDONLY | DIRECTORY_FLAGS | NOFOLLOW_FLAGS)
+    except OSError as exc:
+        raise SystemExit(f"could not open bundle directory: {path}") from exc
+    if not stat.S_ISDIR(os.fstat(fd).st_mode):
+        os.close(fd)
+        raise SystemExit(f"bundle root is not a directory: {path}")
+    return fd
+
+
+def _bundle_metadata(root: Path) -> tuple[dict[str, str], dict[str, int], dict[str, str]]:
+    digests = {}
+    modes = {}
+    objects = {}
+    root_fd = _open_directory(root)
+
+    def walk(directory_fd: int, relative: Path) -> None:
+        entries = []
+        try:
+            with os.scandir(directory_fd) as scanner:
+                entries = sorted(scanner, key=lambda entry: entry.name)
+            for entry in entries:
+                entry_relative = relative / entry.name
+                try:
+                    entry_mode = entry.stat(follow_symlinks=False).st_mode
+                except OSError as exc:
+                    raise SystemExit(f"could not inspect bundle file: {entry_relative}") from exc
+                if stat.S_ISLNK(entry_mode):
+                    raise SystemExit(f"bundle contains a symlink: {entry_relative}")
+                if stat.S_ISDIR(entry_mode):
+                    try:
+                        child_fd = os.open(
+                            entry.name,
+                            os.O_RDONLY | DIRECTORY_FLAGS | NOFOLLOW_FLAGS,
+                            dir_fd=directory_fd,
+                        )
+                    except OSError as exc:
+                        raise SystemExit(f"could not open bundle directory: {entry_relative}") from exc
+                    try:
+                        walk(child_fd, entry_relative)
+                    finally:
+                        os.close(child_fd)
+                    continue
+                if not stat.S_ISREG(entry_mode):
+                    raise SystemExit(f"bundle contains a non-regular file: {entry_relative}")
+                if "__pycache__" in entry_relative.parts or entry_relative.suffix == ".pyc":
+                    continue
+                try:
+                    file_fd = os.open(
+                        entry.name,
+                        os.O_RDONLY | NOFOLLOW_FLAGS,
+                        dir_fd=directory_fd,
+                    )
+                    actual_mode = os.fstat(file_fd).st_mode
+                except OSError as exc:
+                    raise SystemExit(f"could not open bundle file: {entry_relative}") from exc
+                if not stat.S_ISREG(actual_mode):
+                    os.close(file_fd)
+                    raise SystemExit(f"bundle file is not regular: {entry_relative}")
+                digest = hashlib.sha256()
+                blob_digest = hashlib.sha1(usedforsecurity=False)
+                blob_digest.update(f"blob {os.fstat(file_fd).st_size}\0".encode())
+                try:
+                    with os.fdopen(file_fd, "rb") as stream:
+                        file_fd = -1
+                        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+                            digest.update(chunk)
+                            blob_digest.update(chunk)
+                finally:
+                    if file_fd >= 0:
+                        os.close(file_fd)
+                name = entry_relative.as_posix()
+                digests[name] = digest.hexdigest()
+                modes[name] = stat.S_IMODE(actual_mode)
+                objects[name] = blob_digest.hexdigest()
+        except OSError as exc:
+            raise SystemExit(f"could not inspect bundle directory: {relative}") from exc
+
+    try:
+        walk(root_fd, Path())
+    finally:
+        os.close(root_fd)
+    return digests, modes, objects
+
+
+def file_digests(root: Path) -> dict[str, str]:
+    return _bundle_metadata(root)[0]
+
+
+def file_modes(root: Path) -> dict[str, int]:
+    return _bundle_metadata(root)[1]
+
+
+def file_objects(root: Path) -> dict[str, str]:
+    return _bundle_metadata(root)[2]
+
+
+def _git_object_for_file(root: Path, relative: str) -> tuple[int, str] | None:
+    directory_fds = [_open_directory(root)]
+    file_fd = -1
+    try:
+        current_fd = directory_fds[0]
+        components = Path(relative).parts
+        for component in components[:-1]:
+            current_fd = os.open(
+                component,
+                os.O_RDONLY | DIRECTORY_FLAGS | NOFOLLOW_FLAGS,
+                dir_fd=current_fd,
+            )
+            directory_fds.append(current_fd)
+        file_fd = os.open(
+            components[-1],
+            os.O_RDONLY | NOFOLLOW_FLAGS,
+            dir_fd=current_fd,
+        )
+        file_mode = os.fstat(file_fd).st_mode
+        if not stat.S_ISREG(file_mode):
+            return None
+        blob_digest = hashlib.sha1(usedforsecurity=False)
+        blob_digest.update(f"blob {os.fstat(file_fd).st_size}\0".encode())
+        with os.fdopen(file_fd, "rb") as stream:
+            file_fd = -1
+            for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+                blob_digest.update(chunk)
+        return file_mode, blob_digest.hexdigest()
+    except OSError:
+        return None
+    finally:
+        if file_fd >= 0:
+            os.close(file_fd)
+        for directory_fd in reversed(directory_fds):
+            os.close(directory_fd)
+
+
+def validate_regular_tree(root: Path) -> None:
+    _bundle_metadata(root)
+
+
+def source_checkout_dirty(root: Path) -> bool:
+    try:
+        entries = tagged_tree_entries(root)
+        for path, (mode, object_name) in entries.items():
+            if mode not in (0o100644, 0o100755):
+                return True
+            working = _git_object_for_file(root, path)
+            if working is None:
+                return True
+            working_mode, current_object = working
+            if stat.S_IMODE(working_mode) != stat.S_IMODE(mode):
+                return True
+            if current_object != object_name:
+                return True
+        return bool(git_required(root, "ls-files", "--others", "--exclude-standard", "-z"))
+    except SystemExit as exc:
         raise SystemExit("could not determine source checkout status") from exc
-    return bool(result.stdout.strip())
 
 
 def absolute_without_symlinks(path: Path, label: str) -> Path:
@@ -126,6 +219,26 @@ def absolute_without_symlinks(path: Path, label: str) -> Path:
             break
         current = current.parent
     return absolute
+
+
+def tagged_tree_entries(repo: Path, pathspec: str | None = None) -> dict[str, tuple[int, str]]:
+    args = [
+        "ls-tree",
+        "-r",
+        "-z",
+        "--format=%(objectmode) %(objectname) %(path)",
+        "HEAD",
+    ]
+    if pathspec is not None:
+        args.extend(["--", pathspec])
+    listing = git_required(repo, *args)
+    entries = {}
+    for record in listing.split("\0"):
+        if not record:
+            continue
+        mode, object_name, path = record.split(" ", 2)
+        entries[path] = (int(mode, 8), object_name)
+    return entries
 
 
 def runtime_version(source: Path) -> str:
@@ -154,25 +267,12 @@ def validate_release_identity(runtime: str, project: str, tag: str | None) -> No
 def validate_source_bundle(repo: Path, source: Path, source_files: dict[str, str]) -> None:
     source_name = source.relative_to(repo).as_posix().rstrip("/")
     prefix = source_name + "/"
-    listing = git(
-        repo,
-        "ls-tree",
-        "-r",
-        "-z",
-        "--format=%(objectmode) %(objectname) %(path)",
-        "HEAD",
-        "--",
-        source_name,
-    )
-    if listing is None:
-        raise SystemExit("could not determine tagged source bundle")
-    tracked_entries = {}
-    for record in listing.split("\0"):
-        if not record:
-            continue
-        mode, object_name, path = record.split(" ", 2)
-        if path.startswith(prefix):
-            tracked_entries[path[len(prefix):]] = (stat.S_IMODE(int(mode, 8)), object_name)
+    tagged_entries = tagged_tree_entries(repo, source_name)
+    tracked_entries = {
+        path[len(prefix):]: values
+        for path, values in tagged_entries.items()
+        if path.startswith(prefix)
+    }
     tracked_files = set(tracked_entries)
     actual_files = set(source_files)
     if actual_files != tracked_files:
@@ -181,7 +281,16 @@ def validate_source_bundle(repo: Path, source: Path, source_files: dict[str, str
             f"missing={sorted(tracked_files - actual_files)}, "
             f"extra={sorted(actual_files - tracked_files)}"
         )
-    tracked_modes = {path: values[0] for path, values in tracked_entries.items()}
+    unsupported = sorted(
+        path for path, values in tracked_entries.items()
+        if values[0] not in (0o100644, 0o100755)
+    )
+    if unsupported:
+        raise SystemExit(
+            "tagged source tree contains unsupported file modes: "
+            f"paths={unsupported}"
+        )
+    tracked_modes = {path: stat.S_IMODE(values[0]) for path, values in tracked_entries.items()}
     actual_modes = file_modes(source)
     if actual_modes != tracked_modes:
         missing = sorted(set(tracked_modes) - set(actual_modes))
@@ -194,16 +303,59 @@ def validate_source_bundle(repo: Path, source: Path, source_files: dict[str, str
             "source bundle file modes differ from tagged Git tree: "
             f"missing={missing}, extra={extra}, changed={changed}"
         )
+    actual_objects = file_objects(source)
     changed = []
     for path, (_, object_name) in tracked_entries.items():
-        current_object = git(repo, "hash-object", "--no-filters", "--", f"{source_name}/{path}")
-        if current_object != object_name:
+        if actual_objects.get(path) != object_name:
             changed.append(path)
     if changed:
         raise SystemExit(
             "source bundle content differs from tagged Git tree: "
             f"changed={sorted(changed)}"
         )
+
+
+def write_manifest(destination: Path, info: dict) -> None:
+    destination_fd = _open_directory(destination)
+    temp_fd = -1
+    temp_name = None
+    try:
+        for _ in range(10):
+            candidate = f".BUILD_INFO.{secrets.token_hex(12)}"
+            try:
+                temp_fd = os.open(
+                    candidate,
+                    os.O_WRONLY | os.O_CREAT | os.O_EXCL | NOFOLLOW_FLAGS,
+                    0o600,
+                    dir_fd=destination_fd,
+                )
+            except FileExistsError:
+                continue
+            temp_name = candidate
+            break
+        if temp_fd < 0 or temp_name is None:
+            raise OSError("could not create a temporary build manifest")
+        with os.fdopen(temp_fd, "w", encoding="utf-8") as stream:
+            temp_fd = -1
+            stream.write(json.dumps(info, indent=2, sort_keys=True) + "\n")
+        os.replace(
+            temp_name,
+            "BUILD_INFO.json",
+            src_dir_fd=destination_fd,
+            dst_dir_fd=destination_fd,
+        )
+        temp_name = None
+    except OSError as exc:
+        raise SystemExit("could not write build manifest") from exc
+    finally:
+        if temp_fd >= 0:
+            os.close(temp_fd)
+        if temp_name is not None:
+            try:
+                os.unlink(temp_name, dir_fd=destination_fd)
+            except FileNotFoundError:
+                pass
+        os.close(destination_fd)
 
 
 def main() -> int:
@@ -259,7 +411,7 @@ def main() -> int:
     tag = git(repo, "describe", "--tags", "--exact-match", "HEAD")
     validate_release_identity(version, project_version(repo), tag)
     source_commit = git(repo, "rev-parse", "HEAD")
-    if not source_commit or not re.fullmatch(r"[0-9a-f]{40,64}", source_commit):
+    if not source_commit or not re.fullmatch(r"[0-9a-f]{40}(?:[0-9a-f]{24})?", source_commit):
         raise SystemExit("could not determine full source commit")
     info = {
         "generated_at": datetime.now(timezone.utc).isoformat(),
@@ -269,18 +421,7 @@ def main() -> int:
         "source_dirty": source_checkout_dirty(repo),
         "bundle_files": source_files,
     }
-    temp_path = None
-    try:
-        fd, temp_name = tempfile.mkstemp(prefix=".BUILD_INFO.", dir=destination)
-        temp_path = Path(temp_name)
-        with os.fdopen(fd, "w", encoding="utf-8") as stream:
-            stream.write(json.dumps(info, indent=2, sort_keys=True) + "\n")
-        os.replace(temp_path, destination / "BUILD_INFO.json")
-    except OSError as exc:
-        raise SystemExit("could not write build manifest") from exc
-    finally:
-        if temp_path is not None:
-            temp_path.unlink(missing_ok=True)
+    write_manifest(destination, info)
     print(json.dumps({key: value for key, value in info.items() if key != "bundle_files"}, indent=2))
     return 0
 
