@@ -1,7 +1,7 @@
 # Pasteberth Operator Guide
 
 This guide is the detailed reference for installing, configuring, operating,
-and integrating Pasteberth 2.1.12. The short project overview is in
+and integrating Pasteberth 2.1.13. The short project overview is in
 [`README.md`](README.md); user-visible release history is in
 [`CHANGELOG.md`](CHANGELOG.md).
 
@@ -82,26 +82,28 @@ contexts:
 
 ## 2. Requirements and Support
 
-The 2.1.12 implementation requires:
+The 2.1.13 implementation requires:
 
 - Python 3.11 or newer;
 - a local filesystem supported by the active platform backend;
 - a modern browser for the Web UI;
 - no third-party Python runtime dependency.
 
-Linux is the current official and tested server platform for v2.1.12. The
+Linux is the current official and tested server platform for v2.1.13. The
 Windows backend has broad Wine coverage, but native Windows/NTFS validation is
 still outstanding and macOS support is not implemented. Do not infer support
 for every network or exotic filesystem from the operating system name.
 
-The supplied browser suite uses Chromium by default and can also run with
-Firefox when the corresponding Playwright browser is installed.
+The supplied browser suite runs in Chromium and Firefox in CI when the
+corresponding Playwright browsers are installed. Its native-input smoke test
+uses the browser file chooser; operating-system drag-and-drop still requires
+manual validation on the target desktop.
 
 ## 3. Installation
 
 ### 3.1 Deployable copy
 
-The supported v2.1.12 installation is the tracked `PasteBerth/` directory. It is
+The supported v2.1.13 installation is the tracked `PasteBerth/` directory. It is
 the complete code-only deployment unit: it needs no root access, installation
 script, Python package installation, or build step.
 
@@ -286,7 +288,7 @@ Each `[[zones]]` table defines one independent project area:
 |---|---:|---|
 | `id` | required | Lowercase API/UI identifier, up to 64 characters. |
 | `label` | `id` | Human-readable UI label. |
-| `type` | `local` | Only `local` is implemented in v2.1.12. |
+| `type` | `local` | Only `local` is implemented in v2.1.13. |
 | `directory` | required | Absolute path as seen by the server and the harness. |
 | `retain` | `10` | Number of managed items retained in the zone. |
 | `reference_prefix` | `@` | Text prepended to one returned reference. |
@@ -725,9 +727,12 @@ The sidecar records metadata such as `filename`, `created_at`, `size`,
 `width`, `height`, `format`, `kind`, `mime`, and the content `sha256`. New
 sidecars also record `creation_method` (`web_mouse_drop`, `web_paste`,
 `filesystem_drop`, or `filesystem_register`) and the boolean `replaced`, which
-is true only when a named managed file was replaced. `duplicate` remains a
-response flag for anonymous content deduplication and does not rewrite the
-existing sidecar. Older
+is true only when a named managed file was replaced. `creation_method` is
+descriptive metadata supplied by the client and validated against the allowed
+vocabulary; it is not proof of who produced the file and must not be used as an
+authorization, trust, or security decision. `duplicate` remains a response flag
+for anonymous content deduplication and does not rewrite the existing sidecar.
+Older
 valid sidecar schemas without the digest remain readable; when needed, legacy
 content is hashed on demand for duplicate detection. Pasteberth recognizes an
 item only when the data file and sidecar are coherent. For a direct local
@@ -997,7 +1002,9 @@ filename; `replace=1` together with `preserve_name=1` explicitly authorizes
 replacing a coherent managed pair. Clients may send `creation_method` with one
 of `web_mouse_drop`, `web_paste`, `filesystem_drop`, or
 `filesystem_register`; browser requests default to `web_paste`, and filesystem
-clients should send `filesystem_drop`.
+clients should send `filesystem_drop`. This field records the client's declared
+path through the upload pipeline; it does not authenticate the source and must
+not be treated as a security boundary.
 
 ```sh
 curl -b cookies.txt \
@@ -1221,6 +1228,12 @@ classification, filenames and replacement, configuration and startup policy,
 authentication and CSRF, proxy headers, concurrency and zone locks, filesystem
 CLI operations, frontend contracts, and browser interactions.
 
+The CI browser job runs the full suite as a Chromium/Firefox matrix. The
+`native-input.spec.js` test exercises the browser's real file chooser through
+Playwright's `setFiles`; synthetic clipboard and drag events remain separate
+coverage because an operating-system drag source is not available in the Linux
+CI runner.
+
 Before a public release, verify at least:
 
 - `pasteberth --help` matches the completion script;
@@ -1260,7 +1273,7 @@ restart the service.
 
 The next major platform goal is native Windows and macOS support with the same
 transaction and security guarantees. That work is intentionally separate from
-the v2.1.12 support matrix and must not be represented as already supported.
+the v2.1.13 support matrix and must not be represented as already supported.
 The repository contains opt-in `platform_windows` and `platform_macos` CI jobs;
 enable them only after registering native runners with
 `PASTEBERTH_NATIVE_WINDOWS_CI=1` or `PASTEBERTH_NATIVE_MACOS_CI=1`.

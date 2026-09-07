@@ -4,6 +4,18 @@ This file records user-visible changes to Pasteberth.
 
 ## [Unreleased]
 
+## [2.1.13] - 2026-09-07
+
+### Browser Feedback and Testing
+
+- keep automatic link-copy feedback beside the uploaded item instead of at the
+  bottom of the page;
+- highlight the local `Copy link` action briefly when automatic copying fails;
+- run the browser suite in Chromium and Firefox and include a native file-picker
+  smoke test;
+- document `creation_method` as descriptive client metadata, not a security
+  assertion.
+
 ## [2.1.12] - 2026-09-07
 
 ### Clipboard and Drop

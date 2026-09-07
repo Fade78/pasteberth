@@ -26,6 +26,8 @@
     selectedByZone: Object.create(null),
     knownItemSignaturesByZone: Object.create(null),
     newItemIdsByZone: Object.create(null),
+    copyFeedbackByItem: Object.create(null),
+    copyFeedbackTimers: Object.create(null),
     retryTimer: null,
     busyRefreshTimer: null,
     toastTimer: null,
@@ -155,6 +157,54 @@
     }, 2600);
   }
 
+  function copyFeedbackKey(zoneId, itemId) {
+    return `${zoneId}\u0000${itemId}`;
+  }
+
+  function copyButtonForItem(zoneId, itemId) {
+    const zone = grid.querySelector(`.zone[data-zone="${CSS.escape(zoneId)}"]`);
+    return zone?.querySelector(`.latest[data-item-id="${CSS.escape(itemId)}"] .copy-btn`) || null;
+  }
+
+  function applyCopyFeedback(button, status) {
+    if (!button) return;
+    const statusEl = button.parentElement?.querySelector(".copy-status");
+    button.classList.toggle("copy-success", status === "copied");
+    button.classList.toggle("copy-attention", status === "attention");
+    if (statusEl) {
+      statusEl.hidden = !status;
+      statusEl.classList.toggle("error", status === "attention");
+      statusEl.textContent = status === "copied"
+        ? "Link copied"
+        : status === "attention"
+          ? "Automatic copy failed - click Copy link"
+          : "";
+    }
+    if (!status) button.removeAttribute("title");
+    else if (status === "copied") button.title = "Link copied";
+    else button.title = "Automatic copy failed; click Copy link";
+  }
+
+  function copyFeedbackFor(zoneId, itemId) {
+    return state.copyFeedbackByItem[copyFeedbackKey(zoneId, itemId)] || null;
+  }
+
+  function setCopyFeedback(zoneId, itemId, status) {
+    const key = copyFeedbackKey(zoneId, itemId);
+    const previousTimer = state.copyFeedbackTimers[key];
+    if (previousTimer) clearTimeout(previousTimer);
+    delete state.copyFeedbackTimers[key];
+    if (status) state.copyFeedbackByItem[key] = status;
+    else delete state.copyFeedbackByItem[key];
+    applyCopyFeedback(copyButtonForItem(zoneId, itemId), status);
+    if (!status) return;
+    state.copyFeedbackTimers[key] = setTimeout(() => {
+      delete state.copyFeedbackTimers[key];
+      delete state.copyFeedbackByItem[key];
+      applyCopyFeedback(copyButtonForItem(zoneId, itemId), null);
+    }, 2600);
+  }
+
   async function api(path, options) {
     let res;
     try {
@@ -239,9 +289,13 @@
     return ok;
   }
 
-  async function copyLink(reference) {
+  async function copyLink(reference, button = null) {
     const ok = await writeClipboard(reference);
-    if (ok) toast("Link copied: " + shortRef(reference));
+    const latest = button?.closest(".latest[data-item-id]");
+    const zone = button?.closest(".zone[data-zone]");
+    if (latest && zone) {
+      setCopyFeedback(zone.dataset.zone, latest.dataset.itemId, ok ? "copied" : "attention");
+    } else if (ok) toast("Link copied: " + shortRef(reference));
     else toast("Could not copy the link — select it manually", "error");
     return ok;
   }
@@ -1223,6 +1277,11 @@
     btn.className = "copy-btn";
     btn.dataset.ref = item.reference;
     btn.textContent = "Copy link";
+    const copyStatus = document.createElement("span");
+    copyStatus.className = "copy-status";
+    copyStatus.hidden = true;
+    copyStatus.setAttribute("role", "status");
+    copyStatus.setAttribute("aria-live", "polite");
     const imageCopy = document.createElement("button");
     imageCopy.type = "button";
     imageCopy.className = "copy-image-btn";
@@ -1274,7 +1333,8 @@
     del.dataset.filename = item.filename;
     const actions = document.createElement("div");
     actions.className = "latest-actions";
-    actions.append(btn);
+    actions.append(btn, copyStatus);
+    applyCopyFeedback(btn, copyFeedbackFor(zoneId, item.id));
     if (item.kind !== "binary") actions.append(imageCopy);
     actions.append(download, clear);
     if (zoom) actions.append(zoom);
@@ -1300,7 +1360,7 @@
       const box = document.createElement("div");
       box.className = "file-box";
       box.dataset.itemId = item.id;
-      box.textContent = item.kind === "text" ? fileTypeLabel(item.filename) : "FILE";
+      box.textContent = fileTypeLabel(item.filename);
       box.title = itemDetails(zoneId, item);
       box.tabIndex = 0;
       box.setAttribute("role", "button");
@@ -2237,14 +2297,7 @@
         // Best-effort automatic copy: report failures explicitly; the Copy link
         // button remains available.
         writeClipboard(item.reference, { allowLegacyFallback: false }).then(ok => {
-          if (ok) toast(retentionWarning ? `${retentionWarning}; Link copied` : "Link copied",
-            retentionWarning ? "warning" : "info");
-          else toast(
-            retentionWarning
-              ? `${retentionWarning}; Link NOT copied — use the Copy link button`
-              : "Link NOT copied — use the Copy link button",
-            "error",
-          );
+          setCopyFeedback(zoneId, item.id, ok ? "copied" : "attention");
         });
       }
       return item;
@@ -2632,7 +2685,7 @@
   grid.addEventListener("click", (event) => {
     const copyBtn = event.target.closest(".copy-btn");
     if (copyBtn && copyBtn.dataset.ref) {
-      copyLink(copyBtn.dataset.ref);
+      copyLink(copyBtn.dataset.ref, copyBtn);
       return;
     }
     const downloadBtn = event.target.closest(".download-btn");

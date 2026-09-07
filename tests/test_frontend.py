@@ -95,6 +95,7 @@ class TestContratsFrontend(unittest.TestCase):
         self.assertIn("function filesFromDataTransfer", self.app_js)
         self.assertIn("dataTransfer.files", self.app_js)
         self.assertIn("dataTransfer.items", self.app_js)
+        self.assertIn("box.textContent = fileTypeLabel(item.filename);", self.app_js)
         self.assertIn('id="file-picker"', self.index_html)
         self.assertIn('type="file" multiple hidden', self.index_html)
         self.assertIn("function chooseFiles", self.app_js)
@@ -257,7 +258,9 @@ class TestContratsFrontend(unittest.TestCase):
         self.assertIn("activePreviewController.abort()", self.app_js)
 
     def test_echec_copie_signeale(self):
-        self.assertIn("Link NOT copied", self.app_js)
+        self.assertIn("Automatic copy failed", self.app_js)
+        self.assertIn("copy-status", self.app_js)
+        self.assertIn("copy-attention", self.style_css)
 
     def test_mode_compact(self):
         self.assertIn("@media (max-width: 600px)", self.style_css)

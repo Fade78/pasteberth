@@ -1,0 +1,95 @@
+#!/usr/bin/env python3
+"""Record the exact source bundle used by a Pasteberth deployment."""
+from __future__ import annotations
+
+import argparse
+import hashlib
+import json
+import re
+import subprocess
+from datetime import datetime, timezone
+from pathlib import Path
+
+
+VERSION_RE = re.compile(r'^__version__\s*=\s*["\']([^"\']+)["\']\s*$', re.MULTILINE)
+
+
+def git(root: Path, *args: str) -> str | None:
+    try:
+        result = subprocess.run(
+            ["git", *args],
+            cwd=root,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+    except (OSError, subprocess.CalledProcessError):
+        return None
+    return result.stdout.strip() or None
+
+
+def file_digests(root: Path) -> dict[str, str]:
+    return {
+        path.relative_to(root).as_posix(): hashlib.sha256(path.read_bytes()).hexdigest()
+        for path in sorted(root.rglob("*"))
+        if path.is_file()
+        and "__pycache__" not in path.parts
+        and path.suffix != ".pyc"
+    }
+
+
+def runtime_version(source: Path) -> str:
+    text = (source / "runtime" / "__init__.py").read_text(encoding="utf-8")
+    match = VERSION_RE.search(text)
+    if not match:
+        raise SystemExit("could not determine the runtime version")
+    return match.group(1)
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--source", type=Path, required=True)
+    parser.add_argument("--destination", type=Path, required=True)
+    args = parser.parse_args()
+    source = args.source.resolve()
+    destination = args.destination.resolve()
+    if not source.is_dir() or not destination.is_dir():
+        raise SystemExit("source and destination must be existing directories")
+
+    source_files = file_digests(source)
+    destination_files = {
+        name: digest
+        for name, digest in file_digests(destination).items()
+        if name != "BUILD_INFO.json"
+    }
+    if source_files != destination_files:
+        missing = sorted(set(source_files) - set(destination_files))
+        extra = sorted(set(destination_files) - set(source_files))
+        changed = sorted(
+            name for name in set(source_files) & set(destination_files)
+            if source_files[name] != destination_files[name]
+        )
+        raise SystemExit(
+            "deployment bundle differs from source: "
+            f"missing={missing}, extra={extra}, changed={changed}"
+        )
+
+    repo = source.parent
+    info = {
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "version": runtime_version(source),
+        "source_commit": git(repo, "rev-parse", "HEAD"),
+        "source_tag": git(repo, "describe", "--tags", "--exact-match", "HEAD"),
+        "source_dirty": bool(git(repo, "status", "--porcelain")),
+        "bundle_files": source_files,
+    }
+    (destination / "BUILD_INFO.json").write_text(
+        json.dumps(info, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    print(json.dumps({key: value for key, value in info.items() if key != "bundle_files"}, indent=2))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

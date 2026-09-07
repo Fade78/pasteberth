@@ -630,6 +630,32 @@ code, kbd {
 .delete-btn:hover, .comment-btn:hover, .comment-save-btn:hover {
   background: rgba(127, 127, 127, 0.34);
 }
+.copy-btn.copy-success {
+  border-color: #46c26f;
+  background: rgba(70, 194, 111, 0.2);
+  color: #b9f5c9;
+}
+.copy-btn.copy-attention {
+  border-color: #ffd166;
+  background: rgba(255, 209, 102, 0.2);
+  color: #ffe7a3;
+  animation: copy-attention 0.8s ease-in-out 3;
+}
+.copy-status {
+  align-self: center;
+  color: #9de8b0;
+  font-size: 0.75rem;
+  font-weight: 650;
+}
+.copy-status.error { color: #ffe7a3; }
+.copy-status[hidden] { display: none; }
+@keyframes copy-attention {
+  0%, 100% { box-shadow: 0 0 0 rgba(255, 209, 102, 0); }
+  50% { box-shadow: 0 0 0 4px rgba(255, 209, 102, 0.24); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .copy-btn.copy-attention { animation: none; }
+}
 .copy-btn:active, .copy-image-btn:active, .download-btn:active, .clear-btn:active, .zoom-btn:active,
 .delete-btn:active, .comment-btn:active, .comment-save-btn:active {
   transform: translateY(1px);

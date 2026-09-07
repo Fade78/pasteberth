@@ -30,6 +30,11 @@ trusted_proxies = ["127.0.0.1", "::1"]
 allow_unauthenticated_local = true
 log_level = "WARNING"
 
+[limits]
+request_queue_size = 64
+max_active_requests = 256
+max_pending_requests = 32
+
 [auth]
 enabled = false
 

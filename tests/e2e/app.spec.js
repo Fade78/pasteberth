@@ -701,8 +701,10 @@ test("colle une image et ouvre son aperçu au clavier", async ({ page }) => {
   await expect(defaultZone.locator(".history-index")).toBeVisible();
   await expect(defaultZone.locator(".thumb-wrap")).toHaveCount(1);
   await expect(defaultZone.locator(".thumb-wrap")).toHaveAttribute("aria-current", "true");
+  await expect(defaultZone.locator(".copy-status"))
+    .toHaveText(/Link copied|Automatic copy failed - click Copy link/);
   await defaultZone.getByRole("button", { name: "Copy link" }).click();
-  await expect(page.locator("#toast")).toContainText("Link copied");
+  await expect(defaultZone.locator(".copy-status")).toHaveText("Link copied");
   await defaultZone.getByRole("button", { name: "Copy image to the clipboard" }).click();
   await expect(page.locator("#toast")).toContainText("Image copied");
   const imageName = await defaultZone.locator(".fname").textContent();
@@ -800,18 +802,19 @@ test("les entrees web partagent le contrat de provenance", async ({ page }) => {
       && response.url().includes("/api/zones/default/images")
       && [200, 201].includes(response.status())
   ));
-  const assertMethod = async (responsePromise, method) => {
+  const assertUpload = async (responsePromise, method, filename) => {
     const item = await (await responsePromise).json();
     expect(item.creation_method).toBe(method);
+    expect(item.filename).toBe(filename);
   };
 
   const pasteResponse = uploadResponse();
   await dispatchClipboardFile(page, "provenance-paste.zip", [0, 1, 2], "application/zip");
-  await assertMethod(pasteResponse, "web_paste");
+  await assertUpload(pasteResponse, "web_paste", "provenance-paste.zip");
 
   const dropResponse = uploadResponse();
   await dispatchItemsOnlyDrop(page, '.zone[data-zone="default"]');
-  await assertMethod(dropResponse, "web_mouse_drop");
+  await assertUpload(dropResponse, "web_mouse_drop", "items-only.zip");
 
   const chooserPromise = page.waitForEvent("filechooser");
   const pickerResponse = uploadResponse();
@@ -822,7 +825,7 @@ test("les entrees web partagent le contrat de provenance", async ({ page }) => {
     mimeType: "text/plain",
     buffer: Buffer.from("picker"),
   });
-  await assertMethod(pickerResponse, "web_mouse_drop");
+  await assertUpload(pickerResponse, "web_mouse_drop", "provenance-picker.txt");
 });
 
 test("affiche les détails d'upload depuis le compteur de zone", async ({ page }) => {
@@ -1043,7 +1046,8 @@ test("ne confirme pas la copie automatique si le geste de drop a expire", async 
   await dispatchDrop(page, '[data-zone="secondary"]');
 
   await expect(page.locator('[data-zone="secondary"] .latest')).toBeVisible();
-  await expect(page.locator("#toast")).toContainText("Link NOT copied");
+  await expect(page.locator('[data-zone="secondary"] .copy-status'))
+    .toHaveText("Automatic copy failed - click Copy link");
 });
 
 test("conserve le nom et confirme le remplacement d'un binaire déposé", async ({ page }) => {
@@ -1076,6 +1080,16 @@ test("conserve le nom et confirme le remplacement d'un binaire déposé", async 
   await expect(page.locator("#replace")).toBeVisible();
   await page.locator("#replace-confirm").click();
   await expect(defaultZone.locator(".thumb-wrap")).toHaveCount(1);
+});
+
+test("affiche l'extension d'un binaire dans la carte principale", async ({ page }) => {
+  await openApp(page);
+  const defaultZone = page.locator('.zone[data-zone="default"]');
+
+  await dispatchBinaryDrop(page, '.zone[data-zone="default"]', "oversized.png");
+
+  await expect(defaultZone.locator(".file-box")).toHaveText("PNG");
+  await expect(defaultZone.locator(".thumb-content")).toHaveText("PNG");
 });
 
 test("utilise le fallback du dialogue de remplacement sans API native", async ({ page }) => {
