@@ -59,7 +59,12 @@ def _open_directory(path: Path) -> int:
     return fd
 
 
-def _bundle_metadata(root: Path) -> tuple[dict[str, str], dict[str, int], dict[str, str]]:
+def _bundle_metadata(
+    root: Path,
+    object_format: str = "sha1",
+) -> tuple[dict[str, str], dict[str, int], dict[str, str]]:
+    if object_format not in ("sha1", "sha256"):
+        raise SystemExit(f"unsupported Git object format: {object_format}")
     digests = {}
     modes = {}
     objects = {}
@@ -109,7 +114,7 @@ def _bundle_metadata(root: Path) -> tuple[dict[str, str], dict[str, int], dict[s
                     os.close(file_fd)
                     raise SystemExit(f"bundle file is not regular: {entry_relative}")
                 digest = hashlib.sha256()
-                blob_digest = hashlib.sha1(usedforsecurity=False)
+                blob_digest = hashlib.new(object_format, usedforsecurity=False)
                 blob_digest.update(f"blob {os.fstat(file_fd).st_size}\0".encode())
                 try:
                     with os.fdopen(file_fd, "rb") as stream:
@@ -142,11 +147,15 @@ def file_modes(root: Path) -> dict[str, int]:
     return _bundle_metadata(root)[1]
 
 
-def file_objects(root: Path) -> dict[str, str]:
-    return _bundle_metadata(root)[2]
+def file_objects(root: Path, object_format: str = "sha1") -> dict[str, str]:
+    return _bundle_metadata(root, object_format)[2]
 
 
-def _git_object_for_file(root: Path, relative: str) -> tuple[int, str] | None:
+def _git_object_for_file(
+    root: Path,
+    relative: str,
+    object_format: str,
+) -> tuple[int, str] | None:
     directory_fds = [_open_directory(root)]
     file_fd = -1
     try:
@@ -167,7 +176,7 @@ def _git_object_for_file(root: Path, relative: str) -> tuple[int, str] | None:
         file_mode = os.fstat(file_fd).st_mode
         if not stat.S_ISREG(file_mode):
             return None
-        blob_digest = hashlib.sha1(usedforsecurity=False)
+        blob_digest = hashlib.new(object_format, usedforsecurity=False)
         blob_digest.update(f"blob {os.fstat(file_fd).st_size}\0".encode())
         with os.fdopen(file_fd, "rb") as stream:
             file_fd = -1
@@ -189,11 +198,14 @@ def validate_regular_tree(root: Path) -> None:
 
 def source_checkout_dirty(root: Path) -> bool:
     try:
+        object_format = git_required(root, "rev-parse", "--show-object-format").strip()
+        if object_format not in ("sha1", "sha256"):
+            raise SystemExit(f"unsupported Git object format: {object_format}")
         entries = tagged_tree_entries(root)
         for path, (mode, object_name) in entries.items():
             if mode not in (0o100644, 0o100755):
                 return True
-            working = _git_object_for_file(root, path)
+            working = _git_object_for_file(root, path, object_format)
             if working is None:
                 return True
             working_mode, current_object = working
@@ -201,6 +213,8 @@ def source_checkout_dirty(root: Path) -> bool:
                 return True
             if current_object != object_name:
                 return True
+        if git_required(root, "diff", "--cached", "--name-only", "HEAD").strip():
+            return True
         return bool(git_required(root, "ls-files", "--others", "--exclude-standard", "-z"))
     except SystemExit as exc:
         raise SystemExit("could not determine source checkout status") from exc
@@ -219,6 +233,11 @@ def absolute_without_symlinks(path: Path, label: str) -> Path:
             break
         current = current.parent
     return absolute
+
+
+def reject_overlapping_paths(source: Path, destination: Path) -> None:
+    if source == destination or source in destination.parents or destination in source.parents:
+        raise SystemExit("source and destination must be separate, non-overlapping directories")
 
 
 def tagged_tree_entries(repo: Path, pathspec: str | None = None) -> dict[str, tuple[int, str]]:
@@ -267,6 +286,7 @@ def validate_release_identity(runtime: str, project: str, tag: str | None) -> No
 def validate_source_bundle(repo: Path, source: Path, source_files: dict[str, str]) -> None:
     source_name = source.relative_to(repo).as_posix().rstrip("/")
     prefix = source_name + "/"
+    object_format = git_required(repo, "rev-parse", "--show-object-format").strip()
     tagged_entries = tagged_tree_entries(repo, source_name)
     tracked_entries = {
         path[len(prefix):]: values
@@ -303,7 +323,7 @@ def validate_source_bundle(repo: Path, source: Path, source_files: dict[str, str
             "source bundle file modes differ from tagged Git tree: "
             f"missing={missing}, extra={extra}, changed={changed}"
         )
-    actual_objects = file_objects(source)
+    actual_objects = file_objects(source, object_format)
     changed = []
     for path, (_, object_name) in tracked_entries.items():
         if actual_objects.get(path) != object_name:
@@ -365,6 +385,7 @@ def main() -> int:
     args = parser.parse_args()
     source = absolute_without_symlinks(args.source, "source")
     destination = absolute_without_symlinks(args.destination, "destination")
+    reject_overlapping_paths(source, destination)
     if not source.is_dir() or not destination.is_dir():
         raise SystemExit("source and destination must be existing directories")
 

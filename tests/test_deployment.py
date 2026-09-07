@@ -18,7 +18,7 @@ from PasteBerth.support.deploy.write_build_info import (
 )
 
 
-def _release_tree(root: Path) -> tuple[Path, Path]:
+def _release_tree(root: Path, object_format: str = "sha1") -> tuple[Path, Path]:
     source = root / "PasteBerth"
     (source / "runtime").mkdir(parents=True)
     (source / "runtime" / "__init__.py").write_text(
@@ -27,12 +27,19 @@ def _release_tree(root: Path) -> tuple[Path, Path]:
     (root / "pyproject.toml").write_text(
         '[project]\nversion = "2.1.17"\n', encoding="utf-8"
     )
-    subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+    init_args = ["git", "init", "-q"]
+    if object_format != "sha1":
+        init_args.extend(["--object-format", object_format])
+    subprocess.run(init_args, cwd=root, check=True)
     subprocess.run(["git", "config", "user.email", "tests@example.invalid"], cwd=root, check=True)
     subprocess.run(["git", "config", "user.name", "Pasteberth tests"], cwd=root, check=True)
     subprocess.run(["git", "add", "PasteBerth", "pyproject.toml"], cwd=root, check=True)
     subprocess.run(["git", "commit", "-qm", "release fixture"], cwd=root, check=True)
-    subprocess.run(["git", "tag", "v2.1.17"], cwd=root, check=True)
+    subprocess.run(
+        ["git", "tag", "-a", "-m", "release fixture", "v2.1.17"],
+        cwd=root,
+        check=True,
+    )
     destination = root.parent / f"{root.name}-deployed"
     shutil.copytree(source, destination)
     return source, destination
@@ -80,13 +87,39 @@ class TestDeploymentReleaseIdentity(unittest.TestCase):
             self.assertEqual(info["version"], "2.1.17")
             self.assertEqual(info["source_commit"], expected_commit)
             self.assertEqual(info["source_tag"], "v2.1.17")
+            tag_type = subprocess.run(
+                ["git", "cat-file", "-t", "v2.1.17"],
+                cwd=source.parent,
+                check=True,
+                capture_output=True,
+                text=True,
+            ).stdout.strip()
+            self.assertEqual(tag_type, "tag")
             self.assertFalse(info["source_dirty"])
             self.assertEqual(info["bundle_files"], file_digests(source))
+
+    def test_main_supports_sha256_git_repositories(self):
+        with tempfile.TemporaryDirectory() as raw_root:
+            source, destination = _release_tree(Path(raw_root), "sha256")
+            self.assertEqual(_write_manifest(source, destination), 0)
+            info = json.loads((destination / "BUILD_INFO.json").read_text(encoding="utf-8"))
+            self.assertEqual(len(info["source_commit"]), 64)
+            self.assertFalse(info["source_dirty"])
 
     def test_main_reports_untracked_files_in_the_source_checkout(self):
         with tempfile.TemporaryDirectory() as raw_root:
             source, destination = _release_tree(Path(raw_root))
             (source.parent / "release-note.txt").write_text("local note\n", encoding="utf-8")
+            self.assertEqual(_write_manifest(source, destination), 0)
+            info = json.loads((destination / "BUILD_INFO.json").read_text(encoding="utf-8"))
+            self.assertTrue(info["source_dirty"])
+
+    def test_main_reports_staged_files_in_the_source_checkout(self):
+        with tempfile.TemporaryDirectory() as raw_root:
+            source, destination = _release_tree(Path(raw_root))
+            staged = source.parent / "staged-note.txt"
+            staged.write_text("staged note\n", encoding="utf-8")
+            subprocess.run(["git", "add", "staged-note.txt"], cwd=source.parent, check=True)
             self.assertEqual(_write_manifest(source, destination), 0)
             info = json.loads((destination / "BUILD_INFO.json").read_text(encoding="utf-8"))
             self.assertTrue(info["source_dirty"])
@@ -174,6 +207,12 @@ class TestDeploymentReleaseIdentity(unittest.TestCase):
             source_link.symlink_to(source, target_is_directory=True)
             with self.assertRaisesRegex(SystemExit, "source path contains a symlink"):
                 _write_manifest(source_link, destination)
+
+    def test_main_rejects_overlapping_bundle_roots(self):
+        with tempfile.TemporaryDirectory() as raw_root:
+            source, _destination = _release_tree(Path(raw_root))
+            with self.assertRaisesRegex(SystemExit, "non-overlapping directories"):
+                _write_manifest(source, source)
 
     def test_main_rejects_a_missing_source_commit(self):
         with tempfile.TemporaryDirectory() as raw_root:
