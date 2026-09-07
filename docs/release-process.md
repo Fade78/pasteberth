@@ -28,8 +28,9 @@ runtime version, source commit, exact tag, bundle integrity, checkout state, and
 the SHA-256 digest of every source bundle file. The script refuses to write the
 record when the destination does not match the source bundle or when the
 bundle differs from the tagged Git tree, including regular-file modes. Git
-checkout status is fail-closed; unrelated files elsewhere in the checkout are
-included in `source_dirty`.
+symlinks and other non-regular bundle entries are rejected, and checkout status
+is fail-closed. Unrelated files elsewhere in the checkout are included in
+`source_dirty`.
 
 Restart the service only after the manifest has been written, then verify the
 active process and repeat `pasteberth --version` against the deployed wrapper.

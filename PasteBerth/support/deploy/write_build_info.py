@@ -5,9 +5,11 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import re
 import stat
 import subprocess
+import tempfile
 import tomllib
 from datetime import datetime, timezone
 from pathlib import Path
@@ -48,6 +50,14 @@ def file_modes(root: Path) -> dict[str, int]:
         and "__pycache__" not in path.parts
         and path.suffix != ".pyc"
     }
+
+
+def validate_regular_tree(root: Path) -> None:
+    for path in root.rglob("*"):
+        if path.is_symlink():
+            raise SystemExit(f"bundle contains a symlink: {path.relative_to(root)}")
+        if not path.is_dir() and not path.is_file():
+            raise SystemExit(f"bundle contains a non-regular file: {path.relative_to(root)}")
 
 
 def source_checkout_dirty(root: Path) -> bool:
@@ -103,6 +113,34 @@ def validate_source_bundle(repo: Path, source: Path, source_files: dict[str, str
             f"missing={sorted(tracked_files - actual_files)}, "
             f"extra={sorted(actual_files - tracked_files)}"
         )
+    mode_listing = git(
+        repo,
+        "ls-tree",
+        "-r",
+        "--format=%(objectmode) %(path)",
+        "HEAD",
+        "--",
+        source_name,
+    )
+    if mode_listing is None:
+        raise SystemExit("could not determine tagged source file modes")
+    tracked_modes = {}
+    for line in mode_listing.splitlines():
+        mode, path = line.split(" ", 1)
+        if path.startswith(prefix):
+            tracked_modes[path[len(prefix):]] = stat.S_IMODE(int(mode, 8))
+    actual_modes = file_modes(source)
+    if actual_modes != tracked_modes:
+        missing = sorted(set(tracked_modes) - set(actual_modes))
+        extra = sorted(set(actual_modes) - set(tracked_modes))
+        changed = sorted(
+            name for name in set(actual_modes) & set(tracked_modes)
+            if actual_modes[name] != tracked_modes[name]
+        )
+        raise SystemExit(
+            "source bundle file modes differ from tagged Git tree: "
+            f"missing={missing}, extra={extra}, changed={changed}"
+        )
     result = subprocess.run(
         ["git", "diff", "--quiet", "HEAD", "--", source_name],
         cwd=repo,
@@ -122,6 +160,8 @@ def main() -> int:
     if not source.is_dir() or not destination.is_dir():
         raise SystemExit("source and destination must be existing directories")
 
+    validate_regular_tree(source)
+    validate_regular_tree(destination)
     source_files = file_digests(source)
     repo = source.parent
     validate_source_bundle(repo, source, source_files)
@@ -162,18 +202,29 @@ def main() -> int:
     version = runtime_version(source)
     tag = git(repo, "describe", "--tags", "--exact-match", "HEAD")
     validate_release_identity(version, project_version(repo), tag)
+    source_commit = git(repo, "rev-parse", "HEAD")
+    if not source_commit or not re.fullmatch(r"[0-9a-f]{40,64}", source_commit):
+        raise SystemExit("could not determine full source commit")
     info = {
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "version": version,
-        "source_commit": git(repo, "rev-parse", "HEAD"),
+        "source_commit": source_commit,
         "source_tag": tag,
         "source_dirty": source_checkout_dirty(repo),
         "bundle_files": source_files,
     }
-    (destination / "BUILD_INFO.json").write_text(
-        json.dumps(info, indent=2, sort_keys=True) + "\n",
-        encoding="utf-8",
-    )
+    temp_path = None
+    try:
+        fd, temp_name = tempfile.mkstemp(prefix=".BUILD_INFO.", dir=destination)
+        temp_path = Path(temp_name)
+        with os.fdopen(fd, "w", encoding="utf-8") as stream:
+            stream.write(json.dumps(info, indent=2, sort_keys=True) + "\n")
+        os.replace(temp_path, destination / "BUILD_INFO.json")
+    except OSError as exc:
+        raise SystemExit("could not write build manifest") from exc
+    finally:
+        if temp_path is not None:
+            temp_path.unlink(missing_ok=True)
     print(json.dumps({key: value for key, value in info.items() if key != "bundle_files"}, indent=2))
     return 0
 

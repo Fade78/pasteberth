@@ -11,6 +11,7 @@ from unittest import mock
 
 from PasteBerth.support.deploy.write_build_info import (
     file_digests,
+    git,
     main as write_build_info,
     source_checkout_dirty,
     validate_release_identity,
@@ -99,6 +100,19 @@ class TestDeploymentReleaseIdentity(unittest.TestCase):
             with self.assertRaisesRegex(SystemExit, "tracked changes"):
                 _write_manifest(source, destination)
 
+    def test_main_rejects_a_source_mode_mismatch_even_when_git_ignores_modes(self):
+        with tempfile.TemporaryDirectory() as raw_root:
+            source, destination = _release_tree(Path(raw_root))
+            target = source / "runtime" / "__init__.py"
+            target.chmod(stat.S_IMODE(target.stat().st_mode) | stat.S_IXUSR)
+            subprocess.run(
+                ["git", "config", "core.filemode", "false"],
+                cwd=source.parent,
+                check=True,
+            )
+            with self.assertRaisesRegex(SystemExit, "modes differ from tagged Git tree"):
+                _write_manifest(source, destination)
+
     def test_main_rejects_destination_file_mismatches(self):
         for kind in ("missing", "changed", "extra"):
             with self.subTest(kind=kind), tempfile.TemporaryDirectory() as raw_root:
@@ -120,6 +134,33 @@ class TestDeploymentReleaseIdentity(unittest.TestCase):
             target.chmod(stat.S_IMODE(target.stat().st_mode) | stat.S_IXUSR)
             with self.assertRaisesRegex(SystemExit, "file modes differ"):
                 _write_manifest(source, destination)
+
+    def test_main_rejects_destination_symlinks(self):
+        with tempfile.TemporaryDirectory() as raw_root:
+            source, destination = _release_tree(Path(raw_root))
+            target = destination / "runtime" / "__init__.py"
+            target.unlink()
+            target.symlink_to(source / "runtime" / "__init__.py")
+            with self.assertRaisesRegex(SystemExit, "contains a symlink"):
+                _write_manifest(source, destination)
+
+    def test_main_rejects_a_missing_source_commit(self):
+        with tempfile.TemporaryDirectory() as raw_root:
+            source, destination = _release_tree(Path(raw_root))
+            real_git = git
+
+            def missing_commit(root, *args):
+                if args == ("rev-parse", "HEAD"):
+                    return None
+                return real_git(root, *args)
+
+            with mock.patch(
+                "PasteBerth.support.deploy.write_build_info.git",
+                side_effect=missing_commit,
+            ):
+                with self.assertRaisesRegex(SystemExit, "could not determine full source commit"):
+                    _write_manifest(source, destination)
+            self.assertFalse((destination / "BUILD_INFO.json").exists())
 
     def test_source_dirty_check_fails_closed(self):
         with mock.patch(
