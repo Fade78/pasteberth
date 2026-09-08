@@ -1,0 +1,134 @@
+{
+  "scope": "Browser-generated snippets parsed by the current repository; temporary filesystem discovery, no daemon",
+  "tests": [
+    {
+      "name": "Native TOML parser 1",
+      "passed": true,
+      "detail": "/repo"
+    },
+    {
+      "name": "Directory discovery 1",
+      "passed": true,
+      "detail": {
+        "expected_id": "atlas-ignoredbygit-exchange",
+        "actual_ids": [
+          "atlas-ignoredbygit-exchange"
+        ],
+        "diagnostics": []
+      }
+    },
+    {
+      "name": "First-directory label without Git 1",
+      "passed": true,
+      "detail": "atlas"
+    },
+    {
+      "name": "Explicit example retention 1",
+      "passed": true,
+      "detail": 100
+    },
+    {
+      "name": "Leaf directory requirement 1",
+      "passed": true,
+      "detail": [
+        "zone collection #1: candidate 'atlas/ignoredbygit/exchange' ignored: contains user subdirectory 'nested'"
+      ]
+    },
+    {
+      "name": "Invalid derived ID not silently rewritten 1",
+      "passed": true,
+      "detail": [
+        "zone collection #1: candidate 'atlas/ignoredbygit/exchange' ignored: contains user subdirectory 'nested'",
+        "zone collection #1: candidate 'project.v2/ignoredbygit/exchange' ignored: generated zone ID 'project.v2-ignoredbygit-exchange' is invalid or longer than 64 characters"
+      ]
+    },
+    {
+      "name": "Native TOML parser 2",
+      "passed": true,
+      "detail": "/srv/workspaces"
+    },
+    {
+      "name": "Directory discovery 2",
+      "passed": true,
+      "detail": {
+        "expected_id": "project-a-work-exchange",
+        "actual_ids": [
+          "project-a-work-exchange"
+        ],
+        "diagnostics": []
+      }
+    },
+    {
+      "name": "First-directory label without Git 2",
+      "passed": true,
+      "detail": "Project-A"
+    },
+    {
+      "name": "Explicit example retention 2",
+      "passed": true,
+      "detail": 100
+    },
+    {
+      "name": "Leaf directory requirement 2",
+      "passed": true,
+      "detail": [
+        "zone collection #1: candidate 'Project-A/work/exchange' ignored: contains user subdirectory 'nested'"
+      ]
+    },
+    {
+      "name": "Invalid derived ID not silently rewritten 2",
+      "passed": true,
+      "detail": [
+        "zone collection #1: candidate 'Project-A/work/exchange' ignored: contains user subdirectory 'nested'",
+        "zone collection #1: candidate 'project.v2/work/exchange' ignored: generated zone ID 'project.v2-work-exchange' is invalid or longer than 64 characters"
+      ]
+    },
+    {
+      "name": "Native TOML parser 3",
+      "passed": true,
+      "detail": "/tmp/a \"quote\""
+    },
+    {
+      "name": "Directory discovery 3",
+      "passed": true,
+      "detail": {
+        "expected_id": "unit_2-out",
+        "actual_ids": [
+          "unit_2-out"
+        ],
+        "diagnostics": []
+      }
+    },
+    {
+      "name": "First-directory label without Git 3",
+      "passed": true,
+      "detail": "unit_2"
+    },
+    {
+      "name": "Explicit example retention 3",
+      "passed": true,
+      "detail": 100
+    },
+    {
+      "name": "Leaf directory requirement 3",
+      "passed": true,
+      "detail": [
+        "zone collection #1: candidate 'unit_2/out' ignored: contains user subdirectory 'nested'"
+      ]
+    },
+    {
+      "name": "Invalid derived ID not silently rewritten 3",
+      "passed": true,
+      "detail": [
+        "zone collection #1: candidate 'unit_2/out' ignored: contains user subdirectory 'nested'",
+        "zone collection #1: candidate 'project.v2/out' ignored: generated zone ID 'project.v2-out' is invalid or longer than 64 characters"
+      ]
+    }
+  ],
+  "summary": {
+    "passed": 18,
+    "failed": 0
+  },
+  "checked_at": "2026-09-08T23:29:02.741925+00:00",
+  "generated_configs_sha256": "620c5b23b7e665ca573b8974329491f0dca2ad76e26420eb2f3210b652d0cd71"
+}

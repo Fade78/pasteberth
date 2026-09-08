@@ -1,1363 +1,266 @@
-# Pasteberth Operator Guide
+# Pasteberth Documentation
 
-This guide is the detailed reference for installing, configuring, operating,
-and integrating Pasteberth 2.1.20. The short project overview is in
-[`README.md`](README.md); user-visible release history is in
-[`CHANGELOG.md`](CHANGELOG.md).
-
-Pasteberth is a targeted bridge between a graphical workstation, a filesystem,
-and a terminal or CLI/TUI harness. It is not a general-purpose cloud drive and
-it does not synchronize independent Pasteberth servers.
+Stage and retrieve files across browsers, filesystems, tools, and working
+contexts. Choose a path below for the documented **2.1.21** runtime. Start with
+the task you need, then follow its links for exact options and guarantees.
 
 ## Contents
 
-1. [The Model](#1-the-model)
-2. [Requirements and Support](#2-requirements-and-support)
-3. [Installation](#3-installation)
-4. [Configuration](#4-configuration)
-5. [Web UI](#5-web-ui)
-6. [Command-Line Interface](#6-command-line-interface)
-7. [Bash Completion](#7-bash-completion)
-8. [Filesystem Layout and Data Ownership](#8-filesystem-layout-and-data-ownership)
-9. [Deployment](#9-deployment)
-10. [Security and Trust Boundaries](#10-security-and-trust-boundaries)
-11. [HTTP API](#11-http-api)
-12. [Troubleshooting](#12-troubleshooting)
-13. [Tests and Development](#13-tests-and-development)
-14. [Backup, Upgrade, and Recovery](#14-backup-upgrade-and-recovery)
-15. [Current Limits and Roadmap](#15-current-limits-and-roadmap)
-16. [License](#16-license)
+| Path | Start Here | Continue With |
+|---|---|---|
+| Discover | [Project overview](README.md) | [Concepts](docs/concepts.md), [presentation and local demo](site/README.md) |
+| Use | [Using Pasteberth](docs/using-pasteberth.md) | [Personal staging](docs/recipes/personal-staging.md), [documents](docs/recipes/documents.md), [selection bundles](docs/recipes/selection-bundle.md) |
+| Multi-project | [Project zones](docs/recipes/project-zones.md) | [Provisioning](docs/provisioning.md), [collection contract](docs/zone-collection-contract.md) |
+| Integrate | [Integrations](docs/integrations.md) | [CLI](docs/reference/cli.md), [HTTP API](docs/reference/api.md), [MCP](docs/reference/mcp.md), [register a file](docs/recipes/register-file.md), [script output](docs/recipes/script-output.md), [agent output](docs/recipes/agent-output.md), [current result](docs/recipes/current-result.md) |
+| Deploy | [Deployment](docs/deployment.md) | [Configuration](docs/reference/configuration.md), [storage](docs/reference/storage.md), [operations](docs/operations.md), [troubleshooting](docs/troubleshooting.md) |
+| Contribute | [Contributing](docs/contributing.md) | [Documentation maintenance](docs/documentation-maintenance.md), [release process](docs/release-process.md), [changelog](CHANGELOG.md), [license](LICENSE) |
+
+Already have access to an instance? [Using Pasteberth](docs/using-pasteberth.md)
+does not require you to install or administer it. Organize zones by project,
+subject, or an [optional workflow](docs/recipes/zone-workflow.md); comments can
+carry context without imposing stages, roles, or approvals.
+
+The site has English and French presentation text. These Markdown guides and
+the product UI are English. A static server may display Markdown source rather
+than render it; GitHub renders the repository documentation.
+
+## Existing Guide Links
+
+The headings below retain the original guide anchors for existing bookmarks
+and external links. Each points to the relocated material.
 
 ## 1. The Model
 
-Pasteberth has one service and one or more configured **zones**. A zone is a
-real directory on the machine running the service. The Web UI and the
-filesystem CLI are independent clients of that same service and storage.
-
-The usual flow is:
-
-1. A person pastes an image, text, or file into the browser.
-2. Pasteberth validates and stores it in the selected zone.
-3. The browser receives the exact filesystem reference created by the server.
-4. A harness or terminal process reads that reference on the server machine.
-
-The reverse flow is also supported:
-
-1. A script or agent runs `drop` for a file.
-2. Pasteberth publishes it into a configured zone and creates its sidecar.
-3. A browser user sees the new item and can download it.
-
-For a tree of projects, configure one `[[zone_collection]]` rule instead of adding one
-static zone per project. When a new project creates a matching exchange
-directory, the service discovers it during the background scan started by its
-next zone read. A visible Web UI polls that read every 10 seconds, so the new
-project normally appears on the first poll after the scan completes, without a
-service restart or configuration edit.
-
-The browser never needs to access the returned filesystem path. The path is
-intended for the harness on the machine where Pasteberth runs.
-
-![Pasteberth as a bridge between browser clients, the service, and filesystem or CLI/TUI clients](docs/images/pasteberth-bridge.png)
+See [The Model](docs/reference/storage.md#the-model).
 
 ### What Pasteberth is for
 
-Pasteberth is useful when graphical and terminal work happen in different
-contexts:
-
-- a screenshot is produced on a workstation and must be read by a remote
-  harness;
-- an agent produces a report that a person needs to download in a browser;
-- several projects need separate short-lived capture areas;
-- a user needs a small, authenticated handoff service rather than a file
-  sharing platform.
+See [What Pasteberth is for](docs/reference/storage.md#what-pasteberth-is-for).
 
 ### What Pasteberth is not
 
-- It is not a public file host, CDN, or object store.
-- It is not a synchronization service between server instances.
-- It does not provide individual Web accounts in v1.
-- It does not run a filesystem watcher for arbitrary directories. Configured
-  `[[zone_collection]]` rules are rescanned during service reads, including the Web UI's
-  periodic refresh.
-- It does not make the browser able to read a server filesystem path.
+See [What Pasteberth is not](docs/reference/storage.md#what-pasteberth-is-not).
 
 ## 2. Requirements and Support
 
-The 2.1.20 implementation requires:
-
-- Python 3.11 or newer;
-- a local filesystem supported by the active platform backend;
-- a modern browser for the Web UI;
-- no third-party Python runtime dependency.
-
-Linux is the current official and tested server platform for v2.1.20. The
-Windows backend has broad Wine coverage, but native Windows/NTFS validation is
-still outstanding and macOS support is not implemented. Do not infer support
-for every network or exotic filesystem from the operating system name.
-
-The supplied browser suite runs in Chromium and Firefox in CI when the
-corresponding Playwright browsers are installed. Its native-input smoke test
-uses the browser file chooser; operating-system drag-and-drop still requires
-manual validation on the target desktop.
+See [Requirements and Support](docs/deployment.md#requirements-and-support).
 
 ## 3. Installation
 
+See [Installation](docs/deployment.md#installation).
+
 ### 3.1 Deployable copy
 
-The supported v2.1.20 installation is the tracked `PasteBerth/` directory. It is
-the complete code-only deployment unit: it needs no root access, installation
-script, Python package installation, or build step.
-
-```sh
-git clone https://github.com/Fade78/pasteberth.git
-cd pasteberth
-cp -a PasteBerth "$HOME/PasteBerth"
-mkdir -p "$HOME/.local/bin"
-ln -s "$HOME/PasteBerth/pasteberth" "$HOME/.local/bin/pasteberth"
-```
-
-The executable is at the root of the deployment directory:
-
-```sh
-pasteberth --help
-```
-
-The executable resolves its physical target, so a symbolic link can live in any
-directory on `PATH`:
-
-```sh
-export PATH="$HOME/.local/bin:$PATH"
-pasteberth --version
-```
-
-The executable resolves the deployment directory before launching its private
-runtime, replaces the inherited `PYTHONPATH` with that deployment directory,
-and uses Python's `-P` safe-path mode. It therefore does not provide a plugin
-mechanism through the current directory or `PYTHONPATH`, and it also works when
-the deployment is reached through a cross-user symbolic link whose parent home
-directory cannot be listed. A copy of the executable without the rest of the
-deployment requires `PASTEBERTH_HOME=/absolute/path/to/PasteBerth`; `--config`
-only selects configuration and never locates the runtime.
-
-`pyproject.toml`, tests, browser tooling, documentation sources, and Git
-metadata are repository material. They are not needed in the copied deployment.
+See [Deployable copy](docs/deployment.md#deployable-copy).
 
 ### 3.2 First start
 
-Generate a configuration, edit its zones, set the password, audit it, and
-start the server:
-
-```sh
-pasteberth --generate-config
-# edit ~/.config/pasteberth/config.toml: paths, zones, limits, and options
-pasteberth passwd
-pasteberth audit
-pasteberth
-```
-
-Open `http://127.0.0.1:8765/` in the browser unless the configuration changes
-the address or port. The generated configuration enables authentication. The
-password hash is kept in a separate `passwd` file and is never written to
-`config.toml`.
-
-For a local trial, running without any configuration intentionally uses a
-loopback-only minimal mode with `$XDG_DATA_HOME/pasteberth/storage/default`
-(normally `~/.local/share/pasteberth/storage/default`) and no authentication.
-This mode is suitable for a first look only; it must not be exposed through a
-proxy or a non-loopback listener.
+See [First start](docs/deployment.md#first-start).
 
 ### 3.3 Configuration discovery
 
-For normal execution, an existing configuration is selected in this order:
-
-1. explicit `--config PATH`;
-2. `PASTEBERTH_CONFIG`;
-3. `$XDG_CONFIG_HOME/pasteberth/config.toml` (normally
-   `~/.config/pasteberth/config.toml`);
-4. built-in minimal mode when no file exists.
-
-`--generate-config` writes to the explicit path or `PASTEBERTH_CONFIG`, then
-to `$XDG_CONFIG_HOME/pasteberth/config.toml`. It never writes inside the
-read-only deployment.
-By default it refuses to replace an existing file; add the global `--force`
-option only after checking the target path.
-
-The active configuration, password file, TLS private key, and zone directories
-must be outside `PasteBerth/`. These paths may contain symbolic links; Pasteberth
-resolves the target before opening it and checks the target and its parents.
-
-Use the same explicit `--config PATH` for `passwd`, `audit`, the server, and
-filesystem commands when more than one configuration exists.
+See [Configuration discovery](docs/reference/configuration.md#configuration-discovery).
 
 ## 4. Configuration
 
-Start from [`PasteBerth/support/config.example.toml`](PasteBerth/support/config.example.toml).
-Configuration is TOML and is loaded when the service starts. Restart the server after changing
-listeners, TLS, proxy trust, host allowlists, upload limits, zones, groups, or
-authentication settings. The password hash is reloaded for every login
-attempt, so changing it does not require a restart.
+See [Configuration](docs/reference/configuration.md#configuration).
 
 ### 4.1 Top-level keys
 
-| Key | Default | Meaning |
-|---|---:|---|
-| `listen_address` | `127.0.0.1` | Address on which the HTTP server listens. |
-| `port` | `8765` | TCP listening port. |
-| `max_upload_size` | `20MiB` | Maximum size of one upload; use `"unlimited"` for no application cap. |
-| `max_image_pixels` | `25000000` | Structural image pixel budget; use `"unlimited"` to disable it. |
-| `url_prefix` | `""` | Public path prefix such as `/paste`; the proxy must preserve it. |
-| `show_full_path` | `true` | Display absolute file references in the Web UI; set `false` when paths are sensitive. |
-| `trusted_proxies` | `[]` | IP addresses or CIDR networks allowed to provide `X-Forwarded-*`. |
-| `allowed_hosts` | `[]` | Hostnames or IP addresses accepted by Host and Origin checks; empty means wildcard and triggers an audit warning. |
-| `allow_unauthenticated_local` | `false` | Explicit opt-in for anonymous loopback or proxy mode. |
-| `allow_unauthenticated_remote` | `false` | Explicit opt-in for anonymous non-loopback mode; discouraged. |
-| `allow_insecure_http_remote` | `false` | Explicit opt-in for non-loopback HTTP on a controlled private network. |
-| `accept_img` | `true` | Accept structurally valid PNG, JPEG, and WebP images. |
-| `accept_doc` | `true` | Accept valid UTF-8 text without NUL bytes. |
-| `accept_bin` | `true` | Accept opaque binary content. |
-| `log_level` | `INFO` | One of `DEBUG`, `INFO`, `WARNING`, or `ERROR`. |
-
-All three `accept_*` switches may be disabled, but disabling all of them
-refuses every upload.
-
-The `max_upload_size` limit applies to the extracted content. Multipart framing
-and all other operational budgets are controlled in the optional `[limits]`
-table. Each numeric or size value there accepts `"unlimited"`.
-
-The available `[limits]` keys are `max_image_dimension`, `max_image_raw_size`,
-`max_filename_length`, `max_filename_size`, `max_png_chunks`,
-`max_jpeg_segments`, `max_webp_chunks`, `max_mime_length`,
-`max_multipart_boundary_length`, `max_multipart_parts`,
-`max_multipart_header_size`, `max_multipart_field_name_length`,
-`max_multipart_body_size`, `max_batch_names`, `max_batch_body_size`,
-`max_archive_size`, `max_archive_duration_seconds`, `max_comment_body_size`,
-`max_http_header_size`, `max_login_body_size`, `max_login_fields`,
-`max_login_delay_seconds`, `max_login_concurrent_checks`,
-`max_login_tracked_ips`, `login_forget_after_seconds`,
-`max_scrypt_memory_size`, `max_password_file_size`,
-`max_metadata_size`, `max_comment_length`, `max_comment_bytes`,
-`request_queue_size`, `max_active_requests`, `max_pending_requests`,
-`http_header_timeout_seconds`, and `http_request_timeout_seconds`.
-`request_queue_size` must remain a positive integer because it is passed to the
-operating-system listen backlog; the other numeric and size budgets may use
-`"unlimited"` where the operation supports it.
-
-`max_multipart_body_size` defaults to `24MiB` and limits the complete multipart
-request, including framing and auxiliary fields. It is independent from
-`max_upload_size`, whose limit applies to the extracted content. The archive
-limits default to `256MiB` of uncompressed selected files and `300` seconds of
-total streaming time; ZIP output remains streamed without a temporary archive.
+See [Top-level keys](docs/reference/configuration.md#top-level-keys).
 
 ### 4.2 TLS
 
-Pasteberth can terminate TLS directly:
-
-```toml
-[tls]
-enabled = true
-certificate = "/absolute/path/cert.pem"
-private_key = "/absolute/path/key.pem"
-```
-
-The recommended deployment keeps Pasteberth on loopback and terminates HTTPS
-in Caddy or nginx. A non-loopback listener must use direct TLS unless the
-explicit private-network HTTP exception is enabled.
+See [TLS](docs/reference/configuration.md#tls).
 
 ### 4.3 Authentication
 
-```toml
-[auth]
-enabled = true
-session_ttl_hours = 72
-max_sessions = 4096
-# password_file = "/absolute/path/to/passwd"
-```
-
-The password file defaults to `passwd` next to the selected configuration. It
-contains a salted scrypt hash and should be readable only by the service user.
-`pasteberth passwd` creates or replaces it safely. `max_sessions` bounds live
-authenticated sessions held in memory; when the bound is reached, the oldest
-session is evicted before a new one is created. Use `"unlimited"` to disable
-FIFO eviction. It does not limit TCP connections or pending unauthenticated
-requests.
+See [Authentication](docs/reference/configuration.md#authentication).
 
 ### 4.4 Zones
 
-Each `[[zones]]` table defines one independent project area:
-
-| Key | Default | Meaning |
-|---|---:|---|
-| `id` | required | Lowercase API/UI identifier, up to 64 characters. |
-| `label` | `id` | Human-readable UI label. |
-| `type` | `local` | Only `local` is implemented in v2.1.20. |
-| `directory` | required | Absolute path as seen by the server and the harness. |
-| `retain` | `10` | Number of managed items retained in the zone. |
-| `reference_prefix` | `@` | Text prepended to one returned reference. |
-| `reference_suffix` | empty | Text appended to one returned reference. |
-| `reference_list_prefix` | empty | Prefix for a copied list of references. |
-| `reference_list_suffix` | empty | Suffix for a copied list of references. |
-| `reference_separator` | `,` | Separator between references in a copied list. |
-| `allow_zip_download` | `true` | Allow ZIP download for a multiple selection. |
-| `color` | `#243447` | Six-digit zone background color. |
-| `create_directory` | `true` | Create a missing zone directory when safe. |
-| `min_free_percent` | `2.0` | Required free-space reserve on the zone filesystem. |
-| `storage_mode` | `sidecar` | The managed-pair contract. Legacy `directory` values are normalized to `sidecar` with a warning. |
-| `max_items` | none | Legacy setting; ignored after normalization unless used to populate `retain`. |
-| `file_group` | none | Optional POSIX group name or numeric GID for files created by Pasteberth. The daemon account and any other process that must read or modify those files must be allowed to use the group. |
-
-The directory is not a browser path. It is the exact server-side directory
-where the harness reads the stored content and where `drop` writes.
-Zone directories must be distinct. A private `0700` directory is recommended;
-deliberately shared directories are allowed but produce an audit warning when
-their permissions are broad.
-
-For a shared POSIX zone, use one common group, a `setgid` directory, and group
-membership for every writer and for the daemon process. A `file_group` setting
-does not grant access to the directory or add a group to a running process. The
-group must be present in the credentials of the actual daemon process, not only
-in the shell that ran `register`. Prefer ordinary group membership and
-filesystem `setgid` permissions over filesystem-specific ACLs when the zone must
-work across several filesystems.
-
-If a user is added to the shared group after a `systemd --user` manager has
-started, log out and in again (or reboot) before restarting Pasteberth. A
-`systemctl --user daemon-reload` only rereads the unit; it does not refresh the
-manager's supplementary groups.
-
-Example:
-
-```toml
-[[zones]]
-id = "project-alpha"
-label = "Project Alpha"
-type = "local"
-directory = "/absolute/path/to/Pasteberth/captures/project-alpha"
-retain = 10
-reference_prefix = "@"
-reference_suffix = ""
-reference_list_prefix = ""
-reference_list_suffix = ""
-reference_separator = ","
-allow_zip_download = true
-color = "#304237"
-min_free_percent = 2.0
-```
-
-To copy a reference enclosed in backticks:
-
-```toml
-reference_prefix = "`"
-reference_suffix = "`"
-```
+See [Zones](docs/reference/configuration.md#zones).
 
 ### 4.5 Zone groups
 
-Groups control which zones are visible and how they are laid out:
-
-| Key | Values | Meaning |
-|---|---|---|
-| `name` | non-empty string | Tab label. |
-| `selection` | `all`, `pattern`, `other` | How zones are selected. |
-| `pattern` | list of Python regexes | Required for `pattern`; uses case-sensitive `re.search`. |
-| `layout` | `area`, `tab` | Grid view or opened-zone tab view. |
-| `hide_empty` | boolean | Hide a group with no matching zones. |
-| `show_count` | boolean | Show the matching zone count in the tab. |
-
-Without a `[[groups]]` section, all zones are displayed through an implicit
-`All` view and no group bar is shown. An `all` group contains every zone. A
-`pattern` group matches zone or collection IDs, not labels; matching a collection
-selects all of its zones. An `other` group contains zones
-not selected by any `pattern` group; `all` groups are deliberately ignored for
-that calculation.
-
-Groups are loaded at startup. `pasteberth audit` reports redundant groups,
-ignored patterns on `all`/`other`, and equivalent effective selections.
-The Group options menu can show or hide the left zone column for a `tab` group;
-that preference is kept separately for each group in the browser.
+See [Zone groups](docs/reference/configuration.md#zone-groups).
 
 ### 4.6 Zone collections
 
-Repeatable `[[zone_collection]]` rules expose existing directories below an
-absolute `base_directory` when their resolved relative path matches `pattern`.
-Each collection has an ID such as `@repositories`; it does not own or generate
-a group. A `selection = "pattern"` group can match that ID and selects every
-zone discovered by the collection. A configuration may use collections without
-any static `[[zones]]` entries.
-
-`label_mode` defaults to `"git-or-relative"`; `"relative"` uses the complete
-path below `base_directory`, while `"first-directory"` uses its first
-directory component as the zone label.
-
-Several collections may contain the same zone. Their zone behavior must agree;
-when retention, references, permissions, or another zone setting conflicts, the
-candidate is rejected and reported by `audit`.
-
-Discovery does not create directories or edit configuration. If `color` is
-omitted, the zone color is deterministic and distinct within its collections;
-an explicit `color` remains authoritative for the rule. The discovered
-directory must already be readable, writable, and traversable by the server
-account; discovery alone may succeed without write permission, but uploads and
-sidecars will not.
-
-Regular files copied or moved directly into a collection zone have no coherent
-sidecar, so they remain foreign and are ignored. Uploads through the browser,
-API, or CLI create the data/sidecar pair. A visible browser polls `/api/zones`
-every 10 seconds; the request starts a background collection scan and returns
-the last completed snapshot while a scan is running. A new matching project
-directory therefore appears on the first poll after the scan completes, without
-a daemon restart. The `/api/groups` endpoint uses the same background discovery
-behavior and returns the last completed group snapshot while scanning. A hidden
-tab refreshes when it becomes visible. The complete
-discovery contract, including aliases, diagnostics, permissions, group
-expansion, and lifecycle, is in
-[`docs/zone-collection-contract.md`](docs/zone-collection-contract.md).
+See [Zone collections](docs/reference/configuration.md#zone-collections).
 
 ## 5. Web UI
 
-The browser view is a persistent workspace organized by zones.
-
-![Pasteberth browser workspace with project zones and content actions](docs/images/pasteberth-ui.png)
+See [Web UI](docs/reference/storage.md#web-ui).
 
 ### 5.1 Paste and drop
 
-Click a zone or its selection button to make it the active paste target. Then:
-
-- paste with `Ctrl+V` or `Command+V`;
-- drop one or more files directly on a zone;
-- use the file picker for one or more files.
-
-Clipboard pastes accept images, text, and arbitrary files such as ZIP archives
-or checksum files. Browser file drops use the original filename when it is
-valid; a browser that exposes dropped files through `DataTransfer.items` is
-supported as well as one that populates `DataTransfer.files`.
-
-Focusing an action button or history item does not change the active paste
-target. A direct drop always targets the zone under the pointer. Several files
-are uploaded sequentially as independent operations; one failed file does not
-cancel the others.
-
-The web UI asks for confirmation before an upload would exceed `retain`, because
-the oldest managed items will then be removed. The server remains authoritative.
-A successful upload that removed items includes their filenames in the
-`retention_deleted` response field; direct API clients should inspect it.
-
-The server deduplicates anonymous uploads, including clipboard pastes, within
-each zone. It computes the SHA-256 digest after receiving the bytes under the
-zone lock; if the same content is already managed, the response is `200` with
-`duplicate: true`, the existing item is returned, and retention is unchanged.
-Uploads with a preserved filename remain independent so named files may
-intentionally contain identical bytes. No hashing is performed in the browser.
-
-After an upload, Pasteberth tries to copy the exact returned reference to the
-clipboard. Clipboard permissions are controlled by the browser.
+See [Paste and drop](docs/reference/storage.md#paste-and-drop).
 
 ### 5.2 Content types
 
-- PNG, JPEG, and WebP images receive previews when structural validation passes.
-- Valid UTF-8 content without NUL bytes is displayed as text.
-- Other content is treated as opaque binary.
-- A declared MIME type does not decide whether an image is valid; content
-  inspection does.
-- An image-looking file that fails structural validation remains a binary item
-  if `accept_bin` permits it.
-- Mixed clipboard input containing an image and text is stored as one HTML
-  document with embedded images. `Copy Text` restores both HTML and plain-text
-  clipboard flavors.
-- When copying stored `text/html`, `Copy Text` removes scripts, event handlers,
-  CSS, forms, remote URLs, and non-raster resources from the HTML clipboard
-  flavor. Embedded raster `data:` images are retained. The preview displays the
-  sanitized text and never renders stored HTML. If sanitization changed the
-  document, it exposes a red `Copy raw HTML` button for an explicit raw copy;
-  storage and downloads always keep the original file unchanged.
-
-Structural image validation checks containers, dimensions, chunk/segment
-structure, and pixel budgets without fully decoding the codec bitstream. A
-structurally valid but undecodable file can therefore have a broken preview;
-the server never executes it. The default image budgets are `16,384 x 16,384`
-pixels, 25 MP, and 256 MiB of encoded input; all are operator-configurable.
+See [Content types](docs/reference/storage.md#content-types).
 
 ### 5.3 After a deposit: inspect and act
 
-The content index is the complete history for a zone, newest first. Click a
-thumbnail or history item to select it in the upper panel.
-
-- click selects one item;
-- `Shift`-click selects a range;
-- `Ctrl`-click or `Command`-click adds or removes an item;
-- a multiple selection can copy all references, download a ZIP, or delete all
-  selected managed items;
-- the selected item exposes a `Comment` button for a short Unicode note;
-- hovering the selected file or a history icon shows complete, untruncated item
-  details;
-- `show_full_path = false` hides absolute references in the UI while preserving
-  them in API responses and copy actions.
-
-For one selected item, the upper panel can copy its reference, preview or
-download its content, copy image or text content when applicable, edit its
-comment, or delete the managed pair. For several selected items, the panel
-offers the corresponding group actions: copy all references, download a ZIP,
-delete the selection, or copy or move the files to another configured zone.
-These actions preserve stored filenames and metadata; a conflicting target is
-rejected without replacing either side.
-
-Related post-deposit operations are available outside the browser. Use the
-filesystem commands in [section 6](#6-command-line-interface) to rename,
-delete, copy, or move managed pairs directly between configured zone
-directories. Use the HTTP routes in [section 11](#11-http-api) for comments,
-deletion, ZIP archives, and transfers from another client.
-
-Visible browsers poll for changes made by `drop` or another client
-every 10 seconds. A browser tab that was hidden refreshes when it becomes
-visible. Newly discovered items display a `NEW` badge on the zone and history
-item until that item is selected; this indicator is local to the browser tab and
-is reset when the page is reloaded.
-
-![Pasteberth multiple-selection panel with grouped copy, ZIP, and delete actions](docs/images/pasteberth-multiselect.png)
-
-The `C` shortcut copies the selected item's link. In tab layout, `A` opens all
-visible zones and `U` closes them without changing the paste target. `Shift`-
-click selects the contiguous range from the last non-range zone selection;
-`Ctrl`-click or `Command`-click adds or removes one zone, and the same
-modifiers with `Shift` add or remove a range. Number keys `1` through `9`
-select a visible zone. Keyboard focus and selection do not silently redirect
-paste operations.
-
-The selected-content panel provides the reference and applicable content actions
-for one item. For several selected items it instead lists filenames, sizes, and
-stored dates, and exposes the group actions. Individual preview/download actions
-are not shown in that state.
+See [After a deposit: inspect and act](docs/reference/storage.md#after-a-deposit-inspect-and-act).
 
 ### 5.4 Retention
 
-`retain = N` keeps at most N managed contents per zone. Retention runs after a
-successful save under the zone lock and only removes a coherent data/sidecar pair
-owned by Pasteberth. Foreign files and malformed or orphan sidecars are preserved.
+See [Retention](docs/reference/storage.md#retention).
 
 ## 6. Command-Line Interface
 
-Use `pasteberth --help` for the parser's short reference and
-`pasteberth --version` to print the version.
-
-The command without a subcommand starts the server:
-
-```text
-pasteberth [--config PATH]
-```
-
-This form uses `log_level` from the selected configuration. To override it for
-one invocation, use the explicit server subcommand:
-
-```text
-pasteberth serve [--config PATH] [--log-level LEVEL]
-```
-
-Global options are accepted before the subcommand. Subcommands also accept the
-documented `--config` option after their name.
+See [Command-Line Interface](docs/reference/cli.md#command-line-interface).
 
 ### 6.1 Configuration generation
 
-```sh
-pasteberth [--config PATH] --generate-config [--force]
-```
-
-The command writes a secure generated configuration and refuses to overwrite
-an existing target unless `--force` is present. Review the target before using
-`--force`.
+See [Configuration generation](docs/reference/cli.md#configuration-generation).
 
 ### 6.2 Server
 
-```sh
-pasteberth serve [--config PATH] [--log-level DEBUG|INFO|WARNING|ERROR]
-```
-
-The server runs in the foreground. Stop it with `Ctrl+C` when running
-interactively. `--log-level` overrides the configuration for that invocation.
+See [Server](docs/reference/cli.md#server).
 
 ### 6.3 Password
 
-```sh
-pasteberth passwd [--config PATH]
-```
-
-The command prompts twice, requires at least eight characters, and writes a
-salted scrypt hash to the configured password file. It never writes a plaintext
-password or modifies a hash when the selected configuration is invalid.
+See [Password](docs/reference/cli.md#password).
 
 ### 6.4 Audit
 
-```sh
-pasteberth audit [--config PATH]
-```
-
-`audit` checks configuration, directories, ownership, permissions, listener
-policy, host policy, and TLS settings without modifying the deployment.
-It also prints an `INFO` line with the discovery duration, rule count, and
-candidate count, including when no collection rules are configured. The duration
-covers the filesystem scan and candidate construction, not the later per-zone
-audit.
-
-Exit codes are:
-
-- `0`: no errors and no warnings;
-- `1`: the configuration is usable but has warnings;
-- `2`: one or more errors make the configuration unsafe or unusable.
-
-Warnings include broad zone permissions, wildcard host checks, and other
-conditions that may be intentional but deserve review.
+See [Audit](docs/reference/cli.md#audit).
 
 ### 6.5 Filesystem drop
 
-```sh
-pasteberth drop [--config PATH] [--server URL] [--insecure] [--zone ID] [--replace] \
-  [ZONE_DIRECTORY] SOURCE_FILE...
-pasteberth register [--config PATH] FILE
-```
-
-Without `--zone` and with multiple positional arguments, the first positional
-argument is the target directory and the daemon resolves its canonical path
-against static zones and eligible `[[zone_collection]]` candidates. This resolution is
-performed by the daemon, so the client does not need a configuration file;
-symlinked spellings of the configured and supplied paths resolve to the same
-zone. With `--zone ID`, positional arguments are source files and the ID is sent
-directly.
-
-With no `--zone` and only one positional argument, `drop FILE` is rejected
-because `drop` always contacts the daemon. Use `register FILE` for an existing
-regular file. The parent directory must be readable, traversable, and writable
-by the current account. `register` is filesystem-only and does not contact the
-daemon. On POSIX, the sidecar uses the existing file's group when the current
-account belongs to that group, so a setgid shared zone can remain readable by
-the daemon. The daemon must also belong to that group and have directory
-traversal permission. An existing sidecar is refreshed from the current file.
-
-For the target-directory form, `drop` first stages each source in a private
-`.pbdrop-*.tmp` file when it is using a loopback daemon and the target is
-writable. It then asks the daemon to validate the staged data and create the
-managed data/sidecar pair. If direct staging is unavailable, it falls back to
-the HTTP API. `--server URL` overrides the URL from configuration; with no
-configuration, the default is
-`http://127.0.0.1:8765`. One or more regular source files are accepted, remain
-unchanged, and produce one returned reference per successful upload. A file
-already present in the destination without a coherent sidecar remains foreign
-for normal uploads. `register` creates or refreshes only the sidecar after
-validating the regular file and its content; it never rewrites, moves, or
-overwrites the existing data file.
-
-Direct staging still calls the daemon through the configured server URL. If the
-loopback daemon uses a trusted self-signed HTTPS certificate, add `--insecure`;
-this disables certificate verification only. Prefer a certificate whose SAN
-contains the loopback address when possible.
-
-Without `--replace`, an existing managed filename is refused. With
-`--replace`, only a coherent Pasteberth-managed pair may be replaced. A foreign
-file is never overwritten, even with `--replace`; `--replace` is not applicable
-to `register`. Authentication prompts for a password after a `401`;
-`PASTEBERTH_PASSWORD` and `--password-stdin` support non-interactive calls.
+See [Filesystem drop](docs/reference/cli.md#filesystem-drop).
 
 ### 6.6 MCP stdio adapter
 
-```sh
-PASTEBERTH_PASSWORD='your-password' pasteberth mcp --config config.toml
-```
-
-On Windows, set `PASTEBERTH_PASSWORD` in `cmd.exe` before invoking
-`PasteBerth\pasteberth.cmd`; in PowerShell use `$env:PASTEBERTH_PASSWORD =
-"your-password"`. The MCP process can read any regular local file readable by
-its account, so it should only be launched by a trusted agent.
-
-`mcp` serves newline-delimited JSON-RPC on standard input and standard output.
-The initial `drop` tool accepts a `zone` and one or more `items`; each item is
-either a local `path`, UTF-8 `content` plus `filename`, or `content_base64` plus
-`filename`. It calls the existing HTTP upload endpoint rather than accessing
-Pasteberth storage directly. `PASTEBERTH_PASSWORD` is used after a `401`; the
-adapter never prompts on stdin because that stream belongs to MCP. The adapter
-supports modern `server/discover` and per-request metadata for protocol
-`2026-07-28`, while retaining the legacy `initialize` handshake through
-`2025-06-18`.
+See [MCP stdio adapter](docs/reference/mcp.md#mcp-stdio-adapter).
 
 ### 6.7 Filesystem copy and move
 
-```sh
-pasteberth copy [--config PATH] \
-  /absolute/path/to/source/zone /absolute/path/to/target/zone report.pdf capture.png
-pasteberth move [--config PATH] \
-  /absolute/path/to/source/zone /absolute/path/to/target/zone report.pdf
-```
-
-The two directories must be the exact configured directories of different
-zones. The filenames are basenames, not paths, and each name must identify a
-coherent managed data/sidecar pair in the source zone. `copy` leaves the
-source pair unchanged. `move` publishes the target pair before removing the
-source pair. Existing target data, sidecars, foreign files, and malformed
-sidecars are never replaced. A batch conflict is checked before any item is
-copied. Successful operations print target references; a partial operation
-prints an error and exits with code `1`.
+See [Filesystem copy and move](docs/reference/cli.md#filesystem-copy-and-move).
 
 ### 6.8 Filesystem rename
 
-```sh
-pasteberth rename [--config PATH] \
-  /absolute/path/to/configured/zone old-name.pdf new-name.pdf
-```
-
-The source and target are basenames inside the configured zone. The data file
-and its JSON sidecar are renamed transactionally. An existing target is never
-replaced.
+See [Filesystem rename](docs/reference/cli.md#filesystem-rename).
 
 ### 6.9 Filesystem delete
 
-```sh
-pasteberth delete [--config PATH] [--force] \
-  /absolute/path/to/configured/zone report.pdf old-screen.png
-```
-
-Only coherent managed pairs are deleted. `--force` permits deletion when the
-sidecar's recorded size is stale, but it does not make a foreign file or
-malformed sidecar eligible for deletion.
+See [Filesystem delete](docs/reference/cli.md#filesystem-delete).
 
 ### 6.10 Exit codes
 
-Unless a parser error prevents command dispatch, the CLI uses these codes:
-
-| Code | Meaning |
-|---:|---|
-| `0` | The command completed successfully; a server also returns this after a normal stop. |
-| `1` | An operational error occurred, a filesystem batch was only partly successful, a server could not bind, or `audit` found warnings. |
-| `2` | CLI syntax, configuration, startup policy, or the requested deployment path is invalid or unusable. |
+See [Exit codes](docs/reference/cli.md#exit-codes).
 
 ## 7. Bash Completion
 
-The deployment provides a self-contained Bash completion script at
-[`PasteBerth/support/completions/pasteberth.bash`](PasteBerth/support/completions/pasteberth.bash).
-It completes commands, options, log levels, configuration paths, and ordinary
-filesystem arguments for filesystem operations.
-
-The command can emit the same script directly, which is convenient for a
-temporary shell integration:
-
-```sh
-eval "$(pasteberth completion)"
-```
-
-Use it for the current shell:
-
-```sh
-source PasteBerth/support/completions/pasteberth.bash
-```
-
-Install it for the current user:
-
-```sh
-mkdir -p "$HOME/.local/share/bash-completion/completions"
-install -m 0644 PasteBerth/support/completions/pasteberth.bash \
-  "$HOME/.local/share/bash-completion/completions/pasteberth"
-```
-
-On systems using the global bash-completion directory, an administrator can
-install it with:
-
-```sh
-sudo install -Dm0644 PasteBerth/support/completions/pasteberth.bash \
-  /etc/bash_completion.d/pasteberth
-```
-
-After installation, start a new shell or source the file again. The completion
-does not inspect configuration contents to enumerate zone IDs: filesystem
-commands intentionally receive the exact configured directory path, and the
-server remains the authority for validating it.
+See [Bash Completion](docs/reference/cli.md#bash-completion).
 
 ## 8. Filesystem Layout and Data Ownership
 
-A managed item consists of a regular data file and a matching JSON sidecar:
-
-```text
-zone/
-  report.pdf
-  report.pdf.json
-```
-
-The sidecar records metadata such as `filename`, `created_at`, `size`,
-`width`, `height`, `format`, `kind`, `mime`, and the content `sha256`. New
-sidecars also record `creation_method` (`web_mouse_drop`, `web_paste`,
-`filesystem_drop`, or `filesystem_register`) and the boolean `replaced`, which
-is true only when a named managed file was replaced. `creation_method` is
-descriptive metadata supplied by the client and validated against the allowed
-vocabulary; it is not proof of who produced the file and must not be used as an
-authorization, trust, or security decision. `duplicate` remains a response flag
-for anonymous content deduplication and does not rewrite the existing sidecar.
-Older
-valid sidecar schemas without the digest remain readable; when needed, legacy
-content is hashed on demand for duplicate detection. Pasteberth recognizes an
-item only when the data file and sidecar are coherent. For a direct local
-`drop`, the source bytes pass through a private staging file; the daemon
-validates them and creates a new managed pair before removing the staging file.
-An explicit `register` validates an existing regular file and creates or refreshes
-only its sidecar; other foreign files remain outside managed operations.
-
-Generated names use the form:
-
-```text
-YYYY-MM-DD_HH-MM-SS_<6 hex characters>.ext
-```
-
-For a browser drop, `preserve_name=1` retains a valid original filename. Names
-default to 200 characters and 240 UTF-8 bytes; these two budgets are
-configurable as `max_filename_length` and `max_filename_size`. Separators, NUL,
-CR/LF, `.`/`..`, Pasteberth internal names, and transaction prefixes are rejected.
-Names beginning with a dot, such as `.env`, are valid user names.
-
-The following are internal and must not be edited or removed manually while a
-service may be operating:
-
-```text
-.pasteberth.lock
-.pbmeta-*
-.pbdata-*
-.pbdrop-*
-.pbbackup-*
-.pbtxn-*
-.pbtrash-*
-.pbrename-*
-.pbdel-*
-```
-
-All names beginning with these prefixes are reserved for Pasteberth and are
-rejected by new Web and CLI uploads. Older zones may contain a client file
-named `.pbdel-...` with its matching `.json` sidecar; that ambiguous pair is
-preserved as a foreign artifact during recovery and is never executed as a
-deletion journal. Do not rename, edit, or remove it while investigating an old
-zone.
-
-Zone directories are deployment state and must remain outside the read-only
-`PasteBerth/` directory. Back them up separately if their contents matter. For
-a clean backup, stop the service first or otherwise ensure no transaction is
-active; copy managed data and matching sidecars together. Do not treat foreign
-files as managed Pasteberth content.
+See [Filesystem Layout and Data Ownership](docs/reference/storage.md#filesystem-layout-and-data-ownership).
 
 ## 9. Deployment
 
+See [Deployment](docs/deployment.md#run-the-service).
+
 ### 9.1 Foreground operation
 
-For a manual start:
-
-```sh
-pasteberth audit --config /absolute/path/config.toml
-pasteberth serve --config /absolute/path/config.toml
-```
-
-Keep the service bound to `127.0.0.1` when a reverse proxy terminates HTTPS.
-For a directly exposed listener, configure TLS and an explicit `allowed_hosts`
-list. The generated configuration enables authentication; with authentication
-enabled, `allowed_hosts = []` deliberately accepts a hostname chosen by the
-deployment. An anonymous configuration with an empty allowlist is rejected at
-startup.
-
-When the public URL is mounted below a path, configure the same path in
-Pasteberth and forward it unchanged:
-
-```toml
-url_prefix = "/paste"
-listen_address = "127.0.0.1"
-trusted_proxies = ["127.0.0.1"]
-allowed_hosts = []
-```
-
-Pasteberth does not infer this prefix from `Host`, `X-Forwarded-Host`, or any
-other request header. The proxy must preserve `Host[:port]`, overwrite incoming
-`X-Forwarded-*` headers, and be the actual peer listed in `trusted_proxies`.
-The browser `Origin` is still `scheme://Host[:port]`, without `/paste`.
+See [Foreground operation](docs/deployment.md#foreground-operation).
 
 ### 9.2 systemd user service
 
-[`PasteBerth/support/deploy/pasteberth.service`](PasteBerth/support/deploy/pasteberth.service)
-is an optional user service template. It needs no root and contains example
-paths. Copy and adapt it only after generating, authenticating, and auditing the
-configuration:
-
-```sh
-mkdir -p ~/.config/systemd/user
-cp PasteBerth/support/deploy/pasteberth.service ~/.config/systemd/user/pasteberth.service
-# edit --config and ReadWritePaths for this deployment
-systemctl --user daemon-reload
-systemctl --user enable --now pasteberth.service
-journalctl --user -u pasteberth -f
-```
-
-The template uses `PrivateTmp=true`; zones below `/tmp` or `/var/tmp` are not
-usable by other host processes in that mode. If optional `ProtectSystem`,
-`ProtectHome`, or `ReadWritePaths` hardening is enabled, include every zone,
-parent directory that may be created, and the password path when it must be
-written.
-
-To keep a user service running after logout and start it at boot:
-
-```sh
-loginctl enable-linger "$USER"
-```
-
-Enable linger only when that persistence is wanted.
+See [systemd user service](docs/deployment.md#systemd-user-service).
 
 ### 9.3 Caddy
 
-Keep Pasteberth on loopback and proxy the public HTTPS hostname:
-
-```caddy
-pasteberth.example.internal {
-    @paste path /paste /paste/*
-    reverse_proxy @paste 127.0.0.1:8765 {
-        # Keep /paste in the upstream request; do not use handle_path here.
-        header_up Host {http.request.hostport}
-        header_up X-Forwarded-Proto {http.request.scheme}
-        header_up X-Forwarded-For {http.request.remote.host}
-        header_up X-Forwarded-Host {http.request.hostport}
-    }
-}
-```
-
-Use an authenticated wildcard or a matching explicit host allowlist:
-
-```toml
-listen_address = "127.0.0.1"
-url_prefix = "/paste"
-trusted_proxies = ["127.0.0.1"]
-allowed_hosts = []                         # auth enabled: dynamic hostname
-# allowed_hosts = ["pasteberth.example.internal"]  # optional strict host policy
-```
-
-Trusting `127.0.0.1` trusts every local process that can connect to the
-listener, not only Caddy. Use it only when that boundary is acceptable.
+See [Caddy](docs/deployment.md#caddy).
 
 ### 9.4 nginx
 
-```nginx
-server {
-    listen 443 ssl http2;
-    server_name pasteberth.example.internal;
-    # ssl_certificate …; ssl_certificate_key …;
-
-    location = /paste {
-        proxy_pass http://127.0.0.1:8765;
-        proxy_set_header Host $http_host;
-        proxy_set_header X-Forwarded-Proto $scheme;
-        proxy_set_header X-Forwarded-For $remote_addr;
-        proxy_set_header X-Forwarded-Host $http_host;
-    }
-
-    location /paste/ {
-        # No URI suffix on proxy_pass: preserve /paste/... upstream.
-        proxy_pass http://127.0.0.1:8765;
-        proxy_set_header Host $http_host;
-        proxy_set_header X-Forwarded-Proto https;
-        proxy_set_header X-Forwarded-For $remote_addr;
-        proxy_set_header X-Forwarded-Host $http_host;
-        client_max_body_size 51m;
-    }
-}
-```
-
-The proxy body limit must be at least the configured upload and multipart
-budgets. If the application upload limit is `"unlimited"`, configure the proxy
-according to the maximum size appropriate for that deployment.
-`X-Forwarded-*` headers from an untrusted peer are ignored.
+See [nginx](docs/deployment.md#nginx).
 
 ## 10. Security and Trust Boundaries
 
-Pasteberth is designed for a controlled project boundary, not anonymous public
-uploads.
-
-- Use HTTPS for every untrusted network connection. Passwords, sessions, and
-  filesystem paths transit the application.
-- Keep the backend on loopback behind a reverse proxy whenever possible.
-- Keep authentication enabled and create the password with `pasteberth passwd`.
-- With authentication enabled, leave `allowed_hosts` empty for a deployment-chosen
-  hostname or list explicit canonical hostnames to restrict the service.
-- Never leave `allowed_hosts` empty in an anonymous configuration.
-- Configure only actual trusted proxy peers in `trusted_proxies`.
-- Treat shared writable zones as a trust relationship between users who can
-  modify the directory.
-- Use private `0700` zones and private `0600` files when other local users must
-  not inspect them.
-
-The server uses salted scrypt hashes, constant-time password comparison,
-server-side revocable sessions, `HttpOnly`/`SameSite=Lax` cookies, CSRF Origin
-or Referer checks, strict security headers, configurable request and image
-budgets, and progressive login throttling. The password hash uses the scrypt
-`N=16384` work factor. Set the operational budgets in `[limits]`, or use
-`"unlimited"` where the deployment accepts the associated resource risk.
-Cookies gain `Secure` when the effective request scheme is HTTPS. The UI and
-API responses are marked `no-store` and include CSP, `X-Frame-Options: DENY`,
-`nosniff`, and `Referrer-Policy: no-referrer` headers.
-
-A file without a coherent Pasteberth sidecar is foreign. Pasteberth never
-overwrites, renames, or deletes such a file through managed operations. Linked
-configuration, zone, source, and credential paths are resolved and checked;
-unsafe entries inside a managed zone remain foreign. Transaction cleanup checks
-object identity before destructive actions.
+See [Security and Trust Boundaries](docs/deployment.md#security-and-trust-boundaries).
 
 ## 11. HTTP API
 
-The API is same-origin and uses the session cookie. There is no CORS support in
-v1. The supplied Web UI is the reference client.
+See [HTTP API](docs/reference/api.md#http-api).
 
 ### 11.1 Routes
 
-The paths below are shown for a root deployment. When `url_prefix = "/paste"`,
-prepend `/paste` to every route, including `/login`, static assets, API paths,
-and previews. The prefix is a configured public path, not part of the browser
-`Origin` value.
-
-| Method | Path | Authentication | Purpose |
-|---|---|---|---|
-| `GET` | `/api/health` | public | Liveness probe. |
-| `GET` | `/api/zones` | session | Zones, counts, complete histories, group memberships, and zone settings from one read snapshot. |
-| `GET` | `/api/groups` | session | Group definitions and matching zone IDs. |
-| `POST` | `/api/drop/resolve` | loopback or session | Resolve a target directory to a configured zone ID. |
-| `GET` | `/api/zones/{id}/images` | session | Complete zone history, newest first. |
-| `POST` | `/api/zones/{id}/images` | session | Upload multipart content. |
-| `POST` | `/api/zones/{id}/images/regularize` | loopback or session | Regularize one CLI direct-drop staging file. |
-| `PATCH` | `/api/zones/{id}/images/{filename}/comment` | session | Replace the item's short Unicode comment. |
-| `DELETE` | `/api/zones/{id}/images/{filename}` | session | Delete one managed item. |
-| `POST` | `/api/zones/{id}/images/batch-delete` | session | Delete several managed items. |
-| `POST` | `/api/zones/{id}/images/archive` | session | Stream selected managed items as a ZIP. |
-| `POST` | `/api/transfers` | session | Copy or move managed items between two configured zones. |
-| `GET` | `/previews/{id}/{filename}` | session | Preview or download a managed item. |
-| `GET` | `/login` | public | Login page when authentication is enabled. |
-| `POST` | `/login` | public | Create a session from a password form, JSON body, or multipart form. |
-| `POST` | `/logout` | session | Revoke the current session. |
-
-`/api/zones/{id}/images` and its `images` response key cover images, UTF-8 text,
-and opaque binary content. Each zone reports `busy`, copied-list formatting
-settings, whether ZIP download is enabled, its sidecar `retain` setting, and an
-effective `upload_limit_bytes` value. That value is the smaller of the hard
-upload limit and the bytes that can be accepted without crossing the configured
-free-space safeguards; raw disk capacity is not returned.
-The loopback-only `POST /api/drop/resolve` endpoint accepts a target directory
-and returns its configured zone ID after static/collection and canonical-path
-resolution. It is used by the filesystem client when the client has no local
-configuration; it never authorizes an arbitrary target directory.
-The `/api/zones` response also includes the same `images` array used to compute
-each zone count; clients may use it as a dashboard snapshot and retain the
-per-zone route for compatibility and direct refreshes.
-The server account owns files it creates; configure `file_group` and matching
-directory group permissions when other system users must read them.
-Each image may also include `changed_at`; it is `null` when the destination
-cannot provide a change timestamp.
-
-The `regularize` route is used by a local `drop` when it has staged a
-`.pbdrop-<24 lowercase hex digits>.tmp` file in the configured zone. It accepts
-a JSON object containing `stage`, `filename`, `mime`, and `replace`; it is not a
-general filesystem-registration endpoint. Unauthenticated access is limited to a
-loopback peer, while an authenticated session may use the route remotely.
+See [Routes](docs/reference/api.md#routes).
 
 ### 11.2 Upload
 
-The multipart field is `image`. `preserve_name=1` retains a valid dropped
-filename; `replace=1` together with `preserve_name=1` explicitly authorizes
-replacing a coherent managed pair. Clients may send `creation_method` with one
-of `web_mouse_drop`, `web_paste`, `filesystem_drop`, or
-`filesystem_register`; browser requests default to `web_paste`, and filesystem
-clients should send `filesystem_drop`. This field records the client's declared
-path through the upload pipeline; it does not authenticate the source and must
-not be treated as a security boundary.
-
-```sh
-curl -b cookies.txt \
-  -F image=@capture.png \
-  https://pasteberth.example.internal/api/zones/default/images
-```
-
-Without `preserve_name=1`, the server generates the filename. A managed name
-collision without `replace=1` returns `428 replacement_required`. A foreign
-file collision returns `409 storage_conflict`. Low free space returns
-`507 storage_low`.
-
-API errors use a JSON object with this shape:
-
-```json
-{
-  "error": {
-    "code": "replacement_required",
-    "message": "..."
-  }
-}
-```
-
-The main application error codes are:
-
-| Status | Codes | Meaning |
-|---:|---|---|
-| `400` | `invalid_request`, `empty_upload`, `invalid_filename`, `invalid_image`, `invalid_comment` | The request or content is invalid. |
-| `401` | `unauthorized` | A protected route has no valid session. |
-| `403` | `forbidden_host`, `forbidden_origin`, `zip_disabled` | The host/origin is not allowed or ZIP is disabled for the zone. |
-| `404` | `unknown_zone`, `unknown_image`, `not_found` | The requested resource does not exist. |
-| `405` | `method_not_allowed` | The HTTP method is not supported for the requested resource. |
-| `409` | `storage_conflict` | A foreign file or another storage conflict prevents the operation. |
-| `413` | `too_large` | The request or content exceeds a configured limit. |
-| `415` | `unsupported_media_type`, `unsupported_format` | The declared or detected content type is not supported. |
-| `423` | `zone_busy` | Another operation holds the zone lock; inspect `Retry-After`. |
-| `428` | `replacement_required` | Explicit replacement was required but not requested. |
-| `429` | `rate_limited` | Login attempts are temporarily throttled. |
-| `500` | `destination_error`, `internal` | The server could not complete a storage or internal operation. |
-| `503` | `retention_error` | Retention cleanup could not complete. |
-| `507` | `storage_low` | The configured free-space reserve would be exceeded. |
-
-The response includes fields such as:
-
-```json
-{
-  "id": "2026-08-25_01-22-31_a81c42.png",
-  "filename": "2026-08-25_01-22-31_a81c42.png",
-  "created_at": "2026-08-24T23:22:31.412000+00:00",
-  "width": 1920,
-  "height": 1080,
-  "size": 9283,
-  "format": "png",
-  "kind": "image",
-  "mime": "image/png",
-  "creation_method": "web_paste",
-  "replaced": false,
-  "comment": "Reference capture",
-  "changed_at": "2026-08-25T01:22:31.412000+00:00",
-  "preview_url": "/previews/default/2026-08-25_01-22-31_a81c42.png",
-  "reference": "@/home/user/.local/share/pasteberth/storage/default/2026-08-25_01-22-31_a81c42.png"
-}
-```
+See [Upload](docs/reference/api.md#upload).
 
 ### 11.3 Multiple operations
 
-Batch deletion accepts repeated `filename` form fields or a JSON `filenames`
-array. Archive accepts the same selection as a repeated form field or JSON
-array and streams the ZIP without a temporary server archive.
-
-Internal transfers accept exactly this JSON object:
-
-```json
-{
-  "mode": "copy",
-  "source_zone": "default",
-  "target_zone": "secondary",
-  "filenames": ["report.txt", "capture.png"]
-}
-```
-
-`mode` is `copy` or `move`. Only coherent managed data/sidecar pairs are
-eligible. Filenames are preserved; an existing data file, sidecar, foreign file,
-or active transaction at the target returns `409 storage_conflict` before any
-item is copied. Copy leaves the source unchanged. Move publishes each target
-pair before deleting its source. The response contains `transferred`, `items`,
-`retention_deleted`, and per-file `failed` entries; a failed entry may include
-`target_published: true` when the target was durable before a later step failed.
-The target zone's free-space reserve, retention, group, and permission rules
-apply. The two zone locks are acquired in a stable order, and a busy zone
-returns `423 zone_busy` with `Retry-After: 1`.
-
-Long-running deletion and archive operations hold an exclusive zone lock.
-Conflicting requests return:
-
-```text
-423 zone_busy
-Retry-After: 1
-```
-
-Clients should refresh the zone and retry after the indicated delay.
+See [Multiple operations](docs/reference/api.md#multiple-operations).
 
 ### 11.4 Comments
 
-Comments are stored in the item's JSON sidecar and accept valid UTF-8 Unicode,
-including emoji and line breaks. They are limited to 280 Unicode characters and
-1 KiB of UTF-8 data; control, private-use, noncharacter, and invisible formatting
-code points are rejected. In the Web UI, `Enter` inserts a line break and
-`Ctrl`+`Enter` (or `Command`+`Enter`) saves the comment. Send a JSON object
-containing only `comment`:
-
-```sh
-curl -b cookies.txt -X PATCH \
-  -H 'Content-Type: application/json' \
-  --data '{"comment":"Reference capture 🚀"}' \
-  https://pasteberth.example.internal/api/zones/default/images/example.png/comment
-```
-
-An empty string clears the comment. Existing sidecars without a `comment` field
-remain valid and are read as an empty comment. Unsafe requests must include the
-same-origin `Origin` or `Referer` header.
+See [Comments](docs/reference/api.md#comments).
 
 ### 11.5 Login clients
 
-The login endpoint accepts a `password` field in a normal URL-encoded form,
-multipart form, or JSON object. A successful login returns a session cookie and
-redirects to the public root (`/` or the configured `url_prefix`). Failed
-attempts are delayed and rate limited. A client should
-preserve and resend the cookie for protected API calls, and should send the
-same-origin `Origin` or `Referer` on unsafe requests.
+See [Login clients](docs/reference/api.md#login-clients).
 
 ## 12. Troubleshooting
 
+See [Troubleshooting](docs/troubleshooting.md#troubleshooting).
+
 ### `ModuleNotFoundError: No module named 'PasteBerth'`
 
-This means an old or manually configured launcher is invoking the private
-module with `python3 -m PasteBerth.runtime`. The v2 deployment must be started
-through the executable inside the deployment directory, which loads its
-runtime directly from that directory:
-
-```sh
-/home/atelier/PasteBerth/pasteberth --help
-```
-
-If `pasteberth` resolves to `~/.local/bin/pasteberth`, replace that symlink or
-copy with the current `PasteBerth/pasteberth` executable. Do not run the module
-directly from inside the `PasteBerth/` directory; `PYTHONPATH` would then need
-to point to its parent. For systemd, `ExecStart` must end in
-`/PasteBerth/pasteberth`, not `/usr/bin/python3 -m PasteBerth.runtime`.
+See [`ModuleNotFoundError: No module named 'PasteBerth'`](docs/troubleshooting.md#modulenotfounderror-no-module-named-pasteberth).
 
 ### `pasteberth` starts without authentication
 
-Check which configuration was discovered. No configuration means minimal
-loopback mode. Use an explicit path consistently:
-
-```sh
-pasteberth audit --config /absolute/path/config.toml
-pasteberth passwd --config /absolute/path/config.toml
-pasteberth serve --config /absolute/path/config.toml
-```
+See [`pasteberth` starts without authentication](docs/troubleshooting.md#pasteberth-starts-without-authentication).
 
 ### The server refuses to start with authentication enabled
 
-The selected `[auth]` configuration requires a readable valid scrypt hash.
-Run `pasteberth passwd` against the same config and then `pasteberth audit`.
+See [The server refuses to start with authentication enabled](docs/troubleshooting.md#the-server-refuses-to-start-with-authentication-enabled).
 
 ### `audit` returns status 1
 
-The deployment is usable but has warnings. Review broad directory permissions,
-wildcard host checks, proxy trust, listener policy, and TLS settings before
-exposing it.
+See [`audit` returns status 1](docs/troubleshooting.md#audit-returns-status-1).
 
 ### A file is not visible in the history
 
-Pasteberth only lists coherent data/sidecar pairs owned by Pasteberth. Check
-that the file is regular, its sidecar is valid and readable, and no transaction
-marker is active. Foreign files and malformed sidecars are deliberately left
-alone.
-
-For a file created by `register` in a shared POSIX zone, check both the writer
-and the daemon process. A successful `register` only proves that the registering
-account could write the data and sidecar; it does not prove that the daemon can
-read them. Check the daemon's group list and its log:
-
-```sh
-systemctl --user show pasteberth --property=MainPID --value
-grep '^Groups:' /proc/$(systemctl --user show pasteberth --property=MainPID --value)/status
-journalctl --user -u pasteberth -n 50 --no-pager
-```
-
-The daemon must have the group that owns the shared files. After changing group
-membership, restart the user session or user manager before restarting
-Pasteberth. `sidecar unreadable` indicates an open or permission failure; a
-valid `sha256` field is accepted, and older sidecars without that field remain
-valid.
+See [A file is not visible in the history](docs/troubleshooting.md#a-file-is-not-visible-in-the-history).
 
 ### A request returns `423 zone_busy`
 
-Another process is holding the zone's exclusive operation lock. Wait for the
-`Retry-After` delay, refresh the history, and retry. Do not remove the lock
-file manually.
+See [A request returns `423 zone_busy`](docs/troubleshooting.md#a-request-returns-423-zone_busy).
 
 ### A filename replacement is refused
 
-The name may be occupied by a foreign file, or the managed pair may require an
-explicit replacement flag. Browser replacement requires confirmation;
-filesystem and API operations require `--replace` or `replace=1`. Foreign
-files remain protected even with that flag.
+See [A filename replacement is refused](docs/troubleshooting.md#a-filename-replacement-is-refused).
 
 ### systemd cannot see a zone or temporary source
 
-Check `WorkingDirectory`, `ExecStart`, and every configured absolute path. With
-`PrivateTmp=true`, a service-private `/tmp` is different from the host's `/tmp`.
-Check the unit's `ReadWritePaths` if hardening is enabled.
+See [systemd cannot see a zone or temporary source](docs/troubleshooting.md#systemd-cannot-see-a-zone-or-temporary-source).
 
 ### The browser cannot use a returned path
 
-That is expected. The reference is for the harness on the Pasteberth server
-machine. Use the browser's download action when a workstation needs a copy.
+See [The browser cannot use a returned path](docs/troubleshooting.md#the-browser-cannot-use-a-returned-path).
 
 ## 13. Tests and Development
 
-The project has no runtime dependency beyond Python's standard library. Browser
-tests use the Node development dependency declared in `package.json`.
-
-Run the complete Linux suite:
-
-```sh
-npm ci
-npm run test:all
-```
-
-Run individual suites when iterating:
-
-```sh
-python3 -m unittest discover -s tests -v
-npm run test:e2e
-E2E_BROWSER=firefox npm run test:e2e
-```
-
-The tests cover storage ownership and recovery, image validation and content
-classification, filenames and replacement, configuration and startup policy,
-authentication and CSRF, proxy headers, concurrency and zone locks, filesystem
-CLI operations, frontend contracts, and browser interactions.
-
-The CI browser job runs the full suite as a Chromium/Firefox matrix. The
-`native-input.spec.js` test exercises the browser's real file chooser through
-Playwright's `setFiles`; synthetic clipboard and drag events remain separate
-coverage because an operating-system drag source is not available in the Linux
-CI runner.
-
-Before a public release, verify at least:
-
-- `pasteberth --help` matches the completion script;
-- every command example uses an actual parser option;
-- all README and GUIDE relative links resolve;
-- the public clone URL and current version are correct;
-- all referenced images and configuration files are tracked;
-- the full test suite is green.
+See [Tests and Development](docs/contributing.md#tests-and-development).
 
 ## 14. Backup, Upgrade, and Recovery
 
-Stop the service before a filesystem-level backup when practical. Preserve each
-managed data file with its `.json` sidecar and preserve the directory structure.
-Do not edit transaction markers or sidecars by hand.
-
-On startup, Pasteberth reconciles interrupted transaction state. It is designed
-to recover from crashes during publication, replacement, deletion, and rename
-without treating foreign files as its own. Keep a copy of the zone before
-manual recovery work.
-
-An upgrade should use the same configured zone directories. Existing valid
-sidecars and transaction markers from 1.5.0 are part of the compatibility
-contract. Run `audit` after changing the executable or configuration, then
-restart the service.
+See [Backup, Upgrade, and Recovery](docs/operations.md#backup-upgrade-and-recovery).
 
 ## 15. Current Limits and Roadmap
 
-- only the `local` destination type is implemented;
-- one service uses one shared authentication password in v1;
-- sessions are in memory and a restart disconnects browsers;
-- there is no directory watcher;
-- there is no browser extension or CORS API;
-- TLS is either direct or delegated to a reverse proxy;
-- network and exotic filesystems are not automatically supported;
-- mixed clipboard HTML may be larger than the original image-only payload;
-- image validation is structural and not a full codec decode.
-
-The next major platform goal is native Windows and macOS support with the same
-transaction and security guarantees. That work is intentionally separate from
-the v2.1.20 support matrix and must not be represented as already supported.
-The repository contains opt-in `platform_windows` and `platform_macos` CI jobs;
-enable them only after registering native runners with
-`PASTEBERTH_NATIVE_WINDOWS_CI=1` or `PASTEBERTH_NATIVE_MACOS_CI=1`.
+See [Current Limits and Roadmap](docs/deployment.md#current-limits-and-roadmap).
 
 ## 16. License
 
-Pasteberth is licensed under the **GNU Affero General Public License v3.0 or
-later** (AGPL-3.0-or-later). See [`LICENSE`](LICENSE).
-
-If a modified Pasteberth is run as a publicly accessible network service, the
-AGPL source-sharing requirements apply to users of that service.
+See [License](docs/contributing.md#license).

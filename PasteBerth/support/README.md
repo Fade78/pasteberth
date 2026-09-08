@@ -9,33 +9,66 @@ inside this directory. That command cannot discover the package parent; use
 the wrapper below instead.
 
 ```sh
+mkdir -p ~/.local/bin
 ln -s /srv/PasteBerth/pasteberth ~/.local/bin/pasteberth
+export PATH="$HOME/.local/bin:$PATH"
 pasteberth --generate-config
+# Edit the generated config: the example exchange directory must be a zone.
 pasteberth passwd
 pasteberth audit
-pasteberth drop --insecure /home/atelier/exchange report.md
-pasteberth drop --insecure /home/atelier/exchange report.md screenshot.png
+pasteberth serve
+```
+
+The server runs in the foreground. In another terminal:
+
+```sh
+pasteberth drop /home/atelier/exchange report.md
+pasteberth drop /home/atelier/exchange report.md screenshot.png
 pasteberth register /home/atelier/exchange/existing.md
 eval "$(pasteberth completion)"
 ```
+
+These are example paths, not directories created by the launcher. The existing
+file passed to `register` must already be present. Use one explicit
+`--config /absolute/path/config.toml` consistently if your configuration is not
+at the default location.
 
 The deployment is code only. Configuration, passwords, TLS keys, zones, and
 runtime state belong outside this directory. Use `--config PATH` or
 `PASTEBERTH_CONFIG` for configuration. The default configuration and storage
 locations are under the XDG configuration and data directories.
 
-For multi-file filesystem drops, the client can omit its configuration when it
-shares the machine and target filesystem with the daemon. Without `--server`,
-it tries `http://127.0.0.1:8765`; the daemon resolves the supplied target
+For target-directory drops, the client can omit its configuration when it
+shares the machine and target filesystem with the daemon. Without a discovered
+configuration or `--server`, it tries `http://127.0.0.1:8765`; the daemon resolves the supplied target
 against its configured static zones and `[[zone_collection]]` candidates. Use
-`--insecure` for the trusted self-signed local certificate, or pass an explicit
-`--server URL`. A one-file `drop FILE` is invalid because `drop` is always
+an explicit `--server URL` for a different endpoint; include any mount prefix,
+such as `https://pasteberth.example.internal/paste`. TLS verification is enabled
+by default. Use `--insecure` only for a separately trusted self-signed endpoint,
+not as a routine upload flag. A one-file `drop FILE` is invalid because `drop` is always
 server-backed. Use `register FILE` for a local-only sidecar operation; the
 resulting sidecar must be readable by the daemon.
+
+`register` validates the file with the CLI-selected configuration or local
+defaults and refreshes metadata without changing the data file. It does not
+contact the daemon, require a configured zone, or enforce the daemon's
+retention and per-zone free-space reserve. A successful registration is not
+proof that the daemon can see the file. Use `drop --zone ID FILE...` for a
+remote upload without sharing a directory path with the service.
+
+After an HTTP `401`, `drop` can prompt for a password or read
+`PASTEBERTH_PASSWORD`/`--password-stdin`. `pasteberth mcp` uses newline-delimited
+JSON-RPC on stdin/stdout and never prompts there; have its trusted launcher
+supply `PASTEBERTH_PASSWORD`. The MCP `drop` tool accepts local file paths or
+in-memory content and uploads through HTTP.
 
 `config.example.toml`, `deploy/pasteberth.service`, and
 `completions/pasteberth.bash` are reference files. `pasteberth completion`
 prints the completion script directly for shell evaluation.
+
+The optional user service template uses `PrivateTmp=true`. Do not place shared
+zones under `/tmp` or `/var/tmp` with that setting. Adapt its executable,
+configuration, and optional writable-path hardening before enabling it.
 
 For a shared POSIX zone, put the daemon account and every `register` writer in
 the directory's group and use a `setgid` directory. The group must be present
@@ -46,7 +79,33 @@ can otherwise create a sidecar that the daemon cannot read.
 
 A zone collection can cover a whole project tree, for example
 `/home/me/Depots/*/work/exchange`. When a new matching project directory is
-created, the daemon discovers it during the next zone read and a visible browser
-normally shows it within the next 10-second poll. No configuration edit or
+created, the next zone overview starts a background scan. A visible browser
+polls every 10 seconds and normally shows it on the first poll after the scan
+completes. No configuration edit or
 service restart is needed; the directory must still be readable, writable, and
 traversable and satisfy the rule's depth and subtree constraints.
+
+Shared Web authentication is not per-user authorization. Groups and collections
+organize zones but do not grant or restrict access. Filesystem group permissions
+are a separate local boundary, and transaction locks coordinate Pasteberth
+operations rather than arbitrary external writers.
+
+## Full Documentation
+
+Linux with Python 3.11+ and supported local storage is the official server
+platform. Native Windows/macOS validation is still outstanding. The deployment
+has no third-party Python runtime dependencies.
+
+The code-only bundle does not contain the repository's full documentation.
+In a checkout, start at `GUIDE.md`; otherwise use these repository links:
+
+- [Documentation map](https://github.com/Fade78/pasteberth/blob/main/GUIDE.md)
+- [CLI reference](https://github.com/Fade78/pasteberth/blob/main/docs/reference/cli.md)
+- [Configuration](https://github.com/Fade78/pasteberth/blob/main/docs/reference/configuration.md)
+- [Deployment](https://github.com/Fade78/pasteberth/blob/main/docs/deployment.md)
+- [Operations and recovery](https://github.com/Fade78/pasteberth/blob/main/docs/operations.md)
+- [Troubleshooting](https://github.com/Fade78/pasteberth/blob/main/docs/troubleshooting.md)
+
+For a tagged deployment, read those files at the matching tag rather than
+assuming `main` documents the installed version. Run `pasteberth --version`
+to identify the runtime.

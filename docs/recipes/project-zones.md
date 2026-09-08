@@ -1,0 +1,42 @@
+# Discover Project Zones
+
+**Need:** Give each new project an exchange point without repeatedly editing
+Pasteberth configuration. A single developer moving through projects one at a
+time benefits from separate histories just as a multi-process environment does.
+
+**Prerequisites:** The operator has loaded the collection and `Workspaces`
+group from [provisioning](../provisioning.md), using `/srv/workspaces` and the
+`<project>/work/exchange` convention. The environment provisioner can create
+the directory with permissions suitable for the daemon.
+
+## Steps
+
+1. Create the project environment, for example `/srv/workspaces/beta`, through the usual template or provisioning tool.
+2. Have the template create `beta/work/exchange` as a leaf directory. In the private, same-account setup from the provisioning guide:
+
+```sh
+(umask 077; mkdir -p /srv/workspaces/beta/work/exchange)
+```
+
+3. Verify permissions, including existing parents; `umask` does not change existing directories. Do not put subdirectories inside `exchange`.
+4. Open the `Workspaces` group and wait for a refresh after the background scan completes. A visible Web UI polls every 10 seconds.
+5. Confirm the `beta` label, then publish a small allowed artifact and verify its history entry and download.
+
+## Observable Result
+
+The new zone has ID `beta-work-exchange` and label `beta` with
+`label_mode = "first-directory"`. It appears without a per-project config
+edit, daemon restart, or SSH action by the Web client. The template need not
+call a Pasteberth API or add a dependency to the project.
+
+## Pitfalls
+
+- The operator must load the collection rule once; discovery does not invent rules or create directories.
+- Discovery is polling/background scanning, not a watcher or an instantaneous notification.
+- Adding a subdirectory, losing access, or renaming the path can remove the zone from discovery. A changed path can also change its ID and invalidate old references.
+- Merely copying files into the directory does not publish them. Use `drop` or explicit `register`.
+- A group is a view of zones, not an access-control boundary. Use audit diagnostics when a candidate is missing.
+
+See [provisioning](../provisioning.md),
+[zone collection contract](../zone-collection-contract.md), and
+[registration](register-file.md).

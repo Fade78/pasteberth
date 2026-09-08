@@ -1,0 +1,308 @@
+{
+  "auth_enabled": false,
+  "max_upload_bytes": 8388608,
+  "max_image_pixels": 25000000,
+  "show_full_path": true,
+  "zones": [
+    {
+      "id": "atlas-ignoredbygit-exchange",
+      "label": "atlas",
+      "color": "#304c61",
+      "retain": 100,
+      "count": 6,
+      "images": [
+        {
+          "id": "atlas.png",
+          "filename": "atlas.png",
+          "created_at": "2026-09-08T19:31:06.854333+00:00",
+          "changed_at": null,
+          "width": 804,
+          "height": 1137,
+          "size": 52852,
+          "format": "png",
+          "kind": "image",
+          "mime": "image/png",
+          "creation_method": "filesystem_drop",
+          "replaced": false,
+          "comment": "",
+          "preview_url": "/previews/atlas-ignoredbygit-exchange/atlas.png",
+          "reference": "@/repo/atlas/ignoredbygit/exchange/atlas.png"
+        },
+        {
+          "id": "summary.html",
+          "filename": "summary.html",
+          "created_at": "2026-09-08T19:31:06.344459+00:00",
+          "changed_at": null,
+          "width": null,
+          "height": null,
+          "size": 260,
+          "format": null,
+          "kind": "text",
+          "mime": "text/html",
+          "creation_method": "filesystem_drop",
+          "replaced": false,
+          "comment": "",
+          "preview_url": "/previews/atlas-ignoredbygit-exchange/summary.html",
+          "reference": "@/repo/atlas/ignoredbygit/exchange/summary.html"
+        },
+        {
+          "id": "atlas-report.pdf",
+          "filename": "atlas-report.pdf",
+          "created_at": "2026-09-08T19:31:06.339140+00:00",
+          "changed_at": null,
+          "width": null,
+          "height": null,
+          "size": 2338,
+          "format": null,
+          "kind": "binary",
+          "mime": "application/octet-stream",
+          "creation_method": "filesystem_drop",
+          "replaced": false,
+          "comment": "",
+          "preview_url": "/previews/atlas-ignoredbygit-exchange/atlas-report.pdf",
+          "reference": "@/repo/atlas/ignoredbygit/exchange/atlas-report.pdf"
+        },
+        {
+          "id": "atlas.xlsx",
+          "filename": "atlas.xlsx",
+          "created_at": "2026-09-08T19:31:06.334697+00:00",
+          "changed_at": null,
+          "width": null,
+          "height": null,
+          "size": 3976,
+          "format": null,
+          "kind": "binary",
+          "mime": "application/octet-stream",
+          "creation_method": "filesystem_drop",
+          "replaced": false,
+          "comment": "",
+          "preview_url": "/previews/atlas-ignoredbygit-exchange/atlas.xlsx",
+          "reference": "@/repo/atlas/ignoredbygit/exchange/atlas.xlsx"
+        },
+        {
+          "id": "results.csv",
+          "filename": "results.csv",
+          "created_at": "2026-09-08T19:31:06.330169+00:00",
+          "changed_at": null,
+          "width": null,
+          "height": null,
+          "size": 76,
+          "format": null,
+          "kind": "text",
+          "mime": "text/csv",
+          "creation_method": "filesystem_drop",
+          "replaced": false,
+          "comment": "",
+          "preview_url": "/previews/atlas-ignoredbygit-exchange/results.csv",
+          "reference": "@/repo/atlas/ignoredbygit/exchange/results.csv"
+        },
+        {
+          "id": "notes.txt",
+          "filename": "notes.txt",
+          "created_at": "2026-09-08T19:31:06.324782+00:00",
+          "changed_at": null,
+          "width": null,
+          "height": null,
+          "size": 164,
+          "format": null,
+          "kind": "text",
+          "mime": "text/plain",
+          "creation_method": "filesystem_drop",
+          "replaced": false,
+          "comment": "",
+          "preview_url": "/previews/atlas-ignoredbygit-exchange/notes.txt",
+          "reference": "@/repo/atlas/ignoredbygit/exchange/notes.txt"
+        }
+      ],
+      "upload_limit_bytes": 8388608,
+      "groups": [
+        "Projects",
+        "Overview",
+        "Focus"
+      ],
+      "busy": false,
+      "storage_mode": "sidecar",
+      "reference_prefix": "@",
+      "reference_suffix": "",
+      "reference_list_prefix": "",
+      "reference_list_suffix": "",
+      "reference_separator": ",",
+      "allow_zip_download": true
+    },
+    {
+      "id": "orbit-ignoredbygit-exchange",
+      "label": "orbit",
+      "color": "#5d542f",
+      "retain": 100,
+      "count": 3,
+      "images": [
+        {
+          "id": "atlas-report.pdf",
+          "filename": "atlas-report.pdf",
+          "created_at": "2026-09-08T19:31:06.869516+00:00",
+          "changed_at": null,
+          "width": null,
+          "height": null,
+          "size": 2338,
+          "format": null,
+          "kind": "binary",
+          "mime": "application/octet-stream",
+          "creation_method": "filesystem_drop",
+          "replaced": false,
+          "comment": "",
+          "preview_url": "/previews/orbit-ignoredbygit-exchange/atlas-report.pdf",
+          "reference": "@/repo/orbit/ignoredbygit/exchange/atlas-report.pdf"
+        },
+        {
+          "id": "results.csv",
+          "filename": "results.csv",
+          "created_at": "2026-09-08T19:31:06.865083+00:00",
+          "changed_at": null,
+          "width": null,
+          "height": null,
+          "size": 76,
+          "format": null,
+          "kind": "text",
+          "mime": "text/csv",
+          "creation_method": "filesystem_drop",
+          "replaced": false,
+          "comment": "",
+          "preview_url": "/previews/orbit-ignoredbygit-exchange/results.csv",
+          "reference": "@/repo/orbit/ignoredbygit/exchange/results.csv"
+        },
+        {
+          "id": "notes.txt",
+          "filename": "notes.txt",
+          "created_at": "2026-09-08T19:31:06.860699+00:00",
+          "changed_at": null,
+          "width": null,
+          "height": null,
+          "size": 164,
+          "format": null,
+          "kind": "text",
+          "mime": "text/plain",
+          "creation_method": "filesystem_drop",
+          "replaced": false,
+          "comment": "",
+          "preview_url": "/previews/orbit-ignoredbygit-exchange/notes.txt",
+          "reference": "@/repo/orbit/ignoredbygit/exchange/notes.txt"
+        }
+      ],
+      "upload_limit_bytes": 8388608,
+      "groups": [
+        "Projects",
+        "Overview"
+      ],
+      "busy": false,
+      "storage_mode": "sidecar",
+      "reference_prefix": "@",
+      "reference_suffix": "",
+      "reference_list_prefix": "",
+      "reference_list_suffix": "",
+      "reference_separator": ",",
+      "allow_zip_download": true
+    },
+    {
+      "id": "studio-ignoredbygit-exchange",
+      "label": "studio",
+      "color": "#51405f",
+      "retain": 100,
+      "count": 2,
+      "images": [
+        {
+          "id": "atlas.png",
+          "filename": "atlas.png",
+          "created_at": "2026-09-08T19:31:07.385028+00:00",
+          "changed_at": null,
+          "width": 804,
+          "height": 1137,
+          "size": 52852,
+          "format": "png",
+          "kind": "image",
+          "mime": "image/png",
+          "creation_method": "filesystem_drop",
+          "replaced": false,
+          "comment": "",
+          "preview_url": "/previews/studio-ignoredbygit-exchange/atlas.png",
+          "reference": "@/repo/studio/ignoredbygit/exchange/atlas.png"
+        },
+        {
+          "id": "atlas.xlsx",
+          "filename": "atlas.xlsx",
+          "created_at": "2026-09-08T19:31:06.873805+00:00",
+          "changed_at": null,
+          "width": null,
+          "height": null,
+          "size": 3976,
+          "format": null,
+          "kind": "binary",
+          "mime": "application/octet-stream",
+          "creation_method": "filesystem_drop",
+          "replaced": false,
+          "comment": "",
+          "preview_url": "/previews/studio-ignoredbygit-exchange/atlas.xlsx",
+          "reference": "@/repo/studio/ignoredbygit/exchange/atlas.xlsx"
+        }
+      ],
+      "upload_limit_bytes": 8388608,
+      "groups": [
+        "Projects",
+        "Overview"
+      ],
+      "busy": false,
+      "storage_mode": "sidecar",
+      "reference_prefix": "@",
+      "reference_suffix": "",
+      "reference_list_prefix": "",
+      "reference_list_suffix": "",
+      "reference_separator": ",",
+      "allow_zip_download": true
+    }
+  ],
+  "groups": [
+    {
+      "name": "Projects",
+      "selection": "pattern",
+      "pattern": [
+        "^@projects$"
+      ],
+      "layout": "tab",
+      "zone_ids": [
+        "atlas-ignoredbygit-exchange",
+        "orbit-ignoredbygit-exchange",
+        "studio-ignoredbygit-exchange"
+      ],
+      "hide_empty": false,
+      "show_count": true,
+      "zone_count": 3
+    },
+    {
+      "name": "Overview",
+      "selection": "all",
+      "pattern": [],
+      "layout": "area",
+      "zone_ids": [
+        "atlas-ignoredbygit-exchange",
+        "orbit-ignoredbygit-exchange",
+        "studio-ignoredbygit-exchange"
+      ],
+      "hide_empty": false,
+      "show_count": true,
+      "zone_count": 3
+    },
+    {
+      "name": "Focus",
+      "selection": "pattern",
+      "pattern": [
+        "^atlas-"
+      ],
+      "layout": "tab",
+      "zone_ids": [
+        "atlas-ignoredbygit-exchange"
+      ],
+      "hide_empty": false,
+      "show_count": true,
+      "zone_count": 1
+    }
+  ]
+}

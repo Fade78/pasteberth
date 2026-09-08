@@ -1,0 +1,536 @@
+{
+  "scope": "Website v2.1 locale and visual-theme regression",
+  "input_model": "Real page and production scripts; injected query-string and Storage inputs for deterministic locale tests.",
+  "tests": [
+    {
+      "name": "First visit, French browser",
+      "passed": true,
+      "detail": {
+        "lang": "en",
+        "source": "default",
+        "writes": [],
+        "title": "Pasteberth — Your files, ready for what’s next."
+      }
+    },
+    {
+      "name": "First visit, French browser / only explicit writes",
+      "passed": true
+    },
+    {
+      "name": "First visit, French browser / no wrong-language spans",
+      "passed": true,
+      "detail": {
+        "wrong_language_visible": 0
+      }
+    },
+    {
+      "name": "First visit, English browser",
+      "passed": true,
+      "detail": {
+        "lang": "en",
+        "source": "default",
+        "writes": [],
+        "title": "Pasteberth — Your files, ready for what’s next."
+      }
+    },
+    {
+      "name": "First visit, English browser / only explicit writes",
+      "passed": true
+    },
+    {
+      "name": "First visit, English browser / no wrong-language spans",
+      "passed": true,
+      "detail": {
+        "wrong_language_visible": 0
+      }
+    },
+    {
+      "name": "First visit, Japanese browser",
+      "passed": true,
+      "detail": {
+        "lang": "en",
+        "source": "default",
+        "writes": [],
+        "title": "Pasteberth — Your files, ready for what’s next."
+      }
+    },
+    {
+      "name": "First visit, Japanese browser / only explicit writes",
+      "passed": true
+    },
+    {
+      "name": "First visit, Japanese browser / no wrong-language spans",
+      "passed": true,
+      "detail": {
+        "wrong_language_visible": 0
+      }
+    },
+    {
+      "name": "Explicit saved French",
+      "passed": true,
+      "detail": {
+        "lang": "fr",
+        "source": "saved",
+        "writes": [],
+        "title": "Pasteberth — Vos fichiers, prêts pour la suite."
+      }
+    },
+    {
+      "name": "Explicit saved French / only explicit writes",
+      "passed": true
+    },
+    {
+      "name": "Explicit saved French / no wrong-language spans",
+      "passed": true,
+      "detail": {
+        "wrong_language_visible": 0
+      }
+    },
+    {
+      "name": "Explicit saved English",
+      "passed": true,
+      "detail": {
+        "lang": "en",
+        "source": "saved",
+        "writes": [],
+        "title": "Pasteberth — Your files, ready for what’s next."
+      }
+    },
+    {
+      "name": "Explicit saved English / only explicit writes",
+      "passed": true
+    },
+    {
+      "name": "Explicit saved English / no wrong-language spans",
+      "passed": true,
+      "detail": {
+        "wrong_language_visible": 0
+      }
+    },
+    {
+      "name": "French URL overrides English choice",
+      "passed": true,
+      "detail": {
+        "lang": "fr",
+        "source": "url",
+        "writes": [
+          [
+            "pasteberth-site-language-choice",
+            "fr"
+          ]
+        ],
+        "title": "Pasteberth — Vos fichiers, prêts pour la suite."
+      }
+    },
+    {
+      "name": "French URL overrides English choice / only explicit writes",
+      "passed": true
+    },
+    {
+      "name": "French URL overrides English choice / no wrong-language spans",
+      "passed": true,
+      "detail": {
+        "wrong_language_visible": 0
+      }
+    },
+    {
+      "name": "English URL overrides French choice",
+      "passed": true,
+      "detail": {
+        "lang": "en",
+        "source": "url",
+        "writes": [
+          [
+            "pasteberth-site-language-choice",
+            "en"
+          ]
+        ],
+        "title": "Pasteberth — Your files, ready for what’s next."
+      }
+    },
+    {
+      "name": "English URL overrides French choice / only explicit writes",
+      "passed": true
+    },
+    {
+      "name": "English URL overrides French choice / no wrong-language spans",
+      "passed": true,
+      "detail": {
+        "wrong_language_visible": 0
+      }
+    },
+    {
+      "name": "Invalid URL falls back to saved French",
+      "passed": true,
+      "detail": {
+        "lang": "fr",
+        "source": "saved",
+        "writes": [],
+        "title": "Pasteberth — Vos fichiers, prêts pour la suite."
+      }
+    },
+    {
+      "name": "Invalid URL falls back to saved French / only explicit writes",
+      "passed": true
+    },
+    {
+      "name": "Invalid URL falls back to saved French / no wrong-language spans",
+      "passed": true,
+      "detail": {
+        "wrong_language_visible": 0
+      }
+    },
+    {
+      "name": "Invalid URL falls back to English",
+      "passed": true,
+      "detail": {
+        "lang": "en",
+        "source": "default",
+        "writes": [],
+        "title": "Pasteberth — Your files, ready for what’s next."
+      }
+    },
+    {
+      "name": "Invalid URL falls back to English / only explicit writes",
+      "passed": true
+    },
+    {
+      "name": "Invalid URL falls back to English / no wrong-language spans",
+      "passed": true,
+      "detail": {
+        "wrong_language_visible": 0
+      }
+    },
+    {
+      "name": "Invalid stored preference ignored",
+      "passed": true,
+      "detail": {
+        "lang": "en",
+        "source": "default",
+        "writes": [],
+        "title": "Pasteberth — Your files, ready for what’s next."
+      }
+    },
+    {
+      "name": "Invalid stored preference ignored / only explicit writes",
+      "passed": true
+    },
+    {
+      "name": "Invalid stored preference ignored / no wrong-language spans",
+      "passed": true,
+      "detail": {
+        "wrong_language_visible": 0
+      }
+    },
+    {
+      "name": "Old v2 automatic French ignored",
+      "passed": true,
+      "detail": {
+        "lang": "en",
+        "source": "default",
+        "writes": [],
+        "title": "Pasteberth — Your files, ready for what’s next."
+      }
+    },
+    {
+      "name": "Old v2 automatic French ignored / only explicit writes",
+      "passed": true
+    },
+    {
+      "name": "Old v2 automatic French ignored / no wrong-language spans",
+      "passed": true,
+      "detail": {
+        "wrong_language_visible": 0
+      }
+    },
+    {
+      "name": "Blocked Storage defaults to English",
+      "passed": true,
+      "detail": {
+        "lang": "en",
+        "source": "default",
+        "writes": [],
+        "title": "Pasteberth — Your files, ready for what’s next."
+      }
+    },
+    {
+      "name": "Blocked Storage defaults to English / only explicit writes",
+      "passed": true
+    },
+    {
+      "name": "Blocked Storage defaults to English / no wrong-language spans",
+      "passed": true,
+      "detail": {
+        "wrong_language_visible": 0
+      }
+    },
+    {
+      "name": "URL works even when Storage read is blocked",
+      "passed": true,
+      "detail": {
+        "lang": "fr",
+        "source": "url",
+        "writes": [
+          [
+            "pasteberth-site-language-choice",
+            "fr"
+          ]
+        ],
+        "title": "Pasteberth — Vos fichiers, prêts pour la suite."
+      }
+    },
+    {
+      "name": "URL works even when Storage read is blocked / only explicit writes",
+      "passed": true
+    },
+    {
+      "name": "URL works even when Storage read is blocked / no wrong-language spans",
+      "passed": true,
+      "detail": {
+        "wrong_language_visible": 0
+      }
+    },
+    {
+      "name": "URL works even when Storage write is blocked",
+      "passed": true,
+      "detail": {
+        "lang": "fr",
+        "source": "url",
+        "writes": [],
+        "title": "Pasteberth — Vos fichiers, prêts pour la suite."
+      }
+    },
+    {
+      "name": "URL works even when Storage write is blocked / only explicit writes",
+      "passed": true
+    },
+    {
+      "name": "URL works even when Storage write is blocked / no wrong-language spans",
+      "passed": true,
+      "detail": {
+        "wrong_language_visible": 0
+      }
+    },
+    {
+      "name": "Empty URL value does not override choice",
+      "passed": true,
+      "detail": {
+        "lang": "fr",
+        "source": "saved",
+        "writes": [],
+        "title": "Pasteberth — Vos fichiers, prêts pour la suite."
+      }
+    },
+    {
+      "name": "Empty URL value does not override choice / only explicit writes",
+      "passed": true
+    },
+    {
+      "name": "Empty URL value does not override choice / no wrong-language spans",
+      "passed": true,
+      "detail": {
+        "wrong_language_visible": 0
+      }
+    },
+    {
+      "name": "FR button persists explicit preference",
+      "passed": true
+    },
+    {
+      "name": "French screen-reader image description",
+      "passed": true
+    },
+    {
+      "name": "EN button persists explicit preference",
+      "passed": true
+    },
+    {
+      "name": "English screen-reader image description",
+      "passed": true
+    },
+    {
+      "name": "English tab pressed",
+      "passed": true
+    },
+    {
+      "name": "English title",
+      "passed": true
+    },
+    {
+      "name": "Contrast body text",
+      "passed": true,
+      "detail": {
+        "foreground": "#16263d",
+        "background": "#f5f7fb",
+        "ratio": 14.2,
+        "target": 4.5
+      }
+    },
+    {
+      "name": "Contrast secondary text",
+      "passed": true,
+      "detail": {
+        "foreground": "#53657b",
+        "background": "#f5f7fb",
+        "ratio": 5.57,
+        "target": 4.5
+      }
+    },
+    {
+      "name": "Contrast primary CTA",
+      "passed": true,
+      "detail": {
+        "foreground": "#ffffff",
+        "background": "#1762b3",
+        "ratio": 6.11,
+        "target": 4.5
+      }
+    },
+    {
+      "name": "Contrast primary CTA hover",
+      "passed": true,
+      "detail": {
+        "foreground": "#ffffff",
+        "background": "#124b8e",
+        "ratio": 8.67,
+        "target": 4.5
+      }
+    },
+    {
+      "name": "Contrast headline blue",
+      "passed": true,
+      "detail": {
+        "foreground": "#1762b3",
+        "background": "#f5f7fb",
+        "ratio": 5.7,
+        "target": 4.5
+      }
+    },
+    {
+      "name": "Contrast raspberry PDF label",
+      "passed": true,
+      "detail": {
+        "foreground": "#a32a4a",
+        "background": "#fff5f8",
+        "ratio": 6.58,
+        "target": 4.5
+      }
+    },
+    {
+      "name": "Contrast mint XLSX label",
+      "passed": true,
+      "detail": {
+        "foreground": "#155a40",
+        "background": "#f2fbf7",
+        "ratio": 7.75,
+        "target": 4.5
+      }
+    },
+    {
+      "name": "Contrast local operation badge",
+      "passed": true,
+      "detail": {
+        "foreground": "#155a40",
+        "background": "#ddf8ed",
+        "ratio": 7.29,
+        "target": 4.5
+      }
+    },
+    {
+      "name": "Contrast project CTA",
+      "passed": true,
+      "detail": {
+        "foreground": "#102d22",
+        "background": "#36c98b",
+        "ratio": 6.96,
+        "target": 4.5
+      }
+    },
+    {
+      "name": "Contrast blue heading on dark",
+      "passed": true,
+      "detail": {
+        "foreground": "#4da3ff",
+        "background": "#101b2b",
+        "ratio": 6.59,
+        "target": 4.5
+      }
+    },
+    {
+      "name": "Contrast terminal code",
+      "passed": true,
+      "detail": {
+        "foreground": "#e4edf9",
+        "background": "#182b44",
+        "ratio": 12.11,
+        "target": 4.5
+      }
+    },
+    {
+      "name": "Contrast config code",
+      "passed": true,
+      "detail": {
+        "foreground": "#ddf8ed",
+        "background": "#101e32",
+        "ratio": 14.93,
+        "target": 4.5
+      }
+    },
+    {
+      "name": "CSS contains exact icon palette",
+      "passed": true,
+      "detail": {
+        "--brand-blue": "#4da3ff",
+        "--brand-raspberry": "#c33d60",
+        "--brand-mint": "#36c98b"
+      }
+    },
+    {
+      "name": "Without JavaScript: English document and title",
+      "passed": true
+    },
+    {
+      "name": "Without JavaScript: English hero only",
+      "passed": true
+    },
+    {
+      "name": "Current frontend equals runtime assets/product/app.js",
+      "passed": true,
+      "detail": "5c9a84cc42614e589918705e2765aa6d36db0a53e899e4836ce5582bc10b8ab7"
+    },
+    {
+      "name": "Current frontend equals runtime assets/product/style.css",
+      "passed": true,
+      "detail": "a038a69538ee74bf7c1766088bc26b4b089be7037a8ecdaa773c0be5b8989240"
+    },
+    {
+      "name": "Current frontend equals runtime assets/product/favicon.svg",
+      "passed": true,
+      "detail": "db5fe529ac312b01eae97eaa8f3fdf72781087a39c51c54491a44570861d1d6b"
+    },
+    {
+      "name": "Current frontend equals runtime assets/product/index.template.html",
+      "passed": true,
+      "detail": "f2a60d725f891e8db7933832679099813f4af4b188a87b2b811b1c310b1bd7f7"
+    },
+    {
+      "name": "No JavaScript errors",
+      "passed": true,
+      "detail": []
+    },
+    {
+      "name": "No HTTP requests",
+      "passed": true,
+      "detail": []
+    }
+  ],
+  "page_errors": [],
+  "network_requests": [],
+  "browser": "145.0.7632.6",
+  "summary": {
+    "passed": 72,
+    "failed": 0
+  },
+  "checked_at": "2026-09-08T23:29:02.672019+00:00",
+  "preview_sha256": "2bd6a17f2e42dd62d2b2bd5b9aa752afc14bef21bf3b952ab27aced73a0edcf6"
+}

@@ -1,0 +1,1322 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="Paste, drop and pick up files across browsers, clipboards and filesystems. Pasteberth, a shared place on your own infrastructure.">
+<meta name="theme-color" content="#f5f7fb">
+<meta name="color-scheme" content="light">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self' data: blob:; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; frame-src 'self' data: blob:; connect-src 'none'; font-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'">
+<title>Pasteberth — Your files, ready for what’s next.</title>
+<script>
+/* Only explicit choices are persisted. First visits default to English. */
+(() => {
+  const key = 'pasteberth-site-language-choice';
+  const supported = value => value === 'en' || value === 'fr';
+  let language = 'en', source = 'default', requested = null;
+  try {
+    const saved = localStorage.getItem(key);
+    if (supported(saved)) { language = saved; source = 'saved'; }
+  } catch {}
+  try { requested = new URLSearchParams(location.search).get('lang'); } catch {}
+  if (supported(requested)) {
+    language = requested; source = 'url';
+    try { localStorage.setItem(key, language); } catch {}
+  }
+  document.documentElement.lang = language;
+  document.documentElement.dataset.languageSource = source;
+})();
+</script>
+<link rel="icon" href="assets/product/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="assets/site.css">
+</head>
+<body>
+<svg class="svg-defs" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+<defs>
+<symbol id="i-arrow" viewBox="0 0 24 24">
+<path d="M4 12h15m-6-6 6 6-6 6"/>
+</symbol>
+<symbol id="i-external" viewBox="0 0 24 24">
+<path d="M6 18 18 6M6 6h12v12"/>
+</symbol>
+<symbol id="i-copy" viewBox="0 0 24 24">
+<path d="M8 8h12v13H8zM16 4V2H2v14h2"/>
+</symbol>
+<symbol id="i-file" viewBox="0 0 24 24">
+<path d="M14 2H4v20h16V8zM14 2v6h6M8 13h8M8 17h6"/>
+</symbol>
+<symbol id="i-folder" viewBox="0 0 24 24">
+<path d="M3 6h7l2 3h9v11H3zM3 6V4h7l2 2h8v3"/>
+</symbol>
+<symbol id="i-check" viewBox="0 0 24 24">
+<path d="m4 12 5 5L20 6"/>
+</symbol>
+<symbol id="i-download" viewBox="0 0 24 24">
+<path d="M12 3v12m-5-5 5 5 5-5M4 16v5h16v-5"/>
+</symbol>
+<symbol id="i-terminal" viewBox="0 0 24 24">
+<path d="m4 6 6 6-6 6m9 0h7"/>
+</symbol>
+<symbol id="i-grid" viewBox="0 0 24 24">
+<path d="M3 3h7v7H3zM14 3h7v7h-7zM3 14h7v7H3zM14 14h7v7h-7z"/>
+</symbol>
+<symbol id="i-lock" viewBox="0 0 24 24">
+<path d="M5 10h14v11H5zM8 10V6a4 4 0 0 1 8 0v4M12 14v3"/>
+</symbol>
+<symbol id="i-plus" viewBox="0 0 24 24">
+<path d="M12 4v16M4 12h16"/>
+</symbol>
+<symbol id="i-close" viewBox="0 0 24 24">
+<path d="m5 5 14 14M5 19 19 5"/>
+</symbol>
+<symbol id="i-menu" viewBox="0 0 24 24">
+<path d="M4 6h16M4 12h16M4 18h16"/>
+</symbol>
+<symbol id="i-expand" viewBox="0 0 24 24">
+<path d="M8 3H3v5m13-5h5v5M3 16v5h5m13-5v5h-5"/>
+</symbol>
+<symbol id="i-github" viewBox="0 0 24 24">
+<path fill="currentColor" stroke="none" d="M12 2a10 10 0 0 0-3.16 19.49c.5.09.68-.22.68-.48v-1.87c-2.78.6-3.37-1.18-3.37-1.18-.46-1.16-1.11-1.47-1.11-1.47-.91-.62.07-.61.07-.61 1 .07 1.53 1.03 1.53 1.03.89 1.53 2.34 1.09 2.91.83.09-.65.35-1.09.63-1.34-2.22-.25-4.56-1.11-4.56-4.94 0-1.09.39-1.98 1.03-2.68-.1-.25-.45-1.27.1-2.64 0 0 .84-.27 2.75 1.02a9.57 9.57 0 0 1 5 0c1.91-1.29 2.75-1.02 2.75-1.02.55 1.37.2 2.39.1 2.64.64.7 1.03 1.59 1.03 2.68 0 3.84-2.34 4.69-4.58 4.94.36.31.68.92.68 1.85v2.76c0 .26.18.58.69.48A10 10 0 0 0 12 2Z"/>
+</symbol>
+</defs>
+</svg>
+<a class="skip" href="#main">
+<span class="fr" lang="fr">Aller au contenu</span>
+<span class="en" lang="en">Skip to content</span>
+</a>
+<header class="site-header">
+<div class="wrap header-inner">
+<a class="brand" href="#" aria-label="Pasteberth">
+<img src="assets/product/favicon.svg" alt="" width="32" height="32">pasteberth<span class="brand-dot">.</span>
+</a>
+<nav class="desktop-nav" aria-label="Navigation">
+<a href="#documentation">Docs</a>
+<a href="#usages">
+<span class="fr" lang="fr">Les usages</span>
+<span class="en" lang="en">Use cases</span>
+</a>
+<a href="#interface">
+<span class="fr" lang="fr">L’interface</span>
+<span class="en" lang="en">The workspace</span>
+</a>
+<a href="#projects">
+<span class="fr" lang="fr">Vos projets</span>
+<span class="en" lang="en">Your projects</span>
+</a>
+</nav>
+<div class="header-actions">
+<div class="language" role="group" aria-label="Language" data-aria-label-fr="Langue" data-aria-label-en="Language">
+<button type="button" data-lang="en" aria-pressed="true" aria-label="English">EN</button>
+<button type="button" data-lang="fr" aria-pressed="false" aria-label="Français">FR</button>
+</div>
+<a class="github-link" href="https://github.com/Fade78/pasteberth" target="_blank" rel="noopener noreferrer" aria-label="GitHub">
+<svg class="icon" aria-hidden="true">
+<use href="#i-github">
+</use>
+</svg>
+</a>
+<a class="button small header-cta" href="#start">
+<span class="fr" lang="fr">Commencer</span>
+<span class="en" lang="en">Get started</span>
+<svg class="icon" aria-hidden="true">
+<use href="#i-arrow">
+</use>
+</svg>
+</a>
+<button type="button" id="menu-toggle" class="icon-button menu-toggle" aria-expanded="false" aria-controls="mobile-nav" aria-label="Menu">
+<svg class="icon" aria-hidden="true">
+<use href="#i-menu">
+</use>
+</svg>
+</button>
+</div>
+</div>
+<nav id="mobile-nav" hidden>
+<a href="#documentation">Documentation</a>
+<a href="#usages">
+<span class="fr" lang="fr">Les usages</span>
+<span class="en" lang="en">Use cases</span>
+</a>
+<a href="#interface">
+<span class="fr" lang="fr">L’interface</span>
+<span class="en" lang="en">The workspace</span>
+</a>
+<a href="#projects">
+<span class="fr" lang="fr">Vos projets</span>
+<span class="en" lang="en">Your projects</span>
+</a>
+<a href="#start">
+<span class="fr" lang="fr">Installer</span>
+<span class="en" lang="en">Install</span>
+</a>
+</nav>
+</header>
+<main id="main">
+<section class="hero wrap" aria-labelledby="hero-title">
+<div class="hero-copy">
+<div class="eyebrow">
+<span class="accent-dot">
+</span>
+<span class="fr" lang="fr">COLLER. DÉPOSER. RETROUVER.</span>
+<span class="en" lang="en">PASTE. DROP. PICK UP.</span>
+</div>
+<h1 id="hero-title">
+<span class="fr" lang="fr">Vos fichiers.<br>Prêts pour<br>
+<em>la suite.</em>
+</span>
+<span class="en" lang="en">Your files.<br>Ready for<br>
+<em>what’s next.</em>
+</span>
+</h1>
+<p class="hero-description">
+<span class="fr" lang="fr">Une capture à recoller. Un Excel à transmettre. Un rapport à récupérer. Un point de passage entre vos navigateurs, vos répertoires et vos outils.</span>
+<span class="en" lang="en">A screenshot to paste again. A spreadsheet to pass on. A report to pick up. One shared place between your browsers, filesystems and tools.</span>
+</p>
+<div class="hero-actions">
+<a class="button" href="#interface">
+<span class="fr" lang="fr">Essayer la démo</span>
+<span class="en" lang="en">Try the demo</span>
+<svg class="icon" aria-hidden="true">
+<use href="#i-arrow">
+</use>
+</svg>
+</a>
+<a class="text-link" href="https://github.com/Fade78/pasteberth" target="_blank" rel="noopener noreferrer">
+<span class="fr" lang="fr">Voir sur GitHub</span>
+<span class="en" lang="en">View on GitHub</span>
+<svg class="icon" aria-hidden="true">
+<use href="#i-external">
+</use>
+</svg>
+</a>
+</div>
+<div class="hero-proof">
+<span>
+<svg class="icon" aria-hidden="true">
+<use href="#i-check">
+</use>
+</svg>
+<span class="fr" lang="fr">Auto-hébergé</span>
+<span class="en" lang="en">Self-hosted</span>
+</span>
+<span>
+<svg class="icon" aria-hidden="true">
+<use href="#i-check">
+</use>
+</svg>
+<span class="fr" lang="fr">Vrais fichiers</span>
+<span class="en" lang="en">Real files</span>
+</span>
+<span>
+<svg class="icon" aria-hidden="true">
+<use href="#i-check">
+</use>
+</svg>Web + CLI</span>
+</div>
+</div>
+<figure class="hero-visual">
+<div class="stage-label">
+<span>01 / PASTEBERTH WORKSPACE</span>
+<span class="stage-dots">● ● ●</span>
+</div>
+<div class="incoming">
+<span class="file-pill">
+<svg class="icon" aria-hidden="true">
+<use href="#i-file">
+</use>
+</svg>atlas.xlsx</span>
+<span class="file-pill">
+<svg class="icon" aria-hidden="true">
+<use href="#i-file">
+</use>
+</svg>report.pdf</span>
+<span class="small-label">
+<span class="fr" lang="fr">MÊME POINT DE PASSAGE</span>
+<span class="en" lang="en">SAME SHARED PLACE</span>
+</span>
+</div>
+<button type="button" class="hero-shot" data-image="assets/interface-focus.png" aria-label="Enlarge screenshot" data-aria-label-fr="Agrandir la capture" data-aria-label-en="Enlarge screenshot">
+<img src="assets/interface-focus.png" width="1180" height="610" alt="Actual Pasteberth 2.1.18 interface, historical capture: atlas with image, HTML, PDF, Excel, CSV and text." data-alt-fr="Interface réelle de Pasteberth 2.1.18, capture historique : atlas avec image, HTML, PDF, Excel, CSV et texte." data-alt-en="Actual Pasteberth 2.1.18 interface, historical capture: atlas with image, HTML, PDF, Excel, CSV and text." fetchpriority="high">
+<span class="zoom-hint">
+<svg class="icon" aria-hidden="true">
+<use href="#i-expand">
+</use>
+</svg>
+</span>
+</button>
+<div class="reference-slip">
+<span class="slip-check">
+<svg class="icon" aria-hidden="true">
+<use href="#i-check">
+</use>
+</svg>
+</span>
+<div>
+<span class="small-label">
+<span class="fr" lang="fr">UNE RÉFÉRENCE PRÊTE À REPRENDRE</span>
+<span class="en" lang="en">A REFERENCE READY TO USE</span>
+</span>
+<code>@/repo/atlas/…/atlas.png</code>
+</div>
+<span class="copy-symbol">
+<svg class="icon" aria-hidden="true">
+<use href="#i-copy">
+</use>
+</svg>
+</span>
+</div>
+<figcaption>
+<span class="fr" lang="fr">Capture historique 2.1.18 · fichiers fictifs · archive du 8 septembre 2026</span>
+<span class="en" lang="en">Historical 2.1.18 capture · fictional files · archive dated 8 September 2026</span>
+</figcaption>
+</figure>
+</section>
+<div class="wrap format-strip">
+<p>
+<span class="fr" lang="fr">Une place pour vos captures.<br>
+<strong>Et pour tout le reste.</strong>
+</span>
+<span class="en" lang="en">A place for your screenshots.<br>
+<strong>And everything else.</strong>
+</span>
+</p>
+<div class="format-tags">
+<span>PNG</span>
+<span>TXT</span>
+<span>PDF</span>
+<span>XLSX</span>
+<span>CSV</span>
+<span>ZIP</span>
+<span>HTML</span>
+<span>…</span>
+</div>
+<p class="format-aside">
+<span class="fr" lang="fr">Les formats ne décident pas<br>qui peut participer.</span>
+<span class="en" lang="en">File formats don’t decide<br>who gets to participate.</span>
+</p>
+</div>
+
+<section class="section wrap handoff" id="ways">
+<div class="handoff-copy">
+<div class="eyebrow">01 / <span class="fr" lang="fr">LE MÊME CONTENU, PLUSIEURS SORTIES</span>
+<span class="en" lang="en">ONE ITEM, SEVERAL WAYS FORWARD</span>
+</div>
+<h2>
+<span class="fr" lang="fr">Pas seulement<br>à télécharger.<br>
+<em>À reprendre.</em>
+</span>
+<span class="en" lang="en">Not just a file<br>to download.<br>
+<em>Work to carry on.</em>
+</span>
+</h2>
+<p>
+<span class="fr" lang="fr">Copiez le contenu quand son format le permet. Reprenez le chemin exact pour un outil. Ou récupérez simplement le fichier.</span>
+<span class="en" lang="en">Copy the content when its format allows. Take the exact path into a tool. Or simply download the file.</span>
+</p>
+<p class="muted">
+<span class="fr" lang="fr">Même seul, c’est utile : collez maintenant, retrouvez et recopiez plus tard.</span>
+<span class="en" lang="en">Useful even on your own: paste now, find it and copy it again later.</span>
+</p>
+</div>
+<div class="handoff-card">
+<div class="card-top">
+<span class="small-label">
+<span class="fr" lang="fr">CHOISISSEZ UN EXEMPLE</span>
+<span class="en" lang="en">CHOOSE AN EXAMPLE</span>
+</span>
+<span class="outline-label">
+<span class="fr" lang="fr">Démo locale</span>
+<span class="en" lang="en">Local demo</span>
+</span>
+</div>
+<div class="file-type-tabs" role="tablist" aria-label="Example format" data-aria-label-fr="Format d’exemple" data-aria-label-en="Example format">
+<button type="button" role="tab" id="kind-image" data-kind="image" aria-selected="true" aria-controls="sample-panel" tabindex="0">
+<span class="fr" lang="fr">Image</span>
+<span class="en" lang="en">Image</span>
+</button>
+<button type="button" role="tab" id="kind-text" data-kind="text" aria-selected="false" aria-controls="sample-panel" tabindex="-1">
+<span class="fr" lang="fr">Texte</span>
+<span class="en" lang="en">Text</span>
+</button>
+<button type="button" role="tab" id="kind-pdf" data-kind="pdf" aria-selected="false" aria-controls="sample-panel" tabindex="-1">PDF</button>
+<button type="button" role="tab" id="kind-xlsx" data-kind="xlsx" aria-selected="false" aria-controls="sample-panel" tabindex="-1">Excel</button>
+</div>
+<div id="sample-panel" role="tabpanel" aria-labelledby="kind-image" tabindex="0">
+<div class="sample-file">
+<div class="sample-thumbnail" id="sample-thumbnail">
+<img src="assets/examples/atlas.png" width="804" height="1137" alt="Fictional Atlas sample document" data-alt-fr="Document d’exemple fictif Atlas" data-alt-en="Fictional Atlas sample document">
+</div>
+<div>
+<span class="small-label" id="sample-kind-label">PNG / <span class="fr" lang="fr">FICHIER D’EXEMPLE</span>
+<span class="en" lang="en">EXAMPLE FILE</span>
+</span>
+<h3 id="sample-name">atlas.png</h3>
+<p id="sample-description">
+<span class="fr" lang="fr">Une image, un fichier et un chemin.</span>
+<span class="en" lang="en">An image, a file and a path.</span>
+</p>
+<code id="sample-path">@/repo/atlas/…/atlas.png</code>
+</div>
+</div>
+<div class="sample-actions">
+<button type="button" id="copy-content">
+<svg class="icon" aria-hidden="true">
+<use href="#i-copy">
+</use>
+</svg>
+<span>
+<strong>
+<span class="fr" lang="fr">Son contenu</span>
+<span class="en" lang="en">The content</span>
+</strong>
+<small id="copy-content-label">
+<span class="fr" lang="fr">Copier l’image</span>
+<span class="en" lang="en">Copy image</span>
+</small>
+</span>
+<svg class="icon" aria-hidden="true">
+<use href="#i-arrow">
+</use>
+</svg>
+</button>
+<button type="button" id="copy-reference">
+<svg class="icon" aria-hidden="true">
+<use href="#i-terminal">
+</use>
+</svg>
+<span>
+<strong>
+<span class="fr" lang="fr">Son chemin</span>
+<span class="en" lang="en">The path</span>
+</strong>
+<small>
+<span class="fr" lang="fr">Copier la référence</span>
+<span class="en" lang="en">Copy reference</span>
+</small>
+</span>
+<svg class="icon" aria-hidden="true">
+<use href="#i-arrow">
+</use>
+</svg>
+</button>
+<button type="button" id="download-sample">
+<svg class="icon" aria-hidden="true">
+<use href="#i-download">
+</use>
+</svg>
+<span>
+<strong>
+<span class="fr" lang="fr">Son fichier</span>
+<span class="en" lang="en">The file</span>
+</strong>
+<small>
+<span class="fr" lang="fr">Télécharger l’exemple</span>
+<span class="en" lang="en">Download example</span>
+</small>
+</span>
+<svg class="icon" aria-hidden="true">
+<use href="#i-arrow">
+</use>
+</svg>
+</button>
+</div>
+</div>
+<p class="card-footnote" id="sample-footnote">
+<span class="fr" lang="fr">La recopie dépend du format et des permissions du navigateur. Les chemins de cette démo sont fictifs.</span>
+<span class="en" lang="en">Copying depends on the format and browser permissions. Paths in this demo are fictional.</span>
+</p>
+</div>
+</section>
+
+<section class="section use-section" id="usages">
+<div class="wrap">
+<div class="section-heading">
+<div>
+<div class="eyebrow">02 / <span class="fr" lang="fr">À CHACUN SON USAGE</span>
+<span class="en" lang="en">MAKE IT YOUR OWN</span>
+</div>
+<h2>
+<span class="fr" lang="fr">Pas un workflow de plus.<br>
+<em>Une place dans le vôtre.</em>
+</span>
+<span class="en" lang="en">Not another workflow.<br>
+<em>A place in yours.</em>
+</span>
+</h2>
+</div>
+<p>
+<span class="fr" lang="fr">Seul ou à plusieurs. Entre personnes, agents ou scripts. Chacun choisit son accès ; personne n’est assigné à un côté.</span>
+<span class="en" lang="en">On your own or together. Between people, agents or scripts. Everyone chooses their interface. Nobody is assigned a side.</span>
+</p>
+</div>
+<div class="audience-tabs" role="tablist" aria-label="Use cases" data-aria-label-fr="Cas d’usage" data-aria-label-en="Use cases">
+<button type="button" role="tab" id="use-personal" data-profile="personal" aria-selected="true" aria-controls="audience-panel" tabindex="0">01 <span>
+<span class="fr" lang="fr">Au quotidien</span>
+<span class="en" lang="en">Everyday work</span>
+</span>
+</button>
+<button type="button" role="tab" id="use-documents" data-profile="documents" aria-selected="false" aria-controls="audience-panel" tabindex="-1">02 <span>
+<span class="fr" lang="fr">Documents & échanges</span>
+<span class="en" lang="en">Documents & sharing</span>
+</span>
+</button>
+<button type="button" role="tab" id="use-tools" data-profile="tools" aria-selected="false" aria-controls="audience-panel" tabindex="-1">03 <span>
+<span class="fr" lang="fr">Outils & agents</span>
+<span class="en" lang="en">Tools & agents</span>
+</span>
+</button>
+<button type="button" role="tab" id="use-projects" data-profile="projects" aria-selected="false" aria-controls="audience-panel" tabindex="-1">04 <span>
+<span class="fr" lang="fr">Plusieurs projets</span>
+<span class="en" lang="en">Many projects</span>
+</span>
+</button>
+</div>
+<div class="audience-panel" id="audience-panel" role="tabpanel" aria-labelledby="use-personal" tabindex="0">
+<div>
+<span class="small-label" id="audience-label">
+<span class="fr" lang="fr">POUR VOTRE PROCHAIN CONTEXTE</span>
+<span class="en" lang="en">FOR YOUR NEXT CONTEXT</span>
+</span>
+<h3 id="audience-title">
+<span class="fr" lang="fr">Collez maintenant.<br>Recopiez plus tard.</span>
+<span class="en" lang="en">Paste now.<br>Copy again later.</span>
+</h3>
+<p id="audience-copy">
+<span class="fr" lang="fr">Une capture, une note, un document : gardez-les dans une zone, sans dépendre du dernier élément de votre presse-papiers.</span>
+<span class="en" lang="en">A screenshot, a note, a document: keep them in a zone instead of relying on the last item in your clipboard.</span>
+</p>
+<a class="text-link" id="audience-link" href="#ways">
+<span id="audience-link-label">
+<span class="fr" lang="fr">Un contenu, plusieurs sorties</span>
+<span class="en" lang="en">One item, several ways forward</span>
+</span>
+<svg class="icon" aria-hidden="true">
+<use href="#i-arrow">
+</use>
+</svg>
+</a>
+</div>
+<div class="scenario-visual">
+<div class="scenario-node">
+<span id="flow-icon-a">
+<svg class="icon" aria-hidden="true">
+<use href="#i-copy">
+</use>
+</svg>
+</span>
+<strong id="flow-a">
+<span class="fr" lang="fr">Coller</span>
+<span class="en" lang="en">Paste</span>
+</strong>
+<small id="flow-a-small">
+<span class="fr" lang="fr">Maintenant</span>
+<span class="en" lang="en">Now</span>
+</small>
+</div>
+<span class="flow-line" aria-hidden="true">→</span>
+<div class="scenario-berth">
+<img src="assets/product/favicon.svg" width="32" height="32" alt="">
+<strong>Pasteberth</strong>
+<small id="flow-zone">
+<span class="fr" lang="fr">Votre zone</span>
+<span class="en" lang="en">Your zone</span>
+</small>
+</div>
+<span class="flow-line" aria-hidden="true">→</span>
+<div class="scenario-node">
+<span id="flow-icon-b">
+<svg class="icon" aria-hidden="true">
+<use href="#i-copy">
+</use>
+</svg>
+</span>
+<strong id="flow-b">
+<span class="fr" lang="fr">Recopier</span>
+<span class="en" lang="en">Copy again</span>
+</strong>
+<small id="flow-b-small">
+<span class="fr" lang="fr">Plus tard</span>
+<span class="en" lang="en">Later</span>
+</small>
+</div>
+</div>
+</div>
+</div>
+</section>
+
+<section class="section wrap" id="interface">
+<div class="section-heading">
+<div>
+<div class="eyebrow">03 / <span class="fr" lang="fr">LE PRODUIT, PAS UNE MAQUETTE</span>
+<span class="en" lang="en">THE PRODUCT, NOT A MOCKUP</span>
+</div>
+<h2>
+<span class="fr" lang="fr">Vos zones.<br>
+<em>À vous de jouer.</em>
+</span>
+<span class="en" lang="en">Your zones.<br>
+<em>Make yourself at home.</em>
+</span>
+</h2>
+</div>
+<p>
+<span class="fr" lang="fr">Voici la véritable interface de Pasteberth, avec un serveur simulé dans cet onglet. Sélectionnez, recopiez, téléchargez. Sans installation.</span>
+<span class="en" lang="en">This is the actual Pasteberth interface, with a server simulated in this tab. Select, copy and download. No installation needed.</span>
+</p>
+</div>
+<div class="demo-toolbar">
+<div class="scene-switch" role="group" aria-label="Demo views" data-aria-label-fr="Vues de démonstration" data-aria-label-en="Demo views">
+<button type="button" data-scene="focus" aria-pressed="true">
+<span class="fr" lang="fr">Un projet</span>
+<span class="en" lang="en">One project</span>
+</button>
+<button type="button" data-scene="overview" aria-pressed="false">
+<span class="fr" lang="fr">Vue d’ensemble</span>
+<span class="en" lang="en">Overview</span>
+</button>
+<button type="button" data-scene="selection" aria-pressed="false">
+<span class="fr" lang="fr">Une sélection</span>
+<span class="en" lang="en">A selection</span>
+</button>
+</div>
+<div class="demo-toolbar-right">
+<button type="button" id="reset-demo" class="text-button">
+<span class="fr" lang="fr">Réinitialiser</span>
+<span class="en" lang="en">Reset</span>
+</button>
+<button type="button" id="expand-demo" class="icon-button" aria-label="Expand demo" data-aria-label-fr="Agrandir la démo" data-aria-label-en="Expand demo">
+<svg class="icon" aria-hidden="true">
+<use href="#i-expand">
+</use>
+</svg>
+</button>
+</div>
+</div>
+<div class="demo-shell" id="demo-home">
+<div class="demo-container" id="demo-container">
+<div class="demo-status">
+<span>
+<i>
+</i>
+<span class="fr" lang="fr">BAC À SABLE LOCAL</span>
+<span class="en" lang="en">LOCAL SANDBOX</span>
+</span>
+<span>
+<span class="fr" lang="fr">Fichiers fictifs · aucune connexion à un serveur</span>
+<span class="en" lang="en">Fictional files · no server connection</span>
+</span>
+</div>
+<div class="demo-viewport" id="demo-viewport">
+<img class="demo-poster" id="demo-poster" src="assets/interface-focus.png" width="1180" height="610" loading="lazy" alt="Historical Pasteberth 2.1.18 screenshot, not the current interactive demo" data-alt-fr="Capture historique de Pasteberth 2.1.18, pas la démo interactive actuelle" data-alt-en="Historical Pasteberth 2.1.18 screenshot, not the current interactive demo">
+<iframe id="demo-frame" title="Pasteberth — local interactive demo" data-title-fr="Pasteberth — démonstration interactive locale" data-title-en="Pasteberth — local interactive demo" sandbox="allow-scripts allow-same-origin allow-downloads allow-modals allow-forms" allow="clipboard-write" hidden>
+</iframe>
+<div class="demo-launch" id="demo-launch">
+<button type="button" id="launch-demo" class="button light">
+<span class="fr" lang="fr">Ouvrir l’espace de démo</span>
+<span class="en" lang="en">Open the demo workspace</span>
+<svg class="icon" aria-hidden="true">
+<use href="#i-arrow">
+</use>
+</svg>
+</button>
+</div>
+</div>
+</div>
+</div>
+<div class="demo-notes">
+<p>
+<svg class="icon" aria-hidden="true">
+<use href="#i-lock">
+</use>
+</svg>
+<span class="fr" lang="fr">Les fichiers déposés dans cette démo restent en mémoire dans cet onglet. Ils disparaissent à la réinitialisation ou au rechargement.</span>
+<span class="en" lang="en">Files dropped in this demo stay in this tab’s memory. They disappear when you reset or reload it.</span>
+</p>
+<p>
+<span class="fr" lang="fr">Démo 2.1.21 en anglais ; affiche initiale : capture historique 2.1.18 du 8 septembre 2026. Copie selon les permissions du navigateur.</span>
+<span class="en" lang="en">2.1.21 demo in English; initial poster: historical 2.1.18 capture from the 8 September 2026 archive. Clipboard access depends on browser permissions.</span>
+</p>
+</div>
+<details class="version-note">
+<summary>
+<span class="fr" lang="fr">Ce que cette démonstration montre exactement</span>
+<span class="en" lang="en">What this demo actually shows</span>
+<svg class="icon" aria-hidden="true">
+<use href="#i-plus">
+</use>
+</svg>
+</summary>
+<p>
+<span class="fr" lang="fr">Le frontend est copié sans modification depuis le runtime 2.1.21 de ce dépôt. Le serveur est simulé dans l’onglet : ni authentification, ni verrous, ni transactions ou garanties de stockage. Les transferts font partie du produit depuis 2.1.19. Limites propres à la démo : 8 Mio par fichier et 32 Mio de fichiers au total, pas un plafond strict de mémoire JavaScript. Le serveur a ses propres limites configurables (upload : 20 Mio par défaut).</span>
+<span class="en" lang="en">The frontend is copied unchanged from this repository’s 2.1.21 runtime. The server is simulated in this tab: no authentication, locks, transactions or storage guarantees. Transfers are part of the product since 2.1.19. Demo-only limits: 8 MiB per file and 32 MiB of files in total, not a strict JavaScript memory cap. The server has separate configurable limits (upload: 20 MiB by default).</span>
+</p>
+<p><span class="fr" lang="fr">Les trois captures sont historiques : code affichant 2.1.18, conservées de l’archive datée du 8 septembre 2026. Elles ne montrent pas une installation 2.1.21.</span><span class="en" lang="en">The three screenshots are historical: code displaying 2.1.18, retained from the archive dated 8 September 2026. They do not show a 2.1.21 installation.</span> <a href="PROVENANCE.md">Provenance</a></p>
+<div class="capture-links">
+<button type="button" data-image="assets/interface-focus.png">
+<span class="fr" lang="fr">Capture réelle : un projet</span>
+<span class="en" lang="en">Real capture: one project</span>
+</button>
+<button type="button" data-image="assets/interface-overview.png">
+<span class="fr" lang="fr">Vue d’ensemble</span>
+<span class="en" lang="en">Overview</span>
+</button>
+<button type="button" data-image="assets/interface-selection.png">
+<span class="fr" lang="fr">Sélection multiple</span>
+<span class="en" lang="en">Multiple selection</span>
+</button>
+</div>
+</details>
+</section>
+
+<section class="section filesystem-section" id="filesystem">
+<div class="wrap">
+<div class="section-heading">
+<div>
+<div class="eyebrow">04 / <span class="fr" lang="fr">LE FILESYSTEM EST AUSSI UNE INTERFACE</span>
+<span class="en" lang="en">THE FILESYSTEM IS AN INTERFACE, TOO</span>
+</div>
+<h2>
+<span class="fr" lang="fr">Déjà sur le disque ?<br>
+<em>Laissez-le là.</em>
+</span>
+<span class="en" lang="en">Already on disk?<br>
+<em>Leave it there.</em>
+</span>
+</h2>
+</div>
+<p>
+<span class="fr" lang="fr">Vos outils savent produire des fichiers. Ils n’ont pas tous besoin de développer leur propre interface pour les remettre.</span>
+<span class="en" lang="en">Your tools know how to produce files. They don’t all need to build their own interface to hand them over.</span>
+</p>
+</div>
+<div class="filesystem-grid">
+<div class="local-copy">
+<span class="pill">
+<svg class="icon" aria-hidden="true">
+<use href="#i-terminal">
+</use>
+</svg>
+<span class="fr" lang="fr">cp + register · sans réseau</span>
+<span class="en" lang="en">cp + register · no network</span>
+</span>
+<h3>
+<span class="fr" lang="fr">Le fichier reste un fichier.</span>
+<span class="en" lang="en">A file stays a file.</span>
+</h3>
+<p>
+<span class="fr" lang="fr">Copiez-le dans la zone, puis enregistrez-le. <code>register</code> valide le fichier et crée ou rafraîchit son sidecar, sans réécrire ses données ni contacter le daemon.</span>
+<span class="en" lang="en">Copy it into the zone, then register it. <code>register</code> validates the file and creates or refreshes its sidecar, without rewriting its data or contacting the daemon.</span>
+</p>
+<div class="file-pair">
+<span>
+<svg class="icon" aria-hidden="true">
+<use href="#i-file">
+</use>
+</svg>report.pdf</span>
+<span>+</span>
+<span>
+<svg class="icon" aria-hidden="true">
+<use href="#i-file">
+</use>
+</svg>report.pdf.json</span>
+</div>
+<p class="muted">
+<span class="fr" lang="fr">Le service retrouvera la paire lors d’un rafraîchissement. Un fichier simplement copié, sans enregistrement, reste en dehors de l’historique géré.</span>
+<span class="en" lang="en">The service will find the pair on a refresh. A file simply copied in, without registration, stays outside the managed history.</span>
+</p>
+</div>
+<div class="terminal-card">
+<div class="terminal-tabs" role="tablist" aria-label="Publication methods" data-aria-label-fr="Méthodes de publication" data-aria-label-en="Publication methods">
+<button type="button" role="tab" id="method-local" data-method="local" aria-selected="true" aria-controls="method-panel" tabindex="0">cp + register</button>
+<button type="button" role="tab" id="method-cli" data-method="cli" aria-selected="false" aria-controls="method-panel" tabindex="-1">CLI drop</button>
+<button type="button" role="tab" id="method-mcp" data-method="mcp" aria-selected="false" aria-controls="method-panel" tabindex="-1">MCP</button>
+</div>
+<div id="method-panel" role="tabpanel" aria-labelledby="method-local" tabindex="0">
+<div class="code-label">
+<span id="method-language">SHELL</span>
+<button type="button" class="icon-button copy-code" data-copy-target="method-code" aria-label="Copy code" data-aria-label-fr="Copier le code" data-aria-label-en="Copy code">
+<svg class="icon" aria-hidden="true">
+<use href="#i-copy">
+</use>
+</svg>
+</button>
+</div>
+<pre>
+<code id="method-code">ZONE=/repo/atlas/ignoredbygit/exchange
+DEST="$ZONE/report-new.pdf"
+[ ! -e "$DEST" ] &amp;&amp; [ ! -L "$DEST" ] &amp;&amp;
+[ ! -e "$DEST.json" ] &amp;&amp; [ ! -L "$DEST.json" ] &amp;&amp;
+cp -T --update=none-fail -- report.pdf "$DEST" &amp;&amp;
+  pasteberth register "$DEST"</code>
+</pre>
+<p id="method-note">
+<span class="fr" lang="fr">Choisissez des noms de fichier et de sidecar inutilisés. Requiert GNU cp avec -T et --update=none-fail. Les tests refusent aussi les répertoires et liens, mais ne réservent pas les noms contre un autre producteur. Sans écritures concurrentes ; sinon utilisez drop. register ne remplace pas les données. Pour un remplacement géré, utilisez drop --replace.</span>
+<span class="en" lang="en">Choose unused data and sidecar names. Requires GNU cp with -T and --update=none-fail. The checks also reject directories and links, but do not reserve names against another writer. Use without concurrent writers; otherwise use drop. register does not replace data. Use drop --replace for managed replacement.</span>
+</p>
+</div>
+</div>
+</div>
+<div class="publication-modes">
+<div>
+<span class="small-label">
+<span class="fr" lang="fr">GARDER UNE SUITE DE DÉPÔTS</span>
+<span class="en" lang="en">KEEP A RUNNING HISTORY</span>
+</span>
+<h3>
+<span class="fr" lang="fr">Une capture, puis une autre.</span>
+<span class="en" lang="en">One capture, then another.</span>
+</h3>
+<p>
+<span class="fr" lang="fr">Retrouvez les éléments précédents dans l’historique de la zone. Les dépôts anonymes identiques sont dédupliqués par contenu.</span>
+<span class="en" lang="en">Find earlier items in the zone’s history. Identical anonymous uploads are deduplicated by content.</span>
+</p>
+</div>
+<div>
+<span class="small-label">
+<span class="fr" lang="fr">PUBLIER LE RÉSULTAT COURANT</span>
+<span class="en" lang="en">PUBLISH THE CURRENT RESULT</span>
+</span>
+<h3>
+<code>latest-report.pdf</code>
+</h3>
+<p>
+<span class="fr" lang="fr">Avec un dépôt nommé et <code>--replace</code>, mettez à jour un résultat géré en gardant sa référence. Ce remplacement n’est pas du versionnement.</span>
+<span class="en" lang="en">With a named upload and <code>--replace</code>, update a managed result while keeping its reference. Replacement is not version history.</span>
+</p>
+</div>
+</div>
+</div>
+</section>
+
+<section class="section projects-section" id="projects">
+<div class="wrap">
+<div class="discovery-top">
+<div>
+<div class="eyebrow">05 / <span class="fr" lang="fr">UNE CONVENTION SUFFIT</span>
+<span class="en" lang="en">ONE CONVENTION IS ENOUGH</span>
+</div>
+<h2>
+<span class="fr" lang="fr">Un projet naît.<br>Sa zone <em>aussi.</em>
+</span>
+<span class="en" lang="en">A project appears.<br>So does <em>its zone.</em>
+</span>
+</h2>
+<p>
+<span class="fr" lang="fr">Configurez une collection et son groupe une fois. Ensuite, vos templates de projet créent le répertoire d’échange ; Pasteberth le découvre.</span>
+<span class="en" lang="en">Configure a collection and its group once. Then your project templates create the exchange directory; Pasteberth discovers it.</span>
+</p>
+<p class="discovery-promise">
+<span class="fr" lang="fr">Pas de déclaration par projet.<br>Pas de redémarrage.<br>Pas de connexion SSH pour retrouver la zone dans le Web.</span>
+<span class="en" lang="en">No per-project declaration.<br>No restart.<br>No SSH login to find the new zone in the Web UI.</span>
+</p>
+<button type="button" id="add-project" class="button light">
+<svg class="icon" aria-hidden="true">
+<use href="#i-plus">
+</use>
+</svg>
+<span id="add-project-label">
+<span class="fr" lang="fr">Créer un projet d’exemple</span>
+<span class="en" lang="en">Create an example project</span>
+</span>
+</button>
+<p class="small-note">
+<span class="fr" lang="fr">Simulation accélérée. Le navigateur visible interroge le service toutes les 10 secondes. Les requêtes de vue déclenchent un scan asynchrone ; une réponse ultérieure expose son résultat. Ce n’est ni un watcher filesystem ni une boucle autonome permanente.</span>
+<span class="en" lang="en">Accelerated simulation. The visible browser polls every 10 seconds. Overview requests trigger an asynchronous scan; a later response exposes its result. This is neither a filesystem watcher nor a standalone perpetual scanning loop.</span>
+</p>
+</div>
+<div class="discovery-visual">
+<div class="tree-window">
+<div class="tree-top">
+<span>
+<svg class="icon" aria-hidden="true">
+<use href="#i-folder">
+</use>
+</svg> /repo/</span>
+<span class="small-label">
+<span class="fr" lang="fr">VOTRE ARBORESCENCE</span>
+<span class="en" lang="en">YOUR DIRECTORY TREE</span>
+</span>
+</div>
+<div class="tree-lines">
+<div>
+<span class="tree-guide">├──</span>
+<strong>atlas</strong>
+<span>/ignoredbygit/exchange</span>
+</div>
+<div>
+<span class="tree-guide">├──</span>
+<strong>orbit</strong>
+<span>/ignoredbygit/exchange</span>
+</div>
+<div>
+<span class="tree-guide">└──</span>
+<strong>studio</strong>
+<span>/ignoredbygit/exchange</span>
+</div>
+<div id="new-tree-line" hidden>
+<span class="tree-guide">└──</span>
+<strong>nova</strong>
+<span>/ignoredbygit/exchange</span>
+<i>+</i>
+</div>
+</div>
+</div>
+<div class="discovery-connector">↓ <span>
+<span class="fr" lang="fr">DÉCOUVERTE AUTOMATIQUE</span>
+<span class="en" lang="en">AUTOMATIC DISCOVERY</span>
+</span>
+</div>
+<div class="discovered-zones">
+<div class="tree-top">
+<strong>
+<span class="fr" lang="fr">Groupe Projets</span>
+<span class="en" lang="en">Projects group</span>
+</strong>
+<span id="zone-count">3 <span class="fr" lang="fr">zones</span>
+<span class="en" lang="en">zones</span>
+</span>
+</div>
+<div class="zone-pills">
+<span>atlas</span>
+<span>orbit</span>
+<span>studio</span>
+<span id="new-zone-pill" hidden>nova <i>NEW</i>
+</span>
+</div>
+</div>
+<div id="discovery-status" class="discovery-live" role="status">
+</div>
+</div>
+</div>
+<div class="config-builder" id="config">
+<div class="builder-heading">
+<div>
+<span class="eyebrow">
+<span class="fr" lang="fr">DE VOTRE CONVENTION À VOTRE CONFIGURATION</span>
+<span class="en" lang="en">FROM YOUR CONVENTION TO YOUR CONFIGURATION</span>
+</span>
+<h3>
+<span class="fr" lang="fr">Votre arborescence. Le bon TOML.</span>
+<span class="en" lang="en">Your directory layout. The right TOML.</span>
+</h3>
+</div>
+<span class="privacy-chip">
+<svg class="icon" aria-hidden="true">
+<use href="#i-lock">
+</use>
+</svg>
+<span class="fr" lang="fr">Calculé dans cet onglet</span>
+<span class="en" lang="en">Computed in this tab</span>
+</span>
+</div>
+<div class="builder-grid">
+<form id="config-form" novalidate>
+<label for="root-path">
+<span class="fr" lang="fr">Répertoire racine absolu</span>
+<span class="en" lang="en">Absolute root directory</span>
+</label>
+<input id="root-path" name="root" value="/repo" spellcheck="false" autocomplete="off" aria-describedby="config-error">
+<label for="path-pattern">
+<span class="fr" lang="fr">Convention sous ce répertoire</span>
+<span class="en" lang="en">Pattern below that directory</span>
+</label>
+<input id="path-pattern" name="pattern" value="{project}/ignoredbygit/exchange" spellcheck="false" autocomplete="off" aria-describedby="pattern-help config-error">
+<p class="input-help" id="pattern-help">
+<span class="fr" lang="fr">
+<code>{project}</code> représente un niveau de projet variable.</span>
+<span class="en" lang="en">
+<code>{project}</code> represents one variable project directory.</span>
+</p>
+<label for="project-name">
+<span class="fr" lang="fr">Nom de projet pour vérifier l’exemple</span>
+<span class="en" lang="en">Project name to check the example</span>
+</label>
+<input id="project-name" name="project" value="atlas" spellcheck="false" autocomplete="off" aria-describedby="config-error">
+<div id="config-error" class="config-error" role="status" hidden>
+</div>
+<div id="config-result" class="config-result">
+<span class="small-label">
+<span class="fr" lang="fr">ID DE ZONE CALCULÉ</span>
+<span class="en" lang="en">GENERATED ZONE ID</span>
+</span>
+<code id="generated-id">atlas-ignoredbygit-exchange</code>
+<span class="small-label">
+<span class="fr" lang="fr">RÉPERTOIRE ATTENDU</span>
+<span class="en" lang="en">EXPECTED DIRECTORY</span>
+</span>
+<code id="generated-path">/repo/atlas/ignoredbygit/exchange</code>
+</div>
+</form>
+<div class="config-output">
+<div class="config-output-head">
+<span>config.toml <small>
+<span class="fr" lang="fr">extrait à ajouter</span>
+<span class="en" lang="en">snippet to append</span>
+</small>
+</span>
+<button type="button" class="icon-button" id="copy-config" aria-label="Copy TOML" data-aria-label-fr="Copier le TOML" data-aria-label-en="Copy TOML">
+<svg class="icon" aria-hidden="true">
+<use href="#i-copy">
+</use>
+</svg>
+</button>
+</div>
+<pre>
+<code id="generated-config">
+</code>
+</pre>
+<button type="button" id="download-config" class="text-button">
+<svg class="icon" aria-hidden="true">
+<use href="#i-download">
+</use>
+</svg>
+<span class="fr" lang="fr">Télécharger l’extrait .toml</span>
+<span class="en" lang="en">Download the .toml snippet</span>
+</button>
+</div>
+</div>
+<details class="builder-details">
+<summary>
+<span class="fr" lang="fr">Les conditions à respecter</span>
+<span class="en" lang="en">Requirements to keep in mind</span>
+<svg class="icon" aria-hidden="true">
+<use href="#i-plus">
+</use>
+</svg>
+</summary>
+<p>
+<span class="fr" lang="fr">La collection découvre des répertoires existants, sans sous-répertoire, accessibles en lecture, écriture et traversée par le service. L’ID dérivé doit respecter <code>[a-z0-9][a-z0-9_-]{0,63}</code>, sans collision. <code>first-directory</code> utilise le premier répertoire, donc le nom du projet, comme libellé, sans exiger Git. Les groupes sont des vues, pas des permissions.</span>
+<span class="en" lang="en">The collection discovers existing directories with no subdirectories, readable, writable and traversable by the service. The derived ID must match <code>[a-z0-9][a-z0-9_-]{0,63}</code>, with no collisions. <code>first-directory</code> uses the first directory, the project name, as its label without requiring Git. Groups are views, not access permissions.</span>
+</p>
+<p>
+<span class="fr" lang="fr">Ce générateur est un outil de documentation dans cette page, pas une fonction du serveur. Il vérifie une convention simple, pas les permissions réelles. L’extrait ne configure ni le listener ni l’authentification. Ajoutez-le une seule fois avec un ID de collection inutilisé, puis lancez <code>pasteberth audit</code>. <code>retain = 100</code> est un choix d’exemple, pas la valeur par défaut de 10 ; la rétention peut supprimer d’anciens éléments.</span>
+<span class="en" lang="en">This generator is a documentation tool in this page, not a server feature. It checks a simple convention, not actual permissions. The snippet configures neither the listener nor authentication. Append it once with an unused collection ID, then run <code>pasteberth audit</code>. <code>retain = 100</code> is an example choice, not the default of 10; retention can delete older items.</span>
+</p>
+</details>
+</div>
+</div>
+</section>
+
+<section class="section wrap getting-started" id="start">
+<div>
+<div class="eyebrow">06 / <span class="fr" lang="fr">CHEZ VOUS, SUR VOTRE INFRASTRUCTURE</span>
+<span class="en" lang="en">ON YOUR OWN INFRASTRUCTURE</span>
+</div>
+<h2>
+<span class="fr" lang="fr">Un petit service.<br>
+<em>Une place durable.</em>
+</span>
+<span class="en" lang="en">A small service.<br>
+<em>A lasting place.</em>
+</span>
+</h2>
+<p>
+<span class="fr" lang="fr">Le serveur travaille là où vivent vos répertoires. Le navigateur n’a pas besoin d’un accès shell pour déposer ou récupérer les fichiers gérés.</span>
+<span class="en" lang="en">The server runs where your directories live. The browser needs no shell access to deposit or retrieve managed files.</span>
+</p>
+<div class="requirements">
+<span>Linux</span>
+<span>Python 3.11+</span>
+<span>
+<span class="fr" lang="fr">Aucune dépendance Python runtime tierce</span>
+<span class="en" lang="en">No third-party Python runtime dependency</span>
+</span>
+</div>
+<p class="muted">
+<span class="fr" lang="fr">Référence : runtime 2.1.21 de ce dépôt. La présence de code Windows ou macOS ne vaut pas validation native. Ce site ne certifie pas le backend.</span>
+<span class="en" lang="en">Reference: this repository’s 2.1.21 runtime. Windows or macOS code does not imply native validation. This site does not certify the backend.</span>
+</p>
+<a class="text-link" href="../GUIDE.md">
+<span class="fr" lang="fr">Lire le guide de déploiement</span>
+<span class="en" lang="en">Read the deployment guide</span>
+<svg class="icon" aria-hidden="true">
+<use href="#i-external">
+</use>
+</svg>
+</a>
+</div>
+<div class="start-panel">
+<div class="start-tabs" role="tablist" aria-label="Installation">
+<button type="button" role="tab" id="start-local" data-start="local" aria-selected="true" aria-controls="start-code-panel" tabindex="0">
+<span class="fr" lang="fr">Premier essai</span>
+<span class="en" lang="en">First local trial</span>
+</button>
+<button type="button" role="tab" id="start-configured" data-start="configured" aria-selected="false" aria-controls="start-code-panel" tabindex="-1">
+<span class="fr" lang="fr">Configurer le service</span>
+<span class="en" lang="en">Configure the service</span>
+</button>
+</div>
+<div id="start-code-panel" role="tabpanel" aria-labelledby="start-local" tabindex="0">
+<div class="code-label">
+<span>SHELL</span>
+<button type="button" class="icon-button copy-code" data-copy-target="start-code" aria-label="Copy code" data-aria-label-fr="Copier le code" data-aria-label-en="Copy code">
+<svg class="icon" aria-hidden="true">
+<use href="#i-copy">
+</use>
+</svg>
+</button>
+</div>
+<pre>
+<code id="start-code">git clone https://github.com/Fade78/pasteberth.git
+cd pasteberth
+./PasteBerth/pasteberth</code>
+</pre>
+<div class="start-instruction" id="start-instruction">
+<span class="fr" lang="fr">Sans configuration existante, ouvrez <code>http://127.0.0.1:8765</code>. Le mode minimal est local et sans authentification : ne l’exposez pas à un réseau ou à un proxy.</span>
+<span class="en" lang="en">With no existing configuration, open <code>http://127.0.0.1:8765</code>. The minimal mode is local and unauthenticated: do not expose it to a network or proxy.</span>
+</div>
+</div>
+</div>
+</section>
+
+<section class="section wrap faq-section">
+<div>
+<div class="eyebrow">
+<span class="fr" lang="fr">POUR BIEN LE SITUER</span>
+<span class="en" lang="en">A FEW USEFUL BOUNDARIES</span>
+</div>
+<h2>
+<span class="fr" lang="fr">Avant de<br>
+<em>l’adopter.</em>
+</span>
+<span class="en" lang="en">Before you<br>
+<em>make it yours.</em>
+</span>
+</h2>
+</div>
+<div class="faq-list">
+<details>
+<summary><span class="fr" lang="fr">Un petit parcours libre de relecture ?</span><span class="en" lang="en">A small, optional review workflow?</span><svg class="icon" aria-hidden="true"><use href="#i-plus"></use></svg></summary>
+<p><span class="fr" lang="fr">Par exemple : déposez un rapport dans une zone de préparation, ajoutez un commentaire « vérifier les totaux », puis copiez ou déplacez les fichiers vers une zone de relecture. Les participants choisissent librement leurs étapes et leurs conventions.</span><span class="en" lang="en">For example: put a report in a staging zone, add a “check the totals” comment, then copy or move the files into a review zone. Participants choose their own steps and conventions.</span></p>
+<p><span class="fr" lang="fr">Ce n’est qu’un usage des zones, commentaires et transferts existants : aucun processus imposé, statut d’approbation, rôle, ACL, messagerie ou notification. Un commentaire est une note modifiable sur un fichier, pas une conversation.</span><span class="en" lang="en">This only combines existing zones, comments and transfers: no enforced process, approval status, roles, ACLs, messaging or notifications. A comment is an editable note on a file, not a conversation.</span></p>
+</details>
+<details>
+<summary>
+<span class="fr" lang="fr">Faut-il travailler avec un agent ?</span>
+<span class="en" lang="en">Do I need to work with an agent?</span>
+<svg class="icon" aria-hidden="true">
+<use href="#i-plus">
+</use>
+</svg>
+</summary>
+<p>
+<span class="fr" lang="fr">Non. Vous pouvez l’utiliser seul, entre personnes, entre agents ou avec des scripts. Le produit organise des zones et des fichiers, pas des rôles humains ou logiciels.</span>
+<span class="en" lang="en">No. Use it on your own, between people, between agents or with scripts. The product organizes zones and files, not human or software roles.</span>
+</p>
+</details>
+<details>
+<summary>
+<span class="fr" lang="fr">Puis-je y déposer un PDF ou un Excel ?</span>
+<span class="en" lang="en">Can I drop a PDF or Excel file?</span>
+<svg class="icon" aria-hidden="true">
+<use href="#i-plus">
+</use>
+</svg>
+</summary>
+<p>
+<span class="fr" lang="fr">Oui, si les types de contenu et les limites configurés l’autorisent. Ils restent des fichiers à récupérer : Pasteberth n’est ni un éditeur Excel ni une visionneuse PDF. Les actions de recopie et de prévisualisation dépendent du type de contenu.</span>
+<span class="en" lang="en">Yes, when the configured content types and size limits allow it. They remain files to retrieve: Pasteberth is neither an Excel editor nor a PDF viewer. Clipboard and preview actions depend on the content type.</span>
+</p>
+</details>
+<details>
+<summary>
+<span class="fr" lang="fr">« Copy link » crée-t-il un lien public ?</span>
+<span class="en" lang="en">Does “Copy link” create a public URL?</span>
+<svg class="icon" aria-hidden="true">
+<use href="#i-plus">
+</use>
+</svg>
+</summary>
+<p>
+<span class="fr" lang="fr">Non. Il copie la référence filesystem renvoyée par le service, avec le préfixe et le format configurés. Le navigateur n’a pas besoin de pouvoir ouvrir ce chemin. Ce n’est pas un lien public de partage.</span>
+<span class="en" lang="en">No. It copies the filesystem reference returned by the service, with the configured prefix and format. The browser does not need to open that path. It is not a public sharing URL.</span>
+</p>
+</details>
+<details>
+<summary>
+<span class="fr" lang="fr">Les groupes isolent-ils les utilisateurs ?</span>
+<span class="en" lang="en">Do groups isolate users?</span>
+<svg class="icon" aria-hidden="true">
+<use href="#i-plus">
+</use>
+</svg>
+</summary>
+<p>
+<span class="fr" lang="fr">Non. Ce sont des sélections et des présentations de zones. Le service utilise une authentification partagée, pas des comptes avec des droits par personne.</span>
+<span class="en" lang="en">No. They select and present zones. The service uses shared authentication, not individual accounts with per-person permissions.</span>
+</p>
+</details>
+<details>
+<summary>
+<span class="fr" lang="fr">Est-ce une synchronisation ou une sauvegarde ?</span>
+<span class="en" lang="en">Is this synchronization or backup?</span>
+<svg class="icon" aria-hidden="true">
+<use href="#i-plus">
+</use>
+</svg>
+</summary>
+<p>
+<span class="fr" lang="fr">Non. Les zones sont de vrais répertoires du serveur, avec des fichiers et leurs sidecars JSON. Pasteberth ne synchronise pas des serveurs indépendants. La rétention peut supprimer d’anciens éléments gérés ; elle ne remplace pas une sauvegarde et n’est pas un quota appliqué en continu aux enregistrements locaux.</span>
+<span class="en" lang="en">No. Zones are real server directories containing files and their JSON sidecars. Pasteberth does not synchronize independent servers. Retention can remove older managed items; it is not a backup, nor a continuously enforced quota on local registrations.</span>
+</p>
+</details>
+<details>
+<summary>
+<span class="fr" lang="fr">Cette page installe-t-elle Pasteberth ?</span>
+<span class="en" lang="en">Does this page install Pasteberth?</span>
+<svg class="icon" aria-hidden="true">
+<use href="#i-plus">
+</use>
+</svg>
+</summary>
+<p>
+<span class="fr" lang="fr">Non. Le mini-site est statique et la démo s’exécute en mémoire dans votre navigateur. Pour conserver des fichiers et partager de vraies zones, déployez le service Pasteberth sur votre infrastructure.</span>
+<span class="en" lang="en">No. This is a static website and the demo runs in your browser’s memory. To persist files and share real zones, deploy the Pasteberth service on your infrastructure.</span>
+</p>
+</details>
+</div>
+</section>
+<section class="section wrap documentation-section" id="documentation" aria-labelledby="documentation-title">
+<div class="eyebrow"><span class="fr" lang="fr">ALLER PLUS LOIN</span><span class="en" lang="en">GO FURTHER</span></div>
+<h2 id="documentation-title"><span class="fr" lang="fr">Du premier essai<br><em>à votre installation.</em></span><span class="en" lang="en">From the first try<br><em>to your installation.</em></span></h2>
+<p><span class="fr" lang="fr">Liens directs vers les fichiers Markdown du dépôt, pas vers un portail HTML. GitHub les affiche ; un serveur statique peut afficher ou télécharger leur source. La documentation technique est en anglais.</span><span class="en" lang="en">Direct links to repository Markdown files, not an HTML portal. GitHub renders them; a static server may show or download their source. Technical documentation is in English.</span></p>
+<nav class="documentation-links" aria-label="Technical documentation" data-aria-label-fr="Documentation technique" data-aria-label-en="Technical documentation">
+<a href="../docs/using-pasteberth.md"><strong><span class="fr" lang="fr">Usages et recettes</span><span class="en" lang="en">Usage and recipes</span></strong><span>docs/using-pasteberth.md</span></a>
+<a href="../docs/provisioning.md"><strong><span class="fr" lang="fr">Provisionner vos projets</span><span class="en" lang="en">Provision your projects</span></strong><span>docs/provisioning.md</span></a>
+<a href="../GUIDE.md"><strong><span class="fr" lang="fr">Référence technique</span><span class="en" lang="en">Technical reference</span></strong><span>GUIDE.md</span></a>
+<a href="../docs/zone-collection-contract.md"><strong><span class="fr" lang="fr">Contrat des collections</span><span class="en" lang="en">Collection contract</span></strong><span>docs/zone-collection-contract.md</span></a>
+<a href="../CHANGELOG.md"><strong><span class="fr" lang="fr">Historique du produit</span><span class="en" lang="en">Product changelog</span></strong><span>CHANGELOG.md</span></a>
+<a href="README.md"><strong><span class="fr" lang="fr">Maintenir ce site</span><span class="en" lang="en">Maintain this site</span></strong><span>site/README.md</span></a>
+</nav>
+<p><a href="https://github.com/Fade78/pasteberth/blob/main/GUIDE.md">GitHub: GUIDE.md</a> · <a href="PROVENANCE.md">Provenance</a></p>
+</section>
+<section class="closing wrap">
+<div class="closing-mark">
+<img src="assets/product/favicon.svg" width="42" height="42" alt="">
+</div>
+<div>
+<div class="eyebrow">WEB · CLIPBOARD · FILESYSTEM · CLI · MCP</div>
+<h2>
+<span class="fr" lang="fr">Moins de manipulations.<br>
+<em>Plus de continuité.</em>
+</span>
+<span class="en" lang="en">Less moving things around.<br>
+<em>More moving forward.</em>
+</span>
+</h2>
+<p>
+<span class="fr" lang="fr">Donnez à vos fichiers un endroit où passer. Le reste vous appartient.</span>
+<span class="en" lang="en">Give your files a place to pass through. What happens next is up to you.</span>
+</p>
+</div>
+<a class="button" href="https://github.com/Fade78/pasteberth" target="_blank" rel="noopener noreferrer">
+<svg class="icon" aria-hidden="true">
+<use href="#i-github">
+</use>
+</svg>
+<span class="fr" lang="fr">Découvrir Pasteberth</span>
+<span class="en" lang="en">Explore Pasteberth</span>
+<svg class="icon" aria-hidden="true">
+<use href="#i-external">
+</use>
+</svg>
+</a>
+</section>
+</main>
+<footer class="wrap site-footer">
+<div class="footer-top">
+<a class="brand" href="#">
+<img src="assets/product/favicon.svg" width="28" height="28" alt="">pasteberth<span class="brand-dot">.</span>
+</a>
+<span>
+<span class="fr" lang="fr">Des fichiers ordinaires. Des passages plus simples.</span>
+<span class="en" lang="en">Ordinary files. Easier handoffs.</span>
+</span>
+<nav aria-label="Resources" data-aria-label-fr="Ressources" data-aria-label-en="Resources">
+<a href="https://github.com/Fade78/pasteberth" target="_blank" rel="noopener noreferrer">GitHub</a>
+<a href="../GUIDE.md">
+<span class="fr" lang="fr">Documentation</span>
+<span class="en" lang="en">Documentation</span>
+</a>
+<a href="https://github.com/Fade78/pasteberth/blob/main/CHANGELOG.md" target="_blank" rel="noopener noreferrer">Changelog</a>
+</nav>
+</div>
+<div class="footer-bottom">
+<span>
+<span class="fr" lang="fr">Aucune télémétrie. Aucune police ou ressource distante chargée.</span>
+<span class="en" lang="en">No telemetry. No remote fonts or assets loaded.</span>
+</span>
+<span>
+<span class="fr" lang="fr">Site 2.1 · démo du runtime 2.1.21 · captures historiques 2.1.18</span>
+<span class="en" lang="en">Site 2.1 · runtime 2.1.21 demo · historical 2.1.18 captures</span> · <a href="LICENSE-Pasteberth.txt">AGPL-3.0-or-later</a>
+</span>
+</div>
+</footer>
+<div id="toast" class="toast" role="status" hidden>
+</div>
+<dialog id="copy-dialog" aria-labelledby="copy-title">
+<div class="dialog-top">
+<h2 id="copy-title">
+<span class="fr" lang="fr">Copie manuelle</span>
+<span class="en" lang="en">Copy manually</span>
+</h2>
+<button type="button" class="icon-button close-dialog" aria-label="Close" data-aria-label-fr="Fermer" data-aria-label-en="Close">
+<svg class="icon" aria-hidden="true">
+<use href="#i-close">
+</use>
+</svg>
+</button>
+</div>
+<p>
+<span class="fr" lang="fr">Le navigateur n’a pas autorisé la copie automatique. Sélectionnez ce texte puis utilisez votre raccourci de copie.</span>
+<span class="en" lang="en">The browser did not allow automatic copying. Select this text and use your copy shortcut.</span>
+</p>
+<textarea id="copy-value" readonly rows="7">
+</textarea>
+<button type="button" class="button" id="select-copy">
+<span class="fr" lang="fr">Sélectionner le texte</span>
+<span class="en" lang="en">Select the text</span>
+</button>
+</dialog>
+<dialog id="image-dialog" aria-label="Screenshot" data-aria-label-fr="Capture d’écran" data-aria-label-en="Screenshot">
+<div class="dialog-top">
+<span>
+<span class="fr" lang="fr">Capture historique 2.1.18 · archive du 8 septembre 2026 · données fictives</span>
+<span class="en" lang="en">Historical 2.1.18 capture · archive dated 8 September 2026 · fictional data</span>
+</span>
+<button type="button" class="icon-button close-dialog" aria-label="Close" data-aria-label-fr="Fermer" data-aria-label-en="Close">
+<svg class="icon" aria-hidden="true">
+<use href="#i-close">
+</use>
+</svg>
+</button>
+</div>
+<img id="enlarged-image" alt="Enlarged Pasteberth screenshot" data-alt-fr="Capture agrandie de Pasteberth" data-alt-en="Enlarged Pasteberth screenshot">
+</dialog>
+<dialog id="demo-dialog" aria-labelledby="demo-dialog-title">
+<div class="dialog-top">
+<strong id="demo-dialog-title">Pasteberth / <span class="fr" lang="fr">Démo locale</span>
+<span class="en" lang="en">Local demo</span>
+</strong>
+<button type="button" class="icon-button close-dialog" aria-label="Close" data-aria-label-fr="Fermer" data-aria-label-en="Close">
+<svg class="icon" aria-hidden="true">
+<use href="#i-close">
+</use>
+</svg>
+</button>
+</div>
+<div id="demo-dialog-body">
+</div>
+</dialog>
+<noscript>
+<div class="noscript">
+<span class="fr" lang="fr">La présentation et les liens restent disponibles. Activez JavaScript pour la démo, le changement de langue et le générateur.</span>
+<span class="en" lang="en">The presentation and links remain available. Enable JavaScript for the demo, language switching and configuration generator.</span>
+</div>
+</noscript>
+<script src="assets/example-data.js">
+</script>
+<script src="assets/site.js">
+</script>
+</body>
+</html>

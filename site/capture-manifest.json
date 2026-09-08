@@ -1,0 +1,15 @@
+{
+  "status": "historical, not regenerated for runtime 2.1.20",
+  "archive_date": "2026-09-08",
+  "date_basis": "ZIP entry dates; exact original capture time was not independently established",
+  "site_archive": "work/exchange/pasteberth-v2.1.zip",
+  "site_archive_sha256": "c775a1bae9ade45089780bd1f1eb50d5eaa6872d9e09bb1943e29e651195414e",
+  "historical_runtime_display": "2.1.18",
+  "historical_product_archive_sha256_as_reported": "85db4fa66d04174b60c2f3b0d378e580e866b0d4511b8c11a980430ceb7565ed",
+  "method_as_reported": "Original frontend with actual loopback daemon responses relayed by Python into Chromium set_content; synthetic files and sidecars, not the memory demo adapter",
+  "captures": {
+    "assets/interface-focus.png": "8118effc08f120ecb9869b9b38f21ba6ee82abc12b562c7b2b3101bfb8415d55",
+    "assets/interface-overview.png": "c2d60408733a993c8c7e357da5cbcce4572b8ae99d9c30f453081dfc7fd1c1c9",
+    "assets/interface-selection.png": "f7deb839869360229ab02131cf070633117dbb63ae59683c216045cb1c2c25a1"
+  }
+}

@@ -1038,8 +1038,8 @@ test("copie, télécharge et supprime la sélection d'une zone", async ({ page }
 
 test("copie une sélection vers une autre zone depuis les actions accessibles", async ({ page }) => {
   await openApp(page);
-  const defaultZone = page.locator('[data-zone="default"]');
-  const secondary = page.locator('[data-zone="secondary"]');
+  const defaultZone = page.locator('.zone[data-zone="default"]');
+  const secondary = page.locator('.zone[data-zone="secondary"]');
   await defaultZone.getByRole("button", { name: "Select zone Default" }).click();
   await dispatchMultiDrop(page, '[data-zone="default"]');
   await expect(defaultZone.locator(".bulk-summary")).toHaveText("2 files selected");
@@ -1058,8 +1058,8 @@ test("copie une sélection vers une autre zone depuis les actions accessibles", 
 
 test("déplace une sélection par glisser-déposer interne", async ({ page }) => {
   await openApp(page);
-  const defaultZone = page.locator('[data-zone="default"]');
-  const secondary = page.locator('[data-zone="secondary"]');
+  const defaultZone = page.locator('.zone[data-zone="default"]');
+  const secondary = page.locator('.zone[data-zone="secondary"]');
   await defaultZone.getByRole("button", { name: "Select zone Default" }).click();
   await dispatchMultiDrop(page, '[data-zone="default"]');
   await expect(defaultZone.locator(".thumb-wrap")).toHaveCount(2);
@@ -1082,8 +1082,8 @@ test("déplace une sélection par glisser-déposer interne", async ({ page }) =>
 
 test("copie par glisser-déposer interne avec Ctrl", async ({ page }) => {
   await openApp(page);
-  const defaultZone = page.locator('[data-zone="default"]');
-  const secondary = page.locator('[data-zone="secondary"]');
+  const defaultZone = page.locator('.zone[data-zone="default"]');
+  const secondary = page.locator('.zone[data-zone="secondary"]');
   await defaultZone.getByRole("button", { name: "Select zone Default" }).click();
   await dispatchMultiDrop(page, '[data-zone="default"]');
   await expect(defaultZone.locator(".thumb-wrap")).toHaveCount(2);

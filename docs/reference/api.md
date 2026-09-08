@@ -1,0 +1,307 @@
+# HTTP API Reference
+
+[Documentation map](../../GUIDE.md).
+
+## HTTP API
+
+The browser API is same-origin and uses the session cookie. There is no CORS
+API or bearer-token API. Non-browser clients can use HTTP login and cookies.
+The supplied Web UI and the bundled HTTP client are implementation examples.
+
+### Routes
+
+The paths below are shown for a root deployment. When `url_prefix = "/paste"`,
+prepend `/paste` to every route, including `/login`, static assets, API paths,
+and previews. The prefix is a configured public path, not part of the browser
+`Origin` value.
+
+| Method | Path | Authentication | Purpose |
+|---|---|---|---|
+| `GET` | `/api/health` | public | Liveness probe. |
+| `GET` | `/api/zones` | session | Registry/group snapshot with separately read per-zone histories, counts, and busy status. |
+| `GET` | `/api/groups` | session | Group definitions and matching zone IDs. |
+| `POST` | `/api/drop/resolve` | loopback or session | Resolve a target directory to a configured zone ID. |
+| `GET` | `/api/zones/{id}/images` | session | Complete zone history, newest first. |
+| `POST` | `/api/zones/{id}/images` | session | Upload multipart content. |
+| `POST` | `/api/zones/{id}/images/regularize` | loopback or session | Regularize one CLI direct-drop staging file. |
+| `PATCH` | `/api/zones/{id}/images/{filename}/comment` | session | Replace the item's short Unicode comment. |
+| `DELETE` | `/api/zones/{id}/images/{filename}` | session | Delete one managed item. |
+| `POST` | `/api/zones/{id}/images/batch-delete` | session | Delete several managed items. |
+| `POST` | `/api/zones/{id}/images/archive` | session | Stream selected managed items as a ZIP. |
+| `POST` | `/api/transfers` | session | Copy or move managed items between two configured zones. |
+| `GET` | `/previews/{id}/{filename}` | session | Preview or download a managed item. |
+| `GET` | `/login` | public | Login page when authentication is enabled. |
+| `POST` | `/login` | public | Create a session from a password form, JSON body, or multipart form. |
+| `POST` | `/logout` | session | Revoke the current session. |
+
+The table describes an authentication-enabled deployment. If authentication
+is explicitly disabled, session checks accept requests without a cookie.
+"Public" does not bypass Host checks. Health returns `{"ok":true}` and is a
+liveness check, not proof that every zone is writable or recovery has succeeded.
+
+`/api/zones/{id}/images` and its `images` response key cover images, UTF-8 text,
+and opaque binary content. Each zone reports `busy`, copied-list formatting
+settings, whether ZIP download is enabled, its sidecar `retain` setting, and an
+effective `upload_limit_bytes` value. That value is the smaller of the hard
+upload limit and the bytes that can be accepted without crossing the configured
+free-space safeguards; raw disk capacity is not returned.
+
+The `POST /api/drop/resolve` endpoint accepts a target directory
+and returns its configured zone ID after static/collection and canonical-path
+resolution. It is used by the filesystem client when the client has no local
+configuration; it never authorizes an arbitrary target directory.
+Its JSON body must contain exactly `{"directory":"/absolute/path/to/zone"}`;
+success returns `{"zone":"configured-zone-id"}`. Like `regularize`, it accepts
+an authenticated session or an unauthenticated loopback peer.
+
+The `/api/zones` response takes one registry/group snapshot, then reads each
+zone's history separately. For an available zone, `count` is computed from its
+returned `images` array. This is not an atomic content snapshot across zones;
+another operation can change storage between the individual history reads.
+
+A busy or temporarily unavailable dynamic zone can return `busy: true`,
+`count: null`, and `images: []`. That array means history was unavailable, not
+that its files were deleted or the zone is empty. Preserve the previous display
+or show an unavailable state, then refresh. The per-zone history route remains
+available for direct refreshes and returns `423 zone_busy` when locked.
+
+The server account owns files it creates; configure `file_group` and matching
+directory group permissions when other system users must read them.
+Item payloads include `changed_at`, but the current implementation never
+populates it: it is always `null`. It is not a usable filesystem modification
+time or change-detection signal. `created_at` is the stored creation timestamp,
+not a substitute for filesystem modification time.
+
+The `regularize` route is used by a local `drop` when it has staged a
+`.pbdrop-<24 lowercase hex digits>.tmp` file in the configured zone. It accepts
+a JSON object containing `stage`, `filename`, `mime`, and `replace`; it is not a
+general filesystem-registration endpoint. Unauthenticated access is limited to a
+loopback peer, while an authenticated session may use the route remotely.
+
+The loopback exception uses the immediate TCP peer, not `X-Forwarded-For`.
+A loopback reverse proxy therefore qualifies even when its original client is
+remote. Do not describe these endpoints as remote-session-only behind such a
+proxy. Block them at a public proxy unless deliberately needed; ordinary
+uploads and remote `drop --zone ID` do not need them. `regularize` still requires
+the correctly named staging file in an active zone. Resolution alone does not
+require a staging file. See [proxy deployment](../deployment.md#foreground-operation).
+
+### Upload
+
+The multipart field is `image`. `preserve_name=1` retains a valid dropped
+filename; `replace=1` together with `preserve_name=1` explicitly authorizes
+replacing a coherent managed pair. Clients may send `creation_method` with one
+of `web_mouse_drop`, `web_paste`, `filesystem_drop`, or
+`filesystem_register`; browser requests default to `web_paste`, and filesystem
+clients should send `filesystem_drop`. This field records the client's declared
+path through the upload pipeline; it does not authenticate the source and must
+not be treated as a security boundary.
+
+#### Login and write example
+
+Run this in Bash with a real configured `default` zone and a local
+`capture.png`. It uses a private temporary cookie jar and reads the password
+without displaying it or placing it in curl's command-line arguments. For a
+root deployment use `base="$origin"`; for the configured `/paste` mount use
+the value shown. `Origin` never includes the mount path or a trailing slash.
+
+```bash
+origin='https://pasteberth.example.internal'
+base="$origin/paste"
+umask 077
+cookies=$(mktemp)
+trap 'rm -f "$cookies"' EXIT
+read -r -s -p 'Pasteberth password: ' password
+printf '\n' >&2
+printf '%s' "$password" | curl --fail-with-body --silent --show-error \
+  --cookie-jar "$cookies" --header "Origin: $origin" \
+  --data-urlencode 'password@-' "$base/login"
+unset password
+
+curl --fail-with-body --silent --show-error \
+  --cookie "$cookies" --header "Origin: $origin" \
+  --form 'image=@capture.png' --form 'preserve_name=1' \
+  --form 'creation_method=filesystem_drop' \
+  "$base/api/zones/default/images"
+```
+
+Login succeeds with `303` and `Set-Cookie`; following the redirect is not
+required. A new upload returns `201`. Check curl's exit status after each call;
+do not continue a script after a failed login. Use a trusted TLS certificate or
+an explicit CA trust configuration, not an unconditional `--insecure`.
+
+All request bodies need valid `Content-Length` framing. Transfer-encoded or
+ambiguous requests are rejected; chunked uploads are not supported.
+
+Without `preserve_name=1`, the server generates the filename. A managed name
+collision without `replace=1` returns `428 replacement_required`. A foreign
+file collision returns `409 storage_conflict`. Low free space returns
+`507 storage_low`.
+
+Unnamed uploads are deduplicated by SHA-256 within a zone. Identical managed
+content returns `200` with `duplicate: true` and the existing reference, without
+retention. Named uploads can contain identical bytes as distinct items. A
+successful upload can include `retention_deleted`; inspect it rather than
+assuming that an upload only adds a file.
+
+API errors use a JSON object with this shape:
+
+```json
+{
+  "error": {
+    "code": "replacement_required",
+    "message": "..."
+  }
+}
+```
+
+The main application error codes are:
+
+| Status | Codes | Meaning |
+|---:|---|---|
+| `400` | `invalid_request`, `empty_upload`, `invalid_filename`, `invalid_image`, `invalid_comment` | The request or content is invalid. |
+| `401` | `unauthorized` | A protected route has no valid session. |
+| `403` | `forbidden_host`, `forbidden_origin`, `zip_disabled` | The host/origin is not allowed or ZIP is disabled for the zone. |
+| `404` | `unknown_zone`, `unknown_image`, `not_found` | The requested resource does not exist. |
+| `405` | `method_not_allowed` | The HTTP method is not supported for the requested resource. |
+| `409` | `storage_conflict` | A foreign file or another storage conflict prevents the operation. |
+| `413` | `too_large` | The request or content exceeds a configured limit. |
+| `415` | `unsupported_media_type`, `unsupported_format` | The declared or detected content type is not supported. |
+| `423` | `zone_busy` | Another operation holds the zone lock; inspect `Retry-After`. |
+| `428` | `replacement_required` | Explicit replacement was required but not requested. |
+| `429` | `rate_limited` | Login attempts are temporarily throttled. |
+| `500` | `destination_error`, `internal` | The server could not complete a storage or internal operation. |
+| `503` | `retention_error`, `server_busy` | Retention failed after publication, or request admission capacity is exhausted. |
+| `507` | `storage_low` | The configured free-space reserve would be exceeded. |
+
+This is the application error shape, not a guarantee for proxy failures,
+malformed HTTP, or login pages. Header-budget failures can return `431`.
+An HTTP failure does not always mean no mutation: inspect history after
+`retention_error`, and inspect per-file transfer/batch results before retrying.
+
+The response includes fields such as:
+
+```json
+{
+  "id": "2026-08-25_01-22-31_a81c42.png",
+  "filename": "2026-08-25_01-22-31_a81c42.png",
+  "created_at": "2026-08-24T23:22:31.412000+00:00",
+  "width": 1920,
+  "height": 1080,
+  "size": 9283,
+  "format": "png",
+  "kind": "image",
+  "mime": "image/png",
+  "creation_method": "web_paste",
+  "replaced": false,
+  "comment": "Reference capture",
+  "changed_at": null,
+  "preview_url": "/previews/default/2026-08-25_01-22-31_a81c42.png",
+  "reference": "@/home/user/.local/share/pasteberth/storage/default/2026-08-25_01-22-31_a81c42.png"
+}
+```
+
+### Multiple operations
+
+Batch deletion accepts repeated `filename` form fields or a JSON `filenames`
+array. Archive accepts the same selection as a repeated form field or JSON
+array and streams the ZIP without a temporary server archive.
+
+Internal transfers accept exactly this JSON object:
+
+```json
+{
+  "mode": "copy",
+  "source_zone": "default",
+  "target_zone": "secondary",
+  "filenames": ["report.txt", "capture.png"]
+}
+```
+
+`mode` is `copy` or `move`. Only coherent managed data/sidecar pairs are
+eligible. Filenames are preserved; an existing data file, sidecar, foreign file,
+or active transaction at the target returns `409 storage_conflict` before any
+item is copied. Copy leaves the source unchanged. Move publishes each target
+pair before deleting its source. The response contains `transferred`, `items`,
+`retention_deleted`, and per-file `failed` entries; a failed entry may include
+`target_published: true` when the target was durable before a later step failed.
+The target zone's free-space reserve, retention, group, and permission rules
+apply. The two zone locks are acquired in a stable order, and a busy zone
+returns `423 zone_busy` with `Retry-After: 1`.
+
+Stored dates are preserved, but each publication protects its own filename
+during retention. With `retain = 1`, an older incoming item therefore survives
+its own retention pass and can evict a newer resident item. A later publication
+in the same batch can evict an earlier incoming item. Such an eviction is
+reported in `failed` with `code: "retention_error"` and
+`target_published: true`; that item is not reported as successfully transferred,
+and a move keeps its source. Inspect the final results and `retention_deleted`.
+
+Transfers are not an atomic batch or an atomic move between two filesystems;
+the locks coordinate Pasteberth operations, not external writers. See
+[transaction scope](storage.md#transaction-scope) and [retention](storage.md#retention).
+
+Long-running deletion and archive operations hold an exclusive zone lock.
+Conflicting requests return:
+
+```text
+423 zone_busy
+Retry-After: 1
+```
+
+Clients should refresh the zone and retry after the indicated delay.
+
+### Comments
+
+Comments are stored in the item's JSON sidecar and accept valid UTF-8 Unicode,
+including emoji and line breaks. They are limited to 280 Unicode characters and
+1 KiB of UTF-8 data; control, private-use, noncharacter, and invisible formatting
+code points are rejected. In the Web UI, `Enter` inserts a line break and
+`Ctrl`+`Enter` (or `Command`+`Enter`) saves the comment. Send a JSON object
+containing only `comment`:
+
+Using the cookie jar and URL variables from the upload example:
+
+```sh
+curl --fail-with-body --silent --show-error --cookie "$cookies" -X PATCH \
+  --header "Origin: $origin" --header 'Content-Type: application/json' \
+  --data '{"comment":"Reference capture"}' \
+  "$base/api/zones/default/images/capture.png/comment"
+```
+
+An empty string clears the comment. Existing sidecars without a `comment` field
+remain valid and are read as an empty comment. These are the default character
+and byte budgets; `[limits]` can change them. URL-encode filenames when placing
+them in route segments.
+
+### Login clients
+
+The login endpoint accepts a `password` field in a normal URL-encoded form,
+multipart form, or JSON object. A successful login returns a session cookie and
+redirects to the public root (`/` or the configured `url_prefix`). Failed
+attempts are delayed and rate limited. A client should
+preserve and resend the cookie for protected API calls, and should send the
+same-origin `Origin` or `Referer` on unsafe requests.
+
+The implementation checks a supplied Origin or Referer against the effective
+scheme and Host. Non-browser requests with neither header are accepted; this
+is not a mandatory-header API contract. An opaque `Origin: null` has separate
+Referer/`Sec-Fetch-Site` handling and must not be used as a substitute for the
+real origin. Examples send an explicit valid Origin so they also exercise the
+same-origin boundary.
+
+The cookie is `HttpOnly`, `SameSite=Lax`, scoped to the configured public path,
+and `Secure` for effective HTTPS. Sessions are held in memory, expire after
+`session_ttl_hours`, and disappear on server restart. Password rotation
+invalidates existing sessions: validation rejects tokens whose recorded
+password-file version no longer matches. No restart is required. The shared
+password provides no per-zone user authorization; groups only control
+presentation.
+
+To revoke the example session and remove its cookie jar:
+
+```sh
+curl --fail-with-body --silent --show-error --cookie "$cookies" \
+  --header "Origin: $origin" --request POST "$base/logout"
+rm -f "$cookies"
+```

@@ -3,6 +3,12 @@
 Status: implemented contract. This document describes `[[zone_collection]]`
 and the sidecar storage used by the zones it discovers.
 
+For a setup walkthrough, see [provisioning](provisioning.md) and the
+[project-zones recipe](recipes/project-zones.md). This page is the detailed
+discovery contract; shared zone settings are in the
+[configuration reference](reference/configuration.md), and managed-pair
+behavior is in the [storage reference](reference/storage.md).
+
 ## 1. Purpose
 
 A zone collection discovers existing directories and exposes them as Pasteberth
@@ -106,6 +112,9 @@ directory. Static zones and discovered zones share one registry.
 ## 3. Group selection
 
 Groups have only the selections `all`, `pattern`, and `other`.
+They select presentation, not authorization: all authenticated clients share
+access to the active zones. Collection membership and a POSIX `file_group`
+are not per-zone Web access-control lists.
 
 For `selection = "pattern"`, every expression is matched against both:
 
@@ -190,8 +199,18 @@ validates the pair before reads, replacements, renames, and deletions, and
 preserves foreign files. `register FILE` can explicitly create or refresh a
 sidecar without rewriting the data file.
 
-`retain` counts coherent managed pairs. Foreign files, orphan sidecars,
-malformed sidecars, and transaction remnants are preserved.
+Registration is filesystem-only. It validates against the CLI-selected
+configuration or defaults, does not require an active zone or contact the
+daemon, and does not run daemon retention or per-zone free-space checks. The
+pair is visible only if its parent is an active zone and the daemon can read
+it. See [`register`](reference/cli.md#filesystem-register) for the full contract.
+
+`retain` counts coherent managed pairs after operations that apply retention;
+it is not a continuous cap or byte quota. Foreign files, orphan sidecars, and
+malformed sidecars are preserved. Recognized transaction remnants are handled
+by recovery; unknown or ambiguous artifacts are preserved, not treated as
+ordinary retained items. Locks coordinate Pasteberth operations, not arbitrary
+external writers; see [transaction scope](reference/storage.md#transaction-scope).
 
 ## 7. Refresh and lifecycle
 
@@ -206,6 +225,12 @@ The service replaces the dynamic zone configuration, destinations, locks, and
 group memberships as one in-memory snapshot. A later request sees the current
 snapshot; a request already holding a zone lock completes against its current
 operation state.
+
+This is a registry snapshot, not an atomic snapshot of all zone contents.
+Overview requests read each history separately; a busy or temporarily
+unavailable dynamic zone can have `busy: true`, `count: null`, and `images: []`.
+Do not interpret that placeholder history as file deletion. See the
+[API response contract](reference/api.md#routes).
 
 Dynamic zones use the same API shape as static zones. They appear in
 `GET /api/zones`, and uploads, comments, deletes, previews, archives, and CLI

@@ -1,0 +1,280 @@
+{
+  "scope": "Loopback static HTTP, root and mounted paths; no Pasteberth daemon",
+  "tests": [
+    {
+      "name": " first visit defaults to EN",
+      "passed": true,
+      "detail": null
+    },
+    {
+      "name": " real Storage persists FR",
+      "passed": true,
+      "detail": null
+    },
+    {
+      "name": " real query overrides Storage",
+      "passed": true,
+      "detail": null
+    },
+    {
+      "name": " Markdown ../docs/using-pasteberth.md",
+      "passed": true,
+      "detail": {
+        "status": 200,
+        "content_type": "text/markdown"
+      }
+    },
+    {
+      "name": " Markdown ../docs/provisioning.md",
+      "passed": true,
+      "detail": {
+        "status": 200,
+        "content_type": "text/markdown"
+      }
+    },
+    {
+      "name": " Markdown ../GUIDE.md",
+      "passed": true,
+      "detail": {
+        "status": 200,
+        "content_type": "text/markdown"
+      }
+    },
+    {
+      "name": " Markdown ../docs/zone-collection-contract.md",
+      "passed": true,
+      "detail": {
+        "status": 200,
+        "content_type": "text/markdown"
+      }
+    },
+    {
+      "name": " Markdown ../CHANGELOG.md",
+      "passed": true,
+      "detail": {
+        "status": 200,
+        "content_type": "text/markdown"
+      }
+    },
+    {
+      "name": " Markdown README.md",
+      "passed": true,
+      "detail": {
+        "status": 200,
+        "content_type": "text/markdown"
+      }
+    },
+    {
+      "name": " Markdown PROVENANCE.md",
+      "passed": true,
+      "detail": {
+        "status": 200,
+        "content_type": "text/markdown"
+      }
+    },
+    {
+      "name": " modular demo uses current frontend",
+      "passed": true,
+      "detail": null
+    },
+    {
+      "name": " product UI stays English",
+      "passed": true,
+      "detail": null
+    },
+    {
+      "name": " HTTP layout 390",
+      "passed": true,
+      "detail": null
+    },
+    {
+      "name": " HTTP layout 1024",
+      "passed": true,
+      "detail": null
+    },
+    {
+      "name": " HTTP layout 1600",
+      "passed": true,
+      "detail": null
+    },
+    {
+      "name": " mobile documentation navigation",
+      "passed": true,
+      "detail": null
+    },
+    {
+      "name": "/mounted first visit defaults to EN",
+      "passed": true,
+      "detail": null
+    },
+    {
+      "name": "/mounted real Storage persists FR",
+      "passed": true,
+      "detail": null
+    },
+    {
+      "name": "/mounted real query overrides Storage",
+      "passed": true,
+      "detail": null
+    },
+    {
+      "name": "/mounted Markdown ../docs/using-pasteberth.md",
+      "passed": true,
+      "detail": {
+        "status": 200,
+        "content_type": "text/markdown"
+      }
+    },
+    {
+      "name": "/mounted Markdown ../docs/provisioning.md",
+      "passed": true,
+      "detail": {
+        "status": 200,
+        "content_type": "text/markdown"
+      }
+    },
+    {
+      "name": "/mounted Markdown ../GUIDE.md",
+      "passed": true,
+      "detail": {
+        "status": 200,
+        "content_type": "text/markdown"
+      }
+    },
+    {
+      "name": "/mounted Markdown ../docs/zone-collection-contract.md",
+      "passed": true,
+      "detail": {
+        "status": 200,
+        "content_type": "text/markdown"
+      }
+    },
+    {
+      "name": "/mounted Markdown ../CHANGELOG.md",
+      "passed": true,
+      "detail": {
+        "status": 200,
+        "content_type": "text/markdown"
+      }
+    },
+    {
+      "name": "/mounted Markdown README.md",
+      "passed": true,
+      "detail": {
+        "status": 200,
+        "content_type": "text/markdown"
+      }
+    },
+    {
+      "name": "/mounted Markdown PROVENANCE.md",
+      "passed": true,
+      "detail": {
+        "status": 200,
+        "content_type": "text/markdown"
+      }
+    },
+    {
+      "name": "/mounted modular demo uses current frontend",
+      "passed": true,
+      "detail": null
+    },
+    {
+      "name": "/mounted product UI stays English",
+      "passed": true,
+      "detail": null
+    },
+    {
+      "name": "/mounted HTTP layout 390",
+      "passed": true,
+      "detail": null
+    },
+    {
+      "name": "/mounted HTTP layout 1024",
+      "passed": true,
+      "detail": null
+    },
+    {
+      "name": "/mounted HTTP layout 1600",
+      "passed": true,
+      "detail": null
+    },
+    {
+      "name": "/mounted mobile documentation navigation",
+      "passed": true,
+      "detail": null
+    },
+    {
+      "name": "No JS errors over HTTP",
+      "passed": true,
+      "detail": []
+    },
+    {
+      "name": "No remote or daemon API requests",
+      "passed": true,
+      "detail": null
+    }
+  ],
+  "errors": [],
+  "requests": [
+    "http://127.0.0.1:34579/site/index.html",
+    "http://127.0.0.1:34579/site/assets/site.css",
+    "http://127.0.0.1:34579/site/assets/product/favicon.svg",
+    "http://127.0.0.1:34579/site/assets/interface-focus.png",
+    "http://127.0.0.1:34579/site/assets/examples/atlas.png",
+    "http://127.0.0.1:34579/site/assets/example-data.js",
+    "http://127.0.0.1:34579/site/assets/site.js",
+    "http://127.0.0.1:34579/site/assets/product/favicon.svg",
+    "http://127.0.0.1:34579/site/index.html",
+    "http://127.0.0.1:34579/site/assets/site.css",
+    "http://127.0.0.1:34579/site/assets/interface-focus.png",
+    "http://127.0.0.1:34579/site/assets/product/favicon.svg",
+    "http://127.0.0.1:34579/site/assets/examples/atlas.png",
+    "http://127.0.0.1:34579/site/assets/example-data.js",
+    "http://127.0.0.1:34579/site/assets/site.js",
+    "http://127.0.0.1:34579/site/assets/product/favicon.svg",
+    "http://127.0.0.1:34579/site/index.html?lang=en",
+    "http://127.0.0.1:34579/site/assets/site.css",
+    "http://127.0.0.1:34579/site/assets/interface-focus.png",
+    "http://127.0.0.1:34579/site/assets/examples/atlas.png",
+    "http://127.0.0.1:34579/site/assets/product/favicon.svg",
+    "http://127.0.0.1:34579/site/assets/example-data.js",
+    "http://127.0.0.1:34579/site/assets/site.js",
+    "http://127.0.0.1:34579/site/assets/product/favicon.svg",
+    "http://127.0.0.1:34579/site/demo.html",
+    "blob:http://127.0.0.1:34579/85b08d66-2e95-4be0-9879-c34528ffae01",
+    "http://127.0.0.1:34579/site/assets/product/favicon.svg",
+    "http://127.0.0.1:34579/mounted/site/index.html",
+    "http://127.0.0.1:34579/mounted/site/assets/site.css",
+    "http://127.0.0.1:34579/mounted/site/assets/product/favicon.svg",
+    "http://127.0.0.1:34579/mounted/site/assets/interface-focus.png",
+    "http://127.0.0.1:34579/mounted/site/assets/examples/atlas.png",
+    "http://127.0.0.1:34579/mounted/site/assets/example-data.js",
+    "http://127.0.0.1:34579/mounted/site/assets/site.js",
+    "http://127.0.0.1:34579/mounted/site/assets/product/favicon.svg",
+    "http://127.0.0.1:34579/mounted/site/index.html",
+    "http://127.0.0.1:34579/mounted/site/assets/site.css",
+    "http://127.0.0.1:34579/mounted/site/assets/interface-focus.png",
+    "http://127.0.0.1:34579/mounted/site/assets/product/favicon.svg",
+    "http://127.0.0.1:34579/mounted/site/assets/examples/atlas.png",
+    "http://127.0.0.1:34579/mounted/site/assets/example-data.js",
+    "http://127.0.0.1:34579/mounted/site/assets/site.js",
+    "http://127.0.0.1:34579/mounted/site/assets/product/favicon.svg",
+    "http://127.0.0.1:34579/mounted/site/index.html?lang=en",
+    "http://127.0.0.1:34579/mounted/site/assets/site.css",
+    "http://127.0.0.1:34579/mounted/site/assets/interface-focus.png",
+    "http://127.0.0.1:34579/mounted/site/assets/examples/atlas.png",
+    "http://127.0.0.1:34579/mounted/site/assets/product/favicon.svg",
+    "http://127.0.0.1:34579/mounted/site/assets/example-data.js",
+    "http://127.0.0.1:34579/mounted/site/assets/site.js",
+    "http://127.0.0.1:34579/mounted/site/assets/product/favicon.svg",
+    "http://127.0.0.1:34579/mounted/site/demo.html",
+    "blob:http://127.0.0.1:34579/cbc8f6cb-93da-4e75-b2e7-c8b35f1d9400"
+  ],
+  "browser": "145.0.7632.6",
+  "checked_at": "2026-09-08T23:29:05.240367+00:00",
+  "index_sha256": "4df9cca9b0317abaa1ade05621859bf21b6e4c4d59cb57efb0a865e9bda0c5ad",
+  "summary": {
+    "passed": 34,
+    "failed": 0
+  }
+}

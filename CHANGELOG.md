@@ -4,6 +4,27 @@ This file records user-visible changes to Pasteberth.
 
 ## [Unreleased]
 
+## [2.1.21] - 2026-09-09
+
+### Documentation And Examples
+
+- reorganize documentation around everyday use, multiple projects, tool
+  integration, provisioning, deployment, and operations, while preserving the
+  original guide anchors;
+- add recipes for personal staging, document exchange, registration, script and
+  agent output, current results, selections, and optional free-form zone workflows;
+- verify and clarify registration policy, retention ordering, partial transfers,
+  busy overviews, password rotation, HTML copying, and deployment trust boundaries;
+- integrate the English/French presentation site with the current runtime
+  frontend, a memory-only demo, a checked TOML generator, and explicitly labelled
+  historical screenshots;
+- add reproducible site checks, documentation example/link tests, and an
+  allowlisted static-site export procedure;
+- disambiguate zone selectors in browser transfer tests, including Firefox.
+
+This release changes documentation, examples, site tooling, and tests, not the
+server's application behavior or supported-platform guarantees.
+
 ## [2.1.20] - 2026-09-08
 
 ### Compatibility And Correctness

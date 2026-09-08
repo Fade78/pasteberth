@@ -1,0 +1,368 @@
+{
+  "scope": "Pasteberth website v2.1, Chromium local in-memory rendering",
+  "tests": [
+    {
+      "name": "Dynamic copy example matches guarded static HTML",
+      "passed": true
+    },
+    {
+      "name": "No horizontal overflow fr 320",
+      "passed": true,
+      "detail": {
+        "vw": 320,
+        "sw": 320
+      }
+    },
+    {
+      "name": "No horizontal overflow fr 360",
+      "passed": true,
+      "detail": {
+        "vw": 360,
+        "sw": 360
+      }
+    },
+    {
+      "name": "No horizontal overflow fr 390",
+      "passed": true,
+      "detail": {
+        "vw": 390,
+        "sw": 390
+      }
+    },
+    {
+      "name": "No horizontal overflow fr 430",
+      "passed": true,
+      "detail": {
+        "vw": 430,
+        "sw": 430
+      }
+    },
+    {
+      "name": "No horizontal overflow fr 768",
+      "passed": true,
+      "detail": {
+        "vw": 768,
+        "sw": 768
+      }
+    },
+    {
+      "name": "No horizontal overflow fr 1024",
+      "passed": true,
+      "detail": {
+        "vw": 1024,
+        "sw": 1024
+      }
+    },
+    {
+      "name": "No horizontal overflow fr 1280",
+      "passed": true,
+      "detail": {
+        "vw": 1280,
+        "sw": 1280
+      }
+    },
+    {
+      "name": "No horizontal overflow fr 1600",
+      "passed": true,
+      "detail": {
+        "vw": 1600,
+        "sw": 1600
+      }
+    },
+    {
+      "name": "No horizontal overflow fr 1920",
+      "passed": true,
+      "detail": {
+        "vw": 1920,
+        "sw": 1920
+      }
+    },
+    {
+      "name": "No horizontal overflow en 320",
+      "passed": true,
+      "detail": {
+        "vw": 320,
+        "sw": 320
+      }
+    },
+    {
+      "name": "No horizontal overflow en 360",
+      "passed": true,
+      "detail": {
+        "vw": 360,
+        "sw": 360
+      }
+    },
+    {
+      "name": "No horizontal overflow en 390",
+      "passed": true,
+      "detail": {
+        "vw": 390,
+        "sw": 390
+      }
+    },
+    {
+      "name": "No horizontal overflow en 430",
+      "passed": true,
+      "detail": {
+        "vw": 430,
+        "sw": 430
+      }
+    },
+    {
+      "name": "No horizontal overflow en 768",
+      "passed": true,
+      "detail": {
+        "vw": 768,
+        "sw": 768
+      }
+    },
+    {
+      "name": "No horizontal overflow en 1024",
+      "passed": true,
+      "detail": {
+        "vw": 1024,
+        "sw": 1024
+      }
+    },
+    {
+      "name": "No horizontal overflow en 1280",
+      "passed": true,
+      "detail": {
+        "vw": 1280,
+        "sw": 1280
+      }
+    },
+    {
+      "name": "No horizontal overflow en 1600",
+      "passed": true,
+      "detail": {
+        "vw": 1600,
+        "sw": 1600
+      }
+    },
+    {
+      "name": "No horizontal overflow en 1920",
+      "passed": true,
+      "detail": {
+        "vw": 1920,
+        "sw": 1920
+      }
+    },
+    {
+      "name": "French title",
+      "passed": true
+    },
+    {
+      "name": "English title",
+      "passed": true
+    },
+    {
+      "name": "Audience tab personal",
+      "passed": true
+    },
+    {
+      "name": "Audience tab documents",
+      "passed": true
+    },
+    {
+      "name": "Audience tab tools",
+      "passed": true
+    },
+    {
+      "name": "Audience tab projects",
+      "passed": true
+    },
+    {
+      "name": "Keyboard tab navigation",
+      "passed": true
+    },
+    {
+      "name": "Content copy availability image",
+      "passed": true
+    },
+    {
+      "name": "Content copy availability text",
+      "passed": true
+    },
+    {
+      "name": "Content copy availability pdf",
+      "passed": true
+    },
+    {
+      "name": "Content copy availability xlsx",
+      "passed": true
+    },
+    {
+      "name": "Download exact bytes atlas-report.pdf",
+      "passed": true
+    },
+    {
+      "name": "Download exact bytes atlas.xlsx",
+      "passed": true
+    },
+    {
+      "name": "Download exact bytes atlas.png",
+      "passed": true
+    },
+    {
+      "name": "Download exact bytes notes.txt",
+      "passed": true
+    },
+    {
+      "name": "Reference copied with exact fictional path",
+      "passed": true
+    },
+    {
+      "name": "Text content copy mocked success",
+      "passed": true
+    },
+    {
+      "name": "Clipboard refusal opens manual fallback",
+      "passed": true
+    },
+    {
+      "name": "Generator valid atlas",
+      "passed": true
+    },
+    {
+      "name": "Generator valid Project-A",
+      "passed": true
+    },
+    {
+      "name": "Generator valid unit_2",
+      "passed": true
+    },
+    {
+      "name": "Generator rejects relative/path",
+      "passed": true
+    },
+    {
+      "name": "Generator rejects /srv/../etc",
+      "passed": true
+    },
+    {
+      "name": "Generator rejects {project}/../exchange",
+      "passed": true
+    },
+    {
+      "name": "Generator rejects x/{project}",
+      "passed": true
+    },
+    {
+      "name": "Generator rejects project.v2",
+      "passed": true
+    },
+    {
+      "name": "Generator rejects <script>alert(1)</script>",
+      "passed": true
+    },
+    {
+      "name": "Generator rejects aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "passed": true
+    },
+    {
+      "name": "TOML snippet download",
+      "passed": true
+    },
+    {
+      "name": "Directory discovery simulation adds matching zone",
+      "passed": true
+    },
+    {
+      "name": "Discovery replay resets",
+      "passed": true
+    },
+    {
+      "name": "Publication method local",
+      "passed": true
+    },
+    {
+      "name": "Publication method cli",
+      "passed": true
+    },
+    {
+      "name": "Publication method mcp",
+      "passed": true
+    },
+    {
+      "name": "Installation tab local",
+      "passed": true
+    },
+    {
+      "name": "Installation tab configured",
+      "passed": true
+    },
+    {
+      "name": "Real frontend boots in local sandbox",
+      "passed": true
+    },
+    {
+      "name": "Demo overview has 3 zones",
+      "passed": true
+    },
+    {
+      "name": "Demo scene selects two items",
+      "passed": true
+    },
+    {
+      "name": "ZIP has exact selected PDF and Excel",
+      "passed": true
+    },
+    {
+      "name": "File picker upload is visible",
+      "passed": true
+    },
+    {
+      "name": "Upload preview is memory-only",
+      "passed": true
+    },
+    {
+      "name": "Comment is preserved in demo",
+      "passed": true
+    },
+    {
+      "name": "Demo inter-zone copy",
+      "passed": true
+    },
+    {
+      "name": "Reset discards added file",
+      "passed": true
+    },
+    {
+      "name": "Mobile menu opens",
+      "passed": true
+    },
+    {
+      "name": "Escape closes mobile menu",
+      "passed": true
+    },
+    {
+      "name": "Screenshot opens in dialog",
+      "passed": true
+    },
+    {
+      "name": "Escape closes screenshot",
+      "passed": true
+    },
+    {
+      "name": "No JavaScript errors",
+      "passed": true,
+      "detail": []
+    },
+    {
+      "name": "No external HTTP requests during interaction",
+      "passed": true,
+      "detail": []
+    }
+  ],
+  "errors": [],
+  "network_requests": [],
+  "browser": "145.0.7632.6",
+  "summary": {
+    "passed": 70,
+    "failed": 0
+  },
+  "checked_at": "2026-09-08T23:28:57.401842+00:00",
+  "preview_sha256": "2bd6a17f2e42dd62d2b2bd5b9aa752afc14bef21bf3b952ab27aced73a0edcf6"
+}
