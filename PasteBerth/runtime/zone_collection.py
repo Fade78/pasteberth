@@ -238,7 +238,12 @@ def _zone_from_candidate(
     zone_id = "-".join(relative.split("/")).lower()
     if not _ZONE_ID_RE.fullmatch(zone_id):
         return None
-    label = relative if rule.label_mode == "relative" else _git_label(path, relative)
+    if rule.label_mode == "first-directory":
+        label = relative.split("/", 1)[0]
+    elif rule.label_mode == "relative":
+        label = relative
+    else:
+        label = _git_label(path, relative)
     return ZoneConfig(
         id=zone_id,
         label=label,

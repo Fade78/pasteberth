@@ -160,6 +160,18 @@ class TestZoneCollectionDiscovery(unittest.TestCase):
 
         self.assertEqual(candidates[0].zone.color, "#243447")
 
+    def test_first_directory_label_uses_the_root_below_base(self):
+        candidate_path = self.tmp / "repo" / "nested" / "work" / "exchange"
+        candidate_path.mkdir(parents=True)
+        first_directory = replace(
+            rule(self.tmp, r"^[^/]+/nested/work/exchange$"),
+            label_mode="first-directory",
+        )
+
+        candidates, _ = discover_zone_collections((first_directory,))
+
+        self.assertEqual(candidates[0].zone.label, "repo")
+
     def test_candidate_can_belong_to_several_collections(self):
         candidate_path = self.tmp / "repo" / "work" / "exchange"
         candidate_path.mkdir(parents=True)
@@ -282,6 +294,22 @@ color = \"#304237\"
         )
 
         self.assertEqual(cfg.zone_collections[0].color, "#304237")
+
+    def test_collection_first_directory_label_mode_is_loaded(self):
+        cfg = self._load(
+            f"""listen_address = \"127.0.0.1\"
+allowed_hosts = [\"localhost\"]
+allow_unauthenticated_local = true
+
+[[zone_collection]]
+id = \"@repositories\"
+base_directory = {str(self.tmp)!r}
+pattern = \"^[^/]+$\"
+label_mode = \"first-directory\"
+"""
+        )
+
+        self.assertEqual(cfg.zone_collections[0].label_mode, "first-directory")
 
     def test_collection_est_sidecar_et_convertit_ancienne_limite(self):
         common = f"""listen_address = \"127.0.0.1\"

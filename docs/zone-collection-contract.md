@@ -75,7 +75,7 @@ layout = "tab"
 | `base_directory` | required | Absolute directory below which candidates are searched. It is resolved by the server and never created by discovery. |
 | `pattern` | required | Case-sensitive Python regular expression, applied with `fullmatch` to the normalized resolved relative path. The path separator is `/`. |
 | `max_depth` | `4` | Maximum number of path components below `base_directory`. |
-| `label_mode` | `git-or-relative` | Use the nearest Git worktree name when found, or always use the relative path with `relative`. |
+| `label_mode` | `git-or-relative` | Use the nearest Git worktree name when found; `relative` uses the full relative path and `first-directory` uses its first component. |
 | `storage_mode` | `sidecar` | `directory` is accepted only as a legacy value and normalized to sidecar storage with a warning. |
 | `retain` | `10` | Number of managed pairs retained after a successful upload. |
 | `max_items` | none | Legacy alias for `retain` when `retain` is absent. |
@@ -170,7 +170,9 @@ ID is invalid, too long, or collides with a static zone or another candidate.
 
 With `label_mode = "git-or-relative"`, Pasteberth uses the nearest ancestor
 containing a `.git` directory or worktree file. With `relative`, it always uses
-the normalized relative path. Labels may be duplicated; IDs may not.
+the normalized relative path. With `first-directory`, it uses the first
+component of that relative path, the root directly below `base_directory`.
+Labels may be duplicated; IDs may not.
 
 ## 6. Sidecar storage
 

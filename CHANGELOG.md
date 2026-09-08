@@ -13,7 +13,8 @@ This file records user-visible changes to Pasteberth.
 - reject target conflicts before a batch starts and report explicit per-file
   transfer outcomes;
 - keep Web UI zone polls responsive while dynamic collection discovery runs in a
-  background thread, and report discovery duration from `audit`.
+  background thread, report discovery duration from `audit`, and support
+  first-directory labels for collection zones.
 
 ## [2.1.18] - 2026-09-07
 

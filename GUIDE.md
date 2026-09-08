@@ -384,6 +384,10 @@ a group. A `selection = "pattern"` group can match that ID and selects every
 zone discovered by the collection. A configuration may use collections without
 any static `[[zones]]` entries.
 
+`label_mode` defaults to `"git-or-relative"`; `"relative"` uses the complete
+path below `base_directory`, while `"first-directory"` uses its first
+directory component as the zone label.
+
 Several collections may contain the same zone. Their zone behavior must agree;
 when retention, references, permissions, or another zone setting conflicts, the
 candidate is rejected and reported by `audit`.
