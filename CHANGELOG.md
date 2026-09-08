@@ -4,6 +4,17 @@ This file records user-visible changes to Pasteberth.
 
 ## [Unreleased]
 
+## [2.1.20] - 2026-09-08
+
+### Compatibility And Correctness
+
+- use the plain HTTP loopback URL when `drop` has no configuration or explicit
+  server URL;
+- complete modern MCP result metadata and report unsupported protocol versions
+  with the specified error data;
+- apply configured POSIX groups to direct-drop staging files;
+- resolve CLI zone-management commands through the service's live registry.
+
 ## [2.1.19] - 2026-09-08
 
 ### Internal Transfers

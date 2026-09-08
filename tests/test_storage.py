@@ -110,6 +110,19 @@ class TestSauvegarde(Base):
             self.assertEqual(path.stat().st_gid, os.getgid())
             self.assertEqual(stat.S_IMODE(path.stat().st_mode), 0o660)
 
+    def test_staging_direct_recoit_le_groupe_configure(self):
+        if platform_fs().backend_name != "posix" or grp is None:
+            self.skipTest("les groupes système sont une capacité POSIX")
+        group = grp.getgrgid(os.getgid()).gr_name
+        destination = LocalDestination(self.dir.parent / "staged", file_group=group)
+
+        stage_name = destination.stage_direct_drop(b"staged")
+        staged = destination.directory / stage_name
+        self.addCleanup(lambda: destination.discard_direct_drop(stage_name))
+
+        self.assertEqual(staged.stat().st_gid, os.getgid())
+        self.assertEqual(stat.S_IMODE(staged.stat().st_mode), 0o660)
+
     def test_noms_uniques_rapides(self):
         names = {s.filename for s in self.save(20)}
         self.assertEqual(len(names), 20)

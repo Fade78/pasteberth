@@ -223,11 +223,16 @@ def _command_path(raw: str) -> Path:
     return Path(os.path.abspath(os.path.expanduser(raw))).resolve()
 
 
-def _zone_for_directory(cfg, raw_directory: str):
+def _zone_for_directory(cfg, raw_directory: str, *, service: PasteService | None = None):
     try:
         directory = _command_path(raw_directory)
     except (OSError, ValueError) as exc:
         raise ConfigError(f"invalid zone directory: {raw_directory!r} ({exc})") from exc
+    if service is not None:
+        try:
+            return service.zone_for_directory(directory)
+        except ServiceError as exc:
+            raise ConfigError(str(exc)) from exc
     normalized = Path(os.path.normpath(str(directory)))
     zones = dict(cfg.zones)
     candidates, _diagnostics = discover_zone_collections(
@@ -280,7 +285,7 @@ def _cmd_rename(args: argparse.Namespace) -> int:
         return 2
     cfg, service = loaded
     try:
-        zone = _zone_for_directory(cfg, args.directory)
+        zone = _zone_for_directory(cfg, args.directory, service=service)
         item = service.rename(zone.id, args.source, args.target)
     except ConfigError as exc:
         print(f"pasteberth: configuration error\n  {exc}", file=sys.stderr)
@@ -298,7 +303,7 @@ def _cmd_delete(args: argparse.Namespace) -> int:
         return 2
     cfg, service = loaded
     try:
-        zone = _zone_for_directory(cfg, args.directory)
+        zone = _zone_for_directory(cfg, args.directory, service=service)
     except ConfigError as exc:
         print(f"pasteberth: configuration error\n  {exc}", file=sys.stderr)
         return 2
@@ -325,8 +330,8 @@ def _cmd_transfer(args: argparse.Namespace, mode: str) -> int:
         return 2
     cfg, service = loaded
     try:
-        source_zone = _zone_for_directory(cfg, args.source_directory)
-        target_zone = _zone_for_directory(cfg, args.target_directory)
+        source_zone = _zone_for_directory(cfg, args.source_directory, service=service)
+        target_zone = _zone_for_directory(cfg, args.target_directory, service=service)
         result = service.transfer(
             source_zone.id,
             target_zone.id,
@@ -359,7 +364,7 @@ def _cmd_move(args: argparse.Namespace) -> int:
 
 
 _DROP_ZONE_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
-_DEFAULT_DROP_SERVER_URL = "https://127.0.0.1:8765"
+_DEFAULT_DROP_SERVER_URL = "http://127.0.0.1:8765"
 
 
 def _drop_server_url(cfg, explicit: str | None) -> str:
@@ -586,6 +591,12 @@ def _cmd_drop(args: argparse.Namespace) -> int:
         if destination_directory is None and local_zone is not None:
             destination_directory = local_zone.directory
             create_directory = local_zone.create_directory
+        local_destination_zone = local_zone
+        if local_destination_zone is None and destination_directory is not None:
+            try:
+                local_destination_zone = _zone_for_directory(cfg, str(destination_directory))
+            except ConfigError:
+                pass
         if destination_directory is not None:
             try:
                 local_endpoint = is_loopback_address(client.host)
@@ -597,6 +608,11 @@ def _cmd_drop(args: argparse.Namespace) -> int:
                     create_directory=create_directory,
                     limits=cfg.limits,
                     max_image_pixels=cfg.max_image_pixels,
+                    file_group=(
+                        local_destination_zone.file_group
+                        if local_destination_zone is not None
+                        else None
+                    ),
                 )
         if zone_id is None:
             raise ClientError("server did not resolve a target zone")
@@ -1587,7 +1603,7 @@ def build_parser() -> argparse.ArgumentParser:
             "the source locally and asks the daemon to regularize it. Remote or\n"
             "unavailable local staging falls back to the HTTP API.\n\n"
             "The daemon URL comes from the configuration, or defaults to\n"
-            "https://127.0.0.1:8765 when no configuration is available.\n"
+            "http://127.0.0.1:8765 when no configuration is available.\n"
             "For a trusted self-signed HTTPS certificate, add --insecure; this\n"
             "disables certificate verification only.\n\n"
             "Examples:\n"

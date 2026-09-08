@@ -21,6 +21,8 @@ MODERN_PROTOCOL_VERSION = "2026-07-28"
 MODERN_PROTOCOL_META = "io.modelcontextprotocol/protocolVersion"
 SERVER_INFO_META = "io.modelcontextprotocol/serverInfo"
 DEFAULT_MAX_MESSAGE_BYTES = 64 * 1024 * 1024
+MODERN_DISCOVERY_TTL_MS = 3_600_000
+MODERN_TOOL_LIST_TTL_MS = 300_000
 _LEGACY_PROTOCOL_VERSIONS = (
     "2025-11-25",
     MCP_PROTOCOL_VERSION,
@@ -32,6 +34,14 @@ _SUPPORTED_PROTOCOL_VERSIONS = set(_LEGACY_PROTOCOL_VERSIONS)
 
 class McpToolError(Exception):
     """A user-facing validation or execution error from an MCP tool."""
+
+
+class UnsupportedProtocolVersionError(Exception):
+    """A modern MCP request declared a protocol version we do not support."""
+
+    def __init__(self, requested: object) -> None:
+        super().__init__(f"unsupported protocol version: {requested!r}")
+        self.requested = requested
 
 
 DROP_TOOL = {
@@ -166,6 +176,17 @@ class McpServer:
             result = self._dispatch(method, message.get("params"))
             if modern_version:
                 result = self._modern_result(result, method)
+        except UnsupportedProtocolVersionError as exc:
+            response = self._error(
+                request_id if has_id else None,
+                -32022,
+                "Unsupported protocol version",
+                data={
+                    "supported": [MODERN_PROTOCOL_VERSION],
+                    "requested": exc.requested,
+                },
+            )
+            return response if has_id else None
         except ValueError as exc:
             response = self._error(
                 request_id if has_id else None,
@@ -242,34 +263,36 @@ class McpServer:
 
     @staticmethod
     def _modern_request_version(message: dict[str, Any]) -> str | None:
-        if message.get("method") == "server/discover":
-            return MODERN_PROTOCOL_VERSION
+        method = message.get("method")
         params = message.get("params")
-        if not isinstance(params, dict):
+        if method == "server/discover":
+            if not isinstance(params, dict):
+                return MODERN_PROTOCOL_VERSION
+        elif not isinstance(params, dict):
             return None
         metadata = params.get("_meta")
-        if not isinstance(metadata, dict):
-            return None
-        version = metadata.get(MODERN_PROTOCOL_META)
-        if version is None:
-            return None
+        if not isinstance(metadata, dict) or MODERN_PROTOCOL_META not in metadata:
+            return MODERN_PROTOCOL_VERSION if method == "server/discover" else None
+        version = metadata[MODERN_PROTOCOL_META]
         if version != MODERN_PROTOCOL_VERSION:
-            raise ValueError(
-                f"unsupported protocol version: {version!r}; "
-                f"supported: {MODERN_PROTOCOL_VERSION!r}"
-            )
+            raise UnsupportedProtocolVersionError(version)
         return version
 
     def _modern_result(self, result: dict[str, Any], method: str) -> dict[str, Any]:
-        if method == "server/discover":
-            return result
         enriched = dict(result)
+        enriched.setdefault("resultType", "complete")
         metadata = dict(enriched.get("_meta") or {})
         metadata.setdefault(
             SERVER_INFO_META,
             {"name": self._server_name, "version": self._server_version},
         )
         enriched["_meta"] = metadata
+        if method == "server/discover":
+            enriched.setdefault("ttlMs", MODERN_DISCOVERY_TTL_MS)
+            enriched.setdefault("cacheScope", "public")
+        elif method == "tools/list":
+            enriched.setdefault("ttlMs", MODERN_TOOL_LIST_TTL_MS)
+            enriched.setdefault("cacheScope", "public")
         return enriched
 
     def _call_tool(self, params: object) -> dict[str, Any]:
@@ -304,12 +327,21 @@ class McpServer:
         }
 
     @staticmethod
-    def _error(request_id: object, code: int, message: str) -> dict[str, Any]:
-        return {
+    def _error(
+        request_id: object,
+        code: int,
+        message: str,
+        *,
+        data: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        error: dict[str, Any] = {
             "jsonrpc": "2.0",
             "id": request_id,
             "error": {"code": code, "message": message},
         }
+        if data is not None:
+            error["error"]["data"] = data
+        return error
 
 
 def run_stdio(

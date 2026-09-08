@@ -3012,7 +3012,7 @@ class LocalDestination(Destination):
                 file_handle = None
                 identity = None
                 try:
-                    file_handle = self._fs.create_exclusive(
+                    file_handle = self._create_file(
                         directory_fd,
                         name,
                         mode="wb",

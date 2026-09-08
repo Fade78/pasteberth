@@ -26,7 +26,7 @@ locations are under the XDG configuration and data directories.
 
 For multi-file filesystem drops, the client can omit its configuration when it
 shares the machine and target filesystem with the daemon. Without `--server`,
-it tries `https://127.0.0.1:8765`; the daemon resolves the supplied target
+it tries `http://127.0.0.1:8765`; the daemon resolves the supplied target
 against its configured static zones and `[[zone_collection]]` candidates. Use
 `--insecure` for the trusted self-signed local certificate, or pass an explicit
 `--server URL`. A one-file `drop FILE` is invalid because `drop` is always

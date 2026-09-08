@@ -1,7 +1,7 @@
 # Pasteberth Operator Guide
 
 This guide is the detailed reference for installing, configuring, operating,
-and integrating Pasteberth 2.1.19. The short project overview is in
+and integrating Pasteberth 2.1.20. The short project overview is in
 [`README.md`](README.md); user-visible release history is in
 [`CHANGELOG.md`](CHANGELOG.md).
 
@@ -83,14 +83,14 @@ contexts:
 
 ## 2. Requirements and Support
 
-The 2.1.19 implementation requires:
+The 2.1.20 implementation requires:
 
 - Python 3.11 or newer;
 - a local filesystem supported by the active platform backend;
 - a modern browser for the Web UI;
 - no third-party Python runtime dependency.
 
-Linux is the current official and tested server platform for v2.1.19. The
+Linux is the current official and tested server platform for v2.1.20. The
 Windows backend has broad Wine coverage, but native Windows/NTFS validation is
 still outstanding and macOS support is not implemented. Do not infer support
 for every network or exotic filesystem from the operating system name.
@@ -104,7 +104,7 @@ manual validation on the target desktop.
 
 ### 3.1 Deployable copy
 
-The supported v2.1.19 installation is the tracked `PasteBerth/` directory. It is
+The supported v2.1.20 installation is the tracked `PasteBerth/` directory. It is
 the complete code-only deployment unit: it needs no root access, installation
 script, Python package installation, or build step.
 
@@ -289,7 +289,7 @@ Each `[[zones]]` table defines one independent project area:
 |---|---:|---|
 | `id` | required | Lowercase API/UI identifier, up to 64 characters. |
 | `label` | `id` | Human-readable UI label. |
-| `type` | `local` | Only `local` is implemented in v2.1.19. |
+| `type` | `local` | Only `local` is implemented in v2.1.20. |
 | `directory` | required | Absolute path as seen by the server and the harness. |
 | `retain` | `10` | Number of managed items retained in the zone. |
 | `reference_prefix` | `@` | Text prepended to one returned reference. |
@@ -636,7 +636,7 @@ writable. It then asks the daemon to validate the staged data and create the
 managed data/sidecar pair. If direct staging is unavailable, it falls back to
 the HTTP API. `--server URL` overrides the URL from configuration; with no
 configuration, the default is
-`https://127.0.0.1:8765`. One or more regular source files are accepted, remain
+`http://127.0.0.1:8765`. One or more regular source files are accepted, remain
 unchanged, and produce one returned reference per successful upload. A file
 already present in the destination without a coherent sidecar remains foreign
 for normal uploads. `register` creates or refreshes only the sidecar after
@@ -1349,7 +1349,7 @@ restart the service.
 
 The next major platform goal is native Windows and macOS support with the same
 transaction and security guarantees. That work is intentionally separate from
-the v2.1.19 support matrix and must not be represented as already supported.
+the v2.1.20 support matrix and must not be represented as already supported.
 The repository contains opt-in `platform_windows` and `platform_macos` CI jobs;
 enable them only after registering native runners with
 `PASTEBERTH_NATIVE_WINDOWS_CI=1` or `PASTEBERTH_NATIVE_MACOS_CI=1`.

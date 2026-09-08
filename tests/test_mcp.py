@@ -127,7 +127,9 @@ class TestMcpProtocol(unittest.TestCase):
         discover = server.handle(
             {"jsonrpc": "2.0", "id": 1, "method": "server/discover", "params": {}}
         )
+        self.assertEqual(discover["result"]["resultType"], "complete")
         self.assertEqual(discover["result"]["supportedVersions"][0], "2026-07-28")
+        self.assertEqual(discover["result"]["cacheScope"], "public")
         self.assertIn("io.modelcontextprotocol/serverInfo", discover["result"]["_meta"])
 
         tools = server.handle(
@@ -138,6 +140,8 @@ class TestMcpProtocol(unittest.TestCase):
                 "params": {"_meta": {"io.modelcontextprotocol/protocolVersion": "2026-07-28"}},
             }
         )
+        self.assertEqual(tools["result"]["resultType"], "complete")
+        self.assertEqual(tools["result"]["cacheScope"], "public")
         self.assertIn("io.modelcontextprotocol/serverInfo", tools["result"]["_meta"])
 
         called = server.handle(
@@ -152,8 +156,27 @@ class TestMcpProtocol(unittest.TestCase):
                 },
             }
         )
+        self.assertEqual(called["result"]["resultType"], "complete")
         self.assertFalse(called["result"]["isError"])
         self.assertEqual(calls, [{"zone": "default", "items": []}])
+
+    def test_modern_request_rejects_an_unsupported_version(self):
+        response = McpServer(lambda _arguments: {}).handle(
+            {
+                "jsonrpc": "2.0",
+                "id": 4,
+                "method": "tools/list",
+                "params": {
+                    "_meta": {
+                        "io.modelcontextprotocol/protocolVersion": "1900-01-01"
+                    }
+                },
+            }
+        )
+
+        self.assertEqual(response["error"]["code"], -32022)
+        self.assertEqual(response["error"]["data"]["requested"], "1900-01-01")
+        self.assertEqual(response["error"]["data"]["supported"], ["2026-07-28"])
 
     def test_stdio_uses_utf8_bytes_and_rejects_oversized_messages(self):
         output = io.BytesIO()

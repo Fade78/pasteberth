@@ -116,12 +116,12 @@ class TestVersion(unittest.TestCase):
         self.assertIn("copy", proc.stdout)
         self.assertIn("move", proc.stdout)
 
-    def test_drop_sans_configuration_utilise_le_demon_https_par_defaut(self):
+    def test_drop_sans_configuration_utilise_le_demon_http_par_defaut(self):
         cfg = build_default_config()
 
         self.assertEqual(
             _drop_server_url(cfg, None),
-            "https://127.0.0.1:8765",
+            "http://127.0.0.1:8765",
         )
         self.assertEqual(
             _drop_server_url(cfg, "http://127.0.0.1:9876"),
@@ -1374,6 +1374,7 @@ retain = 2
         zone = _zone_for_directory(
             load_config(self.cfg),
             str(alias / "work" / "exchange"),
+            service=self.server.service,
         )
 
         self.assertEqual(zone.id, "project-work-exchange")

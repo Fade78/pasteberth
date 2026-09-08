@@ -605,8 +605,8 @@ class PasteService:
         with self._registry_lock:
             return len(self._zone_cfg)
 
-    def zone_id_for_directory(self, directory: str | Path) -> str:
-        """Resolve a client path against the daemon's configured zones."""
+    def zone_for_directory(self, directory: str | Path) -> ZoneConfig:
+        """Resolve a client path against the daemon's live zone registry."""
         try:
             target = Path(directory).expanduser().resolve()
         except (OSError, RuntimeError, ValueError) as exc:
@@ -622,11 +622,15 @@ class PasteService:
                 continue
             configured_key = os.path.normcase(os.path.normpath(str(configured)))
             if target_key == configured_key:
-                return zid
+                return zone
         raise ServiceError(
             "unknown_zone",
             f"target directory does not match any configured zone: {target}",
         )
+
+    def zone_id_for_directory(self, directory: str | Path) -> str:
+        """Resolve a client path to an ID in the live zone registry."""
+        return self.zone_for_directory(directory).id
 
     def _group_overview_from_registry(self) -> list[dict]:
         with self._registry_lock:

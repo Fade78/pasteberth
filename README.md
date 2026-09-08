@@ -72,7 +72,7 @@ data file untouched. The daemon discovers the pair on its next refresh.
 
 ## Quick Start
 
-The current public release is `2.1.19`. The documented v2.1.19 server runs on
+The current public release is `2.1.20`. The documented v2.1.20 server runs on
 Linux, requires Python 3.11 or newer, and has no third-party
 Python runtime dependency. A native Windows backend is included but has only
 been validated under Wine; macOS and native Windows remain outside the official
@@ -227,7 +227,7 @@ The source files remain unchanged. With a loopback server and a writable target,
 sidecar pair; otherwise it uploads through HTTP. The daemon performs the target
 zone resolution, including canonical symlink handling, so a client-side config
 is not required. Without a config or `--server`, the client tries
-`https://127.0.0.1:8765`. A one-file `drop FILE` invocation is invalid; use
+`http://127.0.0.1:8765`. A one-file `drop FILE` invocation is invalid; use
 `register FILE` for an existing regular file. `register` creates or refreshes
 only the sidecar, never rewrites, moves, or replaces the data file, and never
 contacts the daemon. The local command prints the absolute data-file path; the
@@ -290,7 +290,7 @@ template is [`PasteBerth/support/deploy/pasteberth.service`](PasteBerth/support/
 
 ## Support Status
 
-| Area | v2.1.19 status |
+| Area | v2.1.20 status |
 |---|---|
 | Python | 3.11 or newer |
 | Server | Linux, officially tested |
