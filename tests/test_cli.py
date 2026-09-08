@@ -96,7 +96,7 @@ class TestVersion(unittest.TestCase):
     def test_aide_expose_les_sous_commandes_courtes(self):
         proc = run_cli(["--help"])
         self.assertEqual(proc.returncode, 0)
-        for command in ("drop", "register", "mcp", "rename", "delete"):
+        for command in ("drop", "register", "mcp", "copy", "move", "rename", "delete"):
             self.assertIn(command, proc.stdout)
         for old_command in ("filesystem-drop", "filesystem-rename", "filesystem-delete"):
             self.assertNotIn(old_command, proc.stdout)
@@ -113,6 +113,8 @@ class TestVersion(unittest.TestCase):
         self.assertEqual(proc.returncode, 0, proc.stderr)
         self.assertIn("_pasteberth_complete()", proc.stdout)
         self.assertIn("complete -o bashdefault", proc.stdout)
+        self.assertIn("copy", proc.stdout)
+        self.assertIn("move", proc.stdout)
 
     def test_drop_sans_configuration_utilise_le_demon_https_par_defaut(self):
         cfg = build_default_config()
@@ -1202,6 +1204,89 @@ class TestFilesystemDrop(unittest.TestCase):
         self.assertIn("target already exists", renamed.stderr)
         self.assertTrue((self.zone / "report.txt").exists())
         self.assertEqual((self.zone / "target.txt").read_text(encoding="utf-8"), "foreign")
+
+
+class TestFilesystemTransfer(unittest.TestCase):
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.tmp = Path(self._tmp.name)
+        self.addCleanup(self._tmp.cleanup)
+        self.cfg = write_config(
+            self.tmp,
+            zones=[
+                {
+                    "id": "source",
+                    "label": "Source",
+                    "retain": 10,
+                    "directory": str(self.tmp / "source"),
+                },
+                {
+                    "id": "target",
+                    "label": "Target",
+                    "retain": 10,
+                    "directory": str(self.tmp / "target"),
+                },
+            ],
+        )
+        self.source = self.tmp / "source"
+        self.target = self.tmp / "target"
+        self.source.mkdir()
+        self.target.mkdir()
+
+    def _register(self, filename="report.txt", content="report"):
+        source = self.source / filename
+        source.write_text(content, encoding="utf-8")
+        proc = run_cli(["register", "--config", str(self.cfg), str(source)])
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        return source
+
+    def _run_transfer(self, mode, *files):
+        return run_cli(
+            [
+                mode,
+                "--config",
+                str(self.cfg),
+                str(self.source),
+                str(self.target),
+                *files,
+            ]
+        )
+
+    def test_copie_un_pair_gere_et_conserve_la_source(self):
+        source = self._register()
+
+        copied = self._run_transfer("copy", source.name)
+
+        self.assertEqual(copied.returncode, 0, copied.stderr)
+        self.assertIn("@", copied.stdout)
+        self.assertEqual(source.read_text(encoding="utf-8"), "report")
+        self.assertEqual((self.target / source.name).read_text(encoding="utf-8"), "report")
+        self.assertTrue((self.target / (source.name + ".json")).is_file())
+
+    def test_deplace_un_pair_et_supprime_la_source(self):
+        source = self._register()
+
+        moved = self._run_transfer("move", source.name)
+
+        self.assertEqual(moved.returncode, 0, moved.stderr)
+        self.assertFalse(source.exists())
+        self.assertFalse((self.source / (source.name + ".json")).exists())
+        self.assertEqual((self.target / source.name).read_text(encoding="utf-8"), "report")
+        self.assertTrue((self.target / (source.name + ".json")).is_file())
+
+    def test_copie_refuse_un_conflit_sans_effet_partiel(self):
+        source = self._register()
+        target = self.target / source.name
+        target.write_text("foreign", encoding="utf-8")
+
+        copied = self._run_transfer("copy", source.name)
+
+        self.assertEqual(copied.returncode, 1)
+        self.assertIn("target already exists", copied.stderr)
+        self.assertEqual(source.read_text(encoding="utf-8"), "report")
+        self.assertEqual(target.read_text(encoding="utf-8"), "foreign")
+        self.assertFalse((self.target / (source.name + ".json")).exists())
+
 
 class TestFilesystemDropZoneCollection(unittest.TestCase):
     def setUp(self):

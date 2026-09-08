@@ -467,7 +467,7 @@ structurally valid but undecodable file can therefore have a broken preview;
 the server never executes it. The default image budgets are `16,384 x 16,384`
 pixels, 25 MP, and 256 MiB of encoded input; all are operator-configurable.
 
-### 5.3 History and selection
+### 5.3 After a deposit: inspect and act
 
 The content index is the complete history for a zone, newest first. Click a
 thumbnail or history item to select it in the upper panel.
@@ -482,6 +482,20 @@ thumbnail or history item to select it in the upper panel.
   details;
 - `show_full_path = false` hides absolute references in the UI while preserving
   them in API responses and copy actions.
+
+For one selected item, the upper panel can copy its reference, preview or
+download its content, copy image or text content when applicable, edit its
+comment, or delete the managed pair. For several selected items, the panel
+offers the corresponding group actions: copy all references, download a ZIP,
+delete the selection, or copy or move the files to another configured zone.
+These actions preserve stored filenames and metadata; a conflicting target is
+rejected without replacing either side.
+
+Related post-deposit operations are available outside the browser. Use the
+filesystem commands in [section 6](#6-command-line-interface) to rename,
+delete, copy, or move managed pairs directly between configured zone
+directories. Use the HTTP routes in [section 11](#11-http-api) for comments,
+deletion, ZIP archives, and transfers from another client.
 
 Visible browsers poll for changes made by `drop` or another client
 every 10 seconds. A browser tab that was hidden refreshes when it becomes
@@ -648,7 +662,25 @@ supports modern `server/discover` and per-request metadata for protocol
 `2026-07-28`, while retaining the legacy `initialize` handshake through
 `2025-06-18`.
 
-### 6.7 Filesystem rename
+### 6.7 Filesystem copy and move
+
+```sh
+pasteberth copy [--config PATH] \
+  /absolute/path/to/source/zone /absolute/path/to/target/zone report.pdf capture.png
+pasteberth move [--config PATH] \
+  /absolute/path/to/source/zone /absolute/path/to/target/zone report.pdf
+```
+
+The two directories must be the exact configured directories of different
+zones. The filenames are basenames, not paths, and each name must identify a
+coherent managed data/sidecar pair in the source zone. `copy` leaves the
+source pair unchanged. `move` publishes the target pair before removing the
+source pair. Existing target data, sidecars, foreign files, and malformed
+sidecars are never replaced. A batch conflict is checked before any item is
+copied. Successful operations print target references; a partial operation
+prints an error and exits with code `1`.
+
+### 6.8 Filesystem rename
 
 ```sh
 pasteberth rename [--config PATH] \
@@ -659,7 +691,7 @@ The source and target are basenames inside the configured zone. The data file
 and its JSON sidecar are renamed transactionally. An existing target is never
 replaced.
 
-### 6.8 Filesystem delete
+### 6.9 Filesystem delete
 
 ```sh
 pasteberth delete [--config PATH] [--force] \
@@ -670,7 +702,7 @@ Only coherent managed pairs are deleted. `--force` permits deletion when the
 sidecar's recorded size is stale, but it does not make a foreign file or
 malformed sidecar eligible for deletion.
 
-### 6.9 Exit codes
+### 6.10 Exit codes
 
 Unless a parser error prevents command dispatch, the CLI uses these codes:
 

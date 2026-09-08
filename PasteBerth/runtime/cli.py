@@ -5,6 +5,8 @@
     pasteberth drop [--config PATH] [--server URL] [--zone ID] [--replace] [ZONE_DIRECTORY] FILE...
     pasteberth register [--config PATH] FILE
     pasteberth mcp  [--config PATH] [--server URL] [--insecure]
+    pasteberth copy [--config PATH] SOURCE_DIRECTORY TARGET_DIRECTORY FILE...
+    pasteberth move [--config PATH] SOURCE_DIRECTORY TARGET_DIRECTORY FILE...
     pasteberth rename [--config PATH] DIRECTORY SOURCE TARGET
     pasteberth delete [--config PATH] [--force] DIRECTORY FILE...
     pasteberth passwd  [--config PATH]
@@ -235,7 +237,7 @@ def _zone_for_directory(cfg, raw_directory: str):
         if normalized == Path(os.path.normpath(str(zone.directory.resolve()))):
             return zone
     raise ConfigError(
-        f"target directory does not match any configured zone: {directory}"
+        f"directory does not match any configured zone: {directory}"
     )
 
 
@@ -313,6 +315,45 @@ def _cmd_delete(args: argparse.Namespace) -> int:
             continue
         print(filename)
     return 1 if failures else 0
+
+
+def _cmd_transfer(args: argparse.Namespace, mode: str) -> int:
+    loaded = _load_command_service(args)
+    if loaded is None:
+        return 2
+    cfg, service = loaded
+    try:
+        source_zone = _zone_for_directory(cfg, args.source_directory)
+        target_zone = _zone_for_directory(cfg, args.target_directory)
+        result = service.transfer(
+            source_zone.id,
+            target_zone.id,
+            args.files,
+            mode=mode,
+        )
+    except ConfigError as exc:
+        print(f"pasteberth: configuration error\n  {exc}", file=sys.stderr)
+        return 2
+    except (OSError, ValueError, ServiceError) as exc:
+        print(f"pasteberth: {mode} failed: {exc}", file=sys.stderr)
+        return 1
+
+    for item in result["items"]:
+        print(item["reference"])
+    for failure in result["failed"]:
+        print(
+            f"pasteberth: cannot {mode} {failure['filename']!r}: {failure['message']}",
+            file=sys.stderr,
+        )
+    return 1 if result["failed"] else 0
+
+
+def _cmd_copy(args: argparse.Namespace) -> int:
+    return _cmd_transfer(args, "copy")
+
+
+def _cmd_move(args: argparse.Namespace) -> int:
+    return _cmd_transfer(args, "move")
 
 
 _DROP_ZONE_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
@@ -1634,6 +1675,31 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_mcp.add_argument("--config", default=argparse.SUPPRESS, help="path to config.toml")
     p_mcp.set_defaults(func=_cmd_mcp)
+
+    for transfer_mode, transfer_handler in (("copy", _cmd_copy), ("move", _cmd_move)):
+        p_transfer = sub.add_parser(
+            transfer_mode,
+            help=f"{transfer_mode} managed files between configured zones",
+        )
+        p_transfer.add_argument(
+            "source_directory",
+            help="exact directory of the configured source zone",
+        )
+        p_transfer.add_argument(
+            "target_directory",
+            help="exact directory of the configured target zone",
+        )
+        p_transfer.add_argument(
+            "files",
+            nargs="+",
+            help="managed names to transfer, without paths",
+        )
+        p_transfer.add_argument(
+            "--config",
+            default=argparse.SUPPRESS,
+            help="path to config.toml",
+        )
+        p_transfer.set_defaults(func=transfer_handler)
 
     p_rename = sub.add_parser(
         "rename",

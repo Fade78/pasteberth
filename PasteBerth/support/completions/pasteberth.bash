@@ -30,6 +30,8 @@ _pasteberth_complete() {
         drop
         register
         mcp
+        copy
+        move
         rename
         delete
         passwd
@@ -52,7 +54,7 @@ _pasteberth_complete() {
                 ;;
             --generate-config|--force|--version)
                 ;;
-            serve|drop|register|mcp|rename|delete|passwd|audit|completion)
+            serve|drop|register|mcp|copy|move|rename|delete|passwd|audit|completion)
                 command=${COMP_WORDS[i]}
                 command_index=$i
                 break
@@ -80,6 +82,10 @@ _pasteberth_complete() {
             ;;
         mcp)
             options=(-h --help --config --server --insecure)
+            values=()
+            ;;
+        copy|move)
+            options=(-h --help --config)
             values=()
             ;;
         rename)

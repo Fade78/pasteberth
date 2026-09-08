@@ -153,6 +153,8 @@ only, without `/paste`.
 - Expose the same `drop` vocabulary to local agents through the optional `mcp`
   stdio adapter.
 - Resolve dynamic zone directories from the CLI without editing configuration.
+- Copy or move managed files between configured zones with the filesystem CLI,
+  preserving their data and JSON sidecars.
 - Rename or delete managed files while keeping data and sidecars consistent.
 - Run behind an HTTPS reverse proxy or terminate TLS directly.
 
@@ -176,6 +178,28 @@ The buttons preserve filenames and metadata; a conflicting target name is reject
 without replacing either side. You can also drag an item or selection directly to
 another zone: a normal drag moves it, while holding `Ctrl` or `Command` copies it.
 Dragging a file from the operating system still uses the external upload path.
+
+### Operations after a deposit
+
+For one item, the browser can preview or download the content, copy its
+reference or content, edit its comment, and delete it. For a selection, it can
+copy all references, download a ZIP, delete the files, or copy or move them to
+another configured zone. The filesystem CLI provides managed-pair operations
+for terminal workflows:
+
+```sh
+pasteberth copy --config config.toml \
+  /srv/pasteberth/project-alpha /srv/pasteberth/archive report.pdf
+pasteberth move --config config.toml \
+  /srv/pasteberth/project-alpha /srv/pasteberth/archive screenshot.png
+pasteberth rename --config config.toml \
+  /srv/pasteberth/archive screenshot.png final.png
+pasteberth delete --config config.toml \
+  /srv/pasteberth/archive final.png
+```
+
+These commands accept configured zone directories and managed basenames. They
+preserve matching data/sidecar pairs and never replace foreign files.
 
 ![Pasteberth history with the local NEW indicator and item details](docs/images/pasteberth-new-files.png)
 

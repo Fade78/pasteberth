@@ -7,6 +7,7 @@ This file records user-visible changes to Pasteberth.
 ### Internal Transfers
 
 - copy or move one or more managed data/sidecar pairs between configured zones;
+- expose the same operations as the filesystem CLI's `copy` and `move` commands;
 - expose accessible Web UI buttons and internal drag-and-drop, while preserving
   the existing external file-drop upload path;
 - reject target conflicts before a batch starts and report explicit per-file
