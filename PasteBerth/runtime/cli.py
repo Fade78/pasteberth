@@ -1329,6 +1329,7 @@ def _audit_groups(cfg, candidates=None, zones=None) -> list[str]:
 
 def _cmd_audit(args: argparse.Namespace) -> int:
     config_path = find_config_path(_config_arg(args))
+    infos: list[str] = []
     errors: list[str] = []
     warnings: list[str] = []
     if config_path is None:
@@ -1414,8 +1415,15 @@ def _cmd_audit(args: argparse.Namespace) -> int:
             errors.append(
                 f"zone collection #{index}: file_group {rule.file_group!r} is unusable ({exc})"
             )
+    discovery_started = time.perf_counter()
     collection_candidates, collection_diagnostics = discover_zone_collections(
         cfg.zone_collections, cfg.zones
+    )
+    discovery_duration = time.perf_counter() - discovery_started
+    infos.append(
+        f"zone collection discovery: {discovery_duration:.3f}s "
+        f"({len(cfg.zone_collections)} rule(s), "
+        f"{len(collection_candidates)} candidate(s))"
     )
     warnings.extend(collection_diagnostics)
     per_rule_counts = [0] * len(cfg.zone_collections)
@@ -1455,6 +1463,8 @@ def _cmd_audit(args: argparse.Namespace) -> int:
         warnings.append(listener_warning)
     errors.extend(_audit_tls(cfg))
 
+    for message in infos:
+        print(f"INFO: {message}")
     for message in warnings:
         print(f"WARNING: {message}")
     for message in errors:

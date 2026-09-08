@@ -536,6 +536,32 @@ class TestConfigurationDepot(unittest.TestCase):
         )
         self.assertEqual(proc.returncode, 1)
         self.assertIn("default storage", proc.stdout)
+        self.assertRegex(
+            proc.stdout,
+            r"INFO: zone collection discovery: [0-9]+\.[0-9]{3}s \(0 rule\(s\), 0 candidate\(s\)",
+        )
+
+    def test_audit_mesure_la_decouverte_des_collections(self):
+        base = self.tmp / "projects"
+        exchange = base / "alpha" / "work" / "exchange"
+        exchange.mkdir(parents=True)
+        cfg = write_config(
+            self.tmp,
+            extra=(
+                "\n[[zone_collection]]\n"
+                "id = \"@repositories\"\n"
+                f"base_directory = {json.dumps(str(base))}\n"
+                "pattern = \"^[^/]+/work/exchange$\"\n"
+                "max_depth = 4\n"
+            ),
+        )
+
+        proc = run_cli(["audit", "--config", str(cfg)])
+
+        self.assertRegex(
+            proc.stdout,
+            r"INFO: zone collection discovery: [0-9]+\.[0-9]{3}s \(1 rule\(s\), 1 candidate\(s\)",
+        )
 
     def test_generation_par_defaut_ecrit_hors_du_bundle(self):
         config_home = self.tmp / "config-home"
