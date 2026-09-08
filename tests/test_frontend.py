@@ -273,6 +273,8 @@ class TestContratsFrontend(unittest.TestCase):
         self.assertIn("beginCopyAttempt", self.app_js)
         self.assertIn("copy-status", self.app_js)
         self.assertIn("copy-attention", self.style_css)
+        self.assertIn("#ff2d2d", self.style_css)
+        self.assertIn(".copy-status.error", self.style_css)
 
     def test_mode_compact(self):
         self.assertIn("@media (max-width: 600px)", self.style_css)
