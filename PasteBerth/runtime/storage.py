@@ -394,6 +394,9 @@ class Destination(ABC):
         register_existing: bool = False,
         sha256: str | None = None,
         creation_method: str | None = None,
+        comment: str = "",
+        created_at: datetime | None = None,
+        replaced: bool | None = None,
     ) -> StoredImage: ...
 
     @abstractmethod
@@ -3172,8 +3175,9 @@ class LocalDestination(Destination):
         comment: str = "",
         creation_method: str | None = None,
         replaced: bool = False,
+        created_at: datetime | None = None,
     ) -> tuple[StoredImage, dict]:
-        created_at = datetime.now(timezone.utc)
+        created_at = created_at or datetime.now(timezone.utc)
         if sha256 is None:
             sha256 = hashlib.sha256(data).hexdigest()
         if creation_method is not None and creation_method not in CREATION_METHODS:
@@ -3321,6 +3325,9 @@ class LocalDestination(Destination):
         register_existing: bool = False,
         sha256: str | None = None,
         creation_method: str | None = None,
+        comment: str = "",
+        created_at: datetime | None = None,
+        replaced: bool | None = None,
     ) -> StoredImage:
         meta_name = self._meta_name(filename)
         if filename in self._active_transaction_names(directory_fd):
@@ -3371,8 +3378,10 @@ class LocalDestination(Destination):
             info,
             filename,
             sha256,
+            comment=comment,
             creation_method=creation_method,
-            replaced=target_exists,
+            replaced=target_exists if replaced is None else replaced,
+            created_at=created_at,
         )
         data_temp = self._write_data_temp(directory_fd, data)
         data_temp_identity = self._entry_identity(directory_fd, data_temp)
@@ -3678,6 +3687,9 @@ class LocalDestination(Destination):
         register_existing: bool = False,
         sha256: str | None = None,
         creation_method: str | None = None,
+        comment: str = "",
+        created_at: datetime | None = None,
+        replaced: bool | None = None,
     ) -> StoredImage:
         self._ensure_dir()
         if filename is not None:
@@ -3693,6 +3705,9 @@ class LocalDestination(Destination):
                     register_existing=register_existing,
                     sha256=sha256,
                     creation_method=creation_method,
+                    comment=comment,
+                    created_at=created_at,
+                    replaced=replaced,
                 )
         ext = info.ext
         last_exc: Exception | None = None
@@ -3708,6 +3723,9 @@ class LocalDestination(Destination):
                         allow_replace=False,
                         sha256=sha256,
                         creation_method=creation_method,
+                        comment=comment,
+                        created_at=created_at,
+                        replaced=replaced,
                     )
                 except (StorageConflictError, ReplacementRequiredError) as exc:
                     # Generated names are retried on any occupied entry, just
@@ -3716,6 +3734,41 @@ class LocalDestination(Destination):
                     last_exc = exc
                     continue
         raise DestinationError(f"repeated filename-generation collision ({last_exc})")
+
+    def ensure_transfer_target_available(self, filename: str) -> None:
+        """Reject any existing target entry before a managed transfer starts."""
+        if not self._new_filename(filename):
+            raise DestinationError(f"invalid filename: {filename!r}")
+        with self._directory_fd() as directory_fd:
+            if filename in self._active_transaction_names(directory_fd):
+                raise StorageConflictError(
+                    f"transaction in progress for filename: {filename!r}"
+                )
+            if self._entry_exists(directory_fd, filename) or self._entry_exists(
+                directory_fd, self._meta_name(filename)
+            ):
+                raise StorageConflictError(f"target already exists: {filename!r}")
+
+    def save_managed(self, data: bytes, item: StoredImage) -> StoredImage:
+        """Publish a validated managed item without reclassifying its content."""
+        info = ContentInfo(
+            kind=item.kind,
+            ext=Path(item.filename).suffix or ".bin",
+            mime=item.mime,
+            width=item.width,
+            height=item.height,
+            fmt=item.fmt,
+        )
+        return self.save(
+            data,
+            info,
+            filename=item.filename,
+            sha256=item.sha256,
+            creation_method=item.creation_method,
+            comment=item.comment,
+            created_at=item.created_at,
+            replaced=item.replaced,
+        )
 
     def list(self) -> list[StoredImage]:
         self._ensure_dir()

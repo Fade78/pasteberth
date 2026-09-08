@@ -234,6 +234,34 @@ async function dispatchMultiDrop(page, selector) {
   }, ONE_PIXEL_PNG);
 }
 
+async function dispatchInternalDrag(page, sourceSelector, targetSelector, copy = false) {
+  await page.evaluate(({ sourceSelector, targetSelector, copy }) => {
+    const source = document.querySelector(sourceSelector);
+    const target = document.querySelector(targetSelector);
+    if (!source || !target) throw new Error("internal transfer elements not found");
+    const dataTransfer = new DataTransfer();
+    const dragStart = new DragEvent("dragstart", {
+      bubbles: true,
+      cancelable: true,
+      dataTransfer,
+    });
+    source.dispatchEvent(dragStart);
+    const sourceZone = source.closest(".zone").dataset.zone;
+    const filename = source.querySelector("img")?.alt;
+    dataTransfer.setData(
+      "application/x-pasteberth-transfer",
+      JSON.stringify({ source_zone: sourceZone, filenames: [filename] }),
+    );
+    const drop = new DragEvent("drop", {
+      bubbles: true,
+      cancelable: true,
+      dataTransfer,
+      ctrlKey: copy,
+    });
+    target.dispatchEvent(drop);
+  }, { sourceSelector, targetSelector, copy });
+}
+
 async function dispatchBinaryDrop(page, selector, name = "archive.zip") {
   await page.locator(selector).evaluate((element, name) => {
     const file = new File([new Uint8Array([0, 1, 2, 3])], name, {
@@ -1006,6 +1034,75 @@ test("copie, télécharge et supprime la sélection d'une zone", async ({ page }
   await defaultZone.getByRole("button", { name: "Delete 2 selected files" }).click();
   await deleteResponse;
   await expect(defaultZone.locator(".thumb-wrap")).toHaveCount(0);
+});
+
+test("copie une sélection vers une autre zone depuis les actions accessibles", async ({ page }) => {
+  await openApp(page);
+  const defaultZone = page.locator('[data-zone="default"]');
+  const secondary = page.locator('[data-zone="secondary"]');
+  await defaultZone.getByRole("button", { name: "Select zone Default" }).click();
+  await dispatchMultiDrop(page, '[data-zone="default"]');
+  await expect(defaultZone.locator(".bulk-summary")).toHaveText("2 files selected");
+  await expect(defaultZone).not.toHaveClass(/busy/);
+
+  await defaultZone.locator(".transfer-target").selectOption({ label: "Secondary" });
+  const transferResponse = page.waitForResponse(response => (
+    response.url().includes("/api/transfers") && response.status() === 200
+  ));
+  await defaultZone.getByRole("button", { name: "Copy 2 selected files" }).click();
+  await transferResponse;
+  await expect(secondary.locator(".thumb-wrap")).toHaveCount(2);
+  await expect(defaultZone.locator(".thumb-wrap")).toHaveCount(2);
+  await expect(page.locator("#toast")).toContainText("2 files copied to Secondary");
+});
+
+test("déplace une sélection par glisser-déposer interne", async ({ page }) => {
+  await openApp(page);
+  const defaultZone = page.locator('[data-zone="default"]');
+  const secondary = page.locator('[data-zone="secondary"]');
+  await defaultZone.getByRole("button", { name: "Select zone Default" }).click();
+  await dispatchMultiDrop(page, '[data-zone="default"]');
+  await expect(defaultZone.locator(".thumb-wrap")).toHaveCount(2);
+  await expect(defaultZone).not.toHaveClass(/busy/);
+  await defaultZone.locator(".thumb-wrap").first().click();
+
+  const transferResponse = page.waitForResponse(response => (
+    response.url().includes("/api/transfers") && response.status() === 200
+  ));
+  await dispatchInternalDrag(
+    page,
+    '[data-zone="default"] .thumb-wrap',
+    '[data-zone="secondary"]',
+  );
+  await transferResponse;
+  await expect(defaultZone.locator(".thumb-wrap")).toHaveCount(1);
+  await expect(secondary.locator(".thumb-wrap")).toHaveCount(1);
+  await expect(page.locator("#toast")).toContainText("1 file moved to Secondary");
+});
+
+test("copie par glisser-déposer interne avec Ctrl", async ({ page }) => {
+  await openApp(page);
+  const defaultZone = page.locator('[data-zone="default"]');
+  const secondary = page.locator('[data-zone="secondary"]');
+  await defaultZone.getByRole("button", { name: "Select zone Default" }).click();
+  await dispatchMultiDrop(page, '[data-zone="default"]');
+  await expect(defaultZone.locator(".thumb-wrap")).toHaveCount(2);
+  await expect(defaultZone).not.toHaveClass(/busy/);
+  await defaultZone.locator(".thumb-wrap").first().click();
+
+  const transferResponse = page.waitForResponse(response => (
+    response.url().includes("/api/transfers") && response.status() === 200
+  ));
+  await dispatchInternalDrag(
+    page,
+    '[data-zone="default"] .thumb-wrap',
+    '[data-zone="secondary"]',
+    true,
+  );
+  await transferResponse;
+  await expect(defaultZone.locator(".thumb-wrap")).toHaveCount(2);
+  await expect(secondary.locator(".thumb-wrap")).toHaveCount(1);
+  await expect(page.locator("#toast")).toContainText("1 file copied to Secondary");
 });
 
 test("réessaie une preview temporairement indisponible", async ({ page }) => {

@@ -2264,6 +2264,103 @@ class TestFuiteSecret(Base):
         self.assertTrue(content.startswith("scrypt$"))
 
 
+class TestTransferHttp(Base):
+    def _upload_named(self, zone: str, filename: str, data: bytes) -> dict:
+        body, content_type = build_multipart(
+            filename=filename,
+            data=data,
+            content_type="text/plain",
+            extra_fields={"preserve_name": "1"},
+        )
+        status, _, response = self.req(
+            "POST",
+            f"/api/zones/{zone}/images",
+            body=body,
+            headers={"Content-Type": content_type},
+        )
+        self.assertEqual(status, 201)
+        return json_of(response)
+
+    def test_copie_un_batch_entre_zones(self):
+        self._upload_named("default", "first.txt", b"first")
+        self._upload_named("default", "second.txt", b"second")
+
+        status, _, response = self.req(
+            "POST",
+            "/api/transfers",
+            body=json.dumps(
+                {
+                    "mode": "copy",
+                    "source_zone": "default",
+                    "target_zone": "secondary",
+                    "filenames": ["first.txt", "second.txt"],
+                }
+            ).encode(),
+            headers={"Content-Type": "application/json"},
+        )
+
+        self.assertEqual(status, 200)
+        result = json_of(response)
+        self.assertEqual(result["transferred"], ["first.txt", "second.txt"])
+        self.assertEqual(result["failed"], [])
+        status, _, response = self.req("GET", "/api/zones")
+        zones = {zone["id"]: zone for zone in json_of(response)["zones"]}
+        self.assertEqual(
+            {item["filename"] for item in zones["secondary"]["images"]},
+            {"first.txt", "second.txt"},
+        )
+
+    def test_move_conflict_reste_sans_effet_partiel(self):
+        self._upload_named("default", "first.txt", b"first")
+        self._upload_named("default", "second.txt", b"second")
+        self._upload_named("secondary", "second.txt", b"existing")
+
+        status, _, response = self.req(
+            "POST",
+            "/api/transfers",
+            body=json.dumps(
+                {
+                    "mode": "move",
+                    "source_zone": "default",
+                    "target_zone": "secondary",
+                    "filenames": ["first.txt", "second.txt"],
+                }
+            ).encode(),
+            headers={"Content-Type": "application/json"},
+        )
+
+        self.assertEqual(status, 409)
+        self.assertEqual(json_of(response)["error"]["code"], "storage_conflict")
+        status, _, response = self.req("GET", "/api/zones/default/images")
+        self.assertEqual(
+            {item["filename"] for item in json_of(response)["images"]},
+            {"first.txt", "second.txt"},
+        )
+        status, _, response = self.req("GET", "/api/zones/secondary/images")
+        self.assertEqual(
+            {item["filename"] for item in json_of(response)["images"]},
+            {"second.txt"},
+        )
+
+    def test_transfer_rejette_un_payload_invalide(self):
+        status, _, response = self.req(
+            "POST",
+            "/api/transfers",
+            body=json.dumps(
+                {
+                    "mode": "clone",
+                    "source_zone": "default",
+                    "target_zone": "secondary",
+                    "filenames": ["report.txt"],
+                }
+            ).encode(),
+            headers={"Content-Type": "application/json"},
+        )
+
+        self.assertEqual(status, 400)
+        self.assertEqual(json_of(response)["error"]["code"], "invalid_request")
+
+
 class TestMethodesInterdites(Base):
     def test_put_delete_options(self):
         for method in ("PUT", "DELETE", "OPTIONS"):

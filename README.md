@@ -171,6 +171,12 @@ sizes, and stored dates, then provides group actions instead. In a tab-layout gr
 `Shift`-click selects a contiguous range of zones and `Ctrl`/`Command`-click
 adds or removes zones; Group options can show or hide the left zone column.
 
+Select one or more managed items to copy or move them to another configured zone.
+The buttons preserve filenames and metadata; a conflicting target name is rejected
+without replacing either side. You can also drag an item or selection directly to
+another zone: a normal drag moves it, while holding `Ctrl` or `Command` copies it.
+Dragging a file from the operating system still uses the external upload path.
+
 ![Pasteberth history with the local NEW indicator and item details](docs/images/pasteberth-new-files.png)
 
 The `show_full_path` configuration option controls whether absolute references

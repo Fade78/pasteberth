@@ -12,6 +12,7 @@
 (() => {
   const URL_PREFIX = document.body.dataset.urlPrefix || "";
   const REFRESH_INTERVAL_MS = 10_000;
+  const INTERNAL_TRANSFER_MIME = "application/x-pasteberth-transfer";
 
   function appPath(path) {
     return `${URL_PREFIX}${path}`;
@@ -953,6 +954,65 @@
     }
   }
 
+  async function transferSelected(sourceZone, targetZoneId, items, mode) {
+    const targetZone = state.zones.find(zone => zone.id === targetZoneId);
+    if (!targetZone || targetZone.id === sourceZone.id || !items.length) return;
+    if (
+      sourceZone.busy
+      || targetZone.busy
+      || state.batchBusyZoneIds.has(sourceZone.id)
+      || state.batchBusyZoneIds.has(targetZone.id)
+    ) {
+      toast("One of these zones is busy; try again shortly", "error");
+      return;
+    }
+    state.batchBusyZoneIds.add(sourceZone.id);
+    state.batchBusyZoneIds.add(targetZone.id);
+    renderAll();
+    try {
+      const result = await apiWithZoneRetry("/api/transfers", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          mode,
+          source_zone: sourceZone.id,
+          target_zone: targetZone.id,
+          filenames: items.map(item => item.filename),
+        }),
+      });
+      await refresh();
+      if (mode === "move") {
+        state.selectedItemsByZone[sourceZone.id] = new Set();
+        state.selectionAnchorByZone[sourceZone.id] = null;
+      }
+      const transferred = Array.isArray(result.transferred) ? result.transferred : [];
+      const failed = Array.isArray(result.failed) ? result.failed : [];
+      const verb = mode === "copy" ? "copied" : "moved";
+      const itemLabel = transferred.length === 1 ? "file" : "files";
+      const retentionWarning = retentionWarningMessage(
+        Array.isArray(result.retention_deleted) ? result.retention_deleted.length : 0,
+      );
+      const suffix = retentionWarning ? `; ${retentionWarning}` : "";
+      if (failed.length) {
+        toast(
+          `${transferred.length} ${itemLabel} ${verb} to ${targetZone.label}, ${failed.length} failed${suffix}`,
+          "error",
+        );
+      } else {
+        toast(
+          `${transferred.length} ${itemLabel} ${verb} to ${targetZone.label}${suffix}`,
+          retentionWarning ? "warning" : "info",
+        );
+      }
+    } catch (err) {
+      toast(err.message, "error");
+    } finally {
+      state.batchBusyZoneIds.delete(sourceZone.id);
+      state.batchBusyZoneIds.delete(targetZone.id);
+      renderAll();
+    }
+  }
+
   async function apiWithZoneRetry(path, options, attempts = 3) {
     for (let attempt = 0; ; attempt += 1) {
       try {
@@ -965,37 +1025,85 @@
     }
   }
 
+  function renderTransferControls(zone, items) {
+    if (!items.length) return null;
+    const wrap = document.createElement("div");
+    wrap.className = "transfer-actions";
+    const target = document.createElement("select");
+    target.className = "transfer-target";
+    target.setAttribute("aria-label", `Destination for ${items.length} selected files`);
+    const placeholder = document.createElement("option");
+    placeholder.value = "";
+    placeholder.textContent = "Choose destination";
+    target.appendChild(placeholder);
+    const destinations = state.zones.filter(candidate => candidate.id !== zone.id);
+    for (const destination of destinations) {
+      const option = document.createElement("option");
+      option.value = destination.id;
+      option.textContent = destination.label;
+      target.appendChild(option);
+    }
+    const busy = zone.busy || state.batchBusyZoneIds.has(zone.id);
+    const run = mode => {
+      if (!target.value) {
+        target.focus();
+        toast("Choose a destination zone first", "error");
+        return;
+      }
+      transferSelected(zone, target.value, items, mode);
+    };
+    const move = document.createElement("button");
+    move.type = "button";
+    move.className = "transfer-btn move-btn";
+    move.textContent = "Move";
+    move.setAttribute("aria-label", `Move ${items.length} selected files`);
+    move.disabled = busy || !destinations.length;
+    move.addEventListener("click", () => run("move"));
+    const copy = document.createElement("button");
+    copy.type = "button";
+    copy.className = "transfer-btn copy-transfer-btn";
+    copy.textContent = "Copy";
+    copy.setAttribute("aria-label", `Copy ${items.length} selected files`);
+    copy.disabled = busy || !destinations.length;
+    copy.addEventListener("click", () => run("copy"));
+    wrap.append(target, move, copy);
+    return wrap;
+  }
+
   function renderBulkActions(zone) {
     const items = selectedItems(zone);
-    if (items.length < 2) return null;
+    if (!items.length) return null;
     const actions = document.createElement("div");
     actions.className = "bulk-actions";
     actions.setAttribute("role", "group");
     actions.setAttribute("aria-label", "Selected files");
-    const summary = document.createElement("span");
-    summary.className = "bulk-summary";
-    summary.textContent = `${items.length} files selected`;
-    summary.setAttribute("role", "status");
-    const copy = document.createElement("button");
-    copy.type = "button";
-    copy.className = "copy-btn";
-    copy.textContent = "Copy links";
-    copy.setAttribute("aria-label", `Copy ${items.length} links`);
-    copy.addEventListener("click", () => copySelectedLinks(zone));
-    const archive = document.createElement("button");
-    archive.type = "button";
-    archive.className = "download-btn";
-    archive.textContent = "Download ZIP";
-    archive.setAttribute("aria-label", `Download ${items.length} files as ZIP`);
-    archive.disabled = zone.allow_zip_download === false;
-    archive.title = archive.disabled ? "ZIP downloads are disabled for this zone" : "";
-    archive.addEventListener("click", () => downloadArchive(zone, items));
-    const remove = document.createElement("button");
-    remove.type = "button";
-    remove.className = "delete-btn";
-    remove.textContent = "Delete selected";
-    remove.setAttribute("aria-label", `Delete ${items.length} selected files`);
-    remove.addEventListener("click", () => deleteSelected(zone, items));
+    if (items.length > 1) {
+      const summary = document.createElement("span");
+      summary.className = "bulk-summary";
+      summary.textContent = `${items.length} files selected`;
+      summary.setAttribute("role", "status");
+      const copy = document.createElement("button");
+      copy.type = "button";
+      copy.className = "copy-btn";
+      copy.textContent = "Copy links";
+      copy.setAttribute("aria-label", `Copy ${items.length} links`);
+      copy.addEventListener("click", () => copySelectedLinks(zone));
+      const archive = document.createElement("button");
+      archive.type = "button";
+      archive.className = "download-btn";
+      archive.textContent = "Download ZIP";
+      archive.setAttribute("aria-label", `Download ${items.length} files as ZIP`);
+      archive.disabled = zone.allow_zip_download === false;
+      archive.title = archive.disabled ? "ZIP downloads are disabled for this zone" : "";
+      archive.addEventListener("click", () => downloadArchive(zone, items));
+      const remove = document.createElement("button");
+      remove.type = "button";
+      remove.className = "delete-btn";
+      remove.textContent = "Delete selected";
+      remove.setAttribute("aria-label", `Delete ${items.length} selected files`);
+      remove.addEventListener("click", () => deleteSelected(zone, items));
+      actions.append(summary, copy, archive, remove);
+    }
     const clear = document.createElement("button");
     clear.type = "button";
     clear.className = "ghost-btn";
@@ -1005,11 +1113,13 @@
       state.selectionAnchorByZone[zone.id] = null;
       rerenderZone(zone.id);
     });
-    actions.append(summary, copy, archive, remove, clear);
+    actions.append(renderTransferControls(zone, items), clear);
     const busy = zone.busy || state.batchBusyZoneIds.has(zone.id);
-    for (const control of [copy, archive, remove]) {
-      control.disabled = busy;
-      if (busy) control.title = "This zone is busy";
+    if (items.length > 1) {
+      for (const control of actions.querySelectorAll(".copy-btn, .download-btn, .delete-btn")) {
+        control.disabled = busy;
+        if (busy) control.title = "This zone is busy";
+      }
     }
     return actions;
   }
@@ -1381,6 +1491,7 @@
     if (zoom) actions.append(zoom);
     actions.append(renderCommentControl(zoneId, item));
     actions.append(del);
+    actions.append(renderTransferControls(zone, [item]));
     right.appendChild(actions);
     if (item.kind === "image") {
       const img = document.createElement("img");
@@ -1428,6 +1539,7 @@
       const wrap = document.createElement("button");
       wrap.type = "button";
       wrap.className = "thumb-wrap";
+      wrap.draggable = true;
       if (item.id === selectedId) wrap.classList.add("selected");
       if (selectedIds.has(item.id)) wrap.classList.add("bulk-selected");
       wrap.setAttribute("aria-current", String(item.id === selectedId));
@@ -2813,11 +2925,62 @@
     }
   });
 
+  function readInternalTransfer(dataTransfer) {
+    if (!dataTransfer || !Array.from(dataTransfer.types || []).includes(INTERNAL_TRANSFER_MIME)) {
+      return null;
+    }
+    try {
+      const payload = JSON.parse(dataTransfer.getData(INTERNAL_TRANSFER_MIME));
+      if (
+        !payload
+        || typeof payload.source_zone !== "string"
+        || !Array.isArray(payload.filenames)
+        || !payload.filenames.length
+        || !payload.filenames.every(filename => typeof filename === "string")
+      ) return null;
+      return payload;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  grid.addEventListener("dragstart", (event) => {
+    const thumbWrap = event.target.closest(".thumb-wrap");
+    if (!thumbWrap || !event.dataTransfer) return;
+    const zone = state.zones.find(item => item.id === thumbWrap.closest(".zone")?.dataset.zone);
+    const item = zone?.images.find(candidate => candidate.id === thumbWrap.dataset.itemId);
+    if (!zone || !item) return;
+    const selected = selectedItems(zone);
+    const items = selected.some(candidate => candidate.id === item.id) ? selected : [item];
+    event.dataTransfer.setData(
+      INTERNAL_TRANSFER_MIME,
+      JSON.stringify({
+        source_zone: zone.id,
+        filenames: items.map(candidate => candidate.filename),
+      }),
+    );
+    event.dataTransfer.effectAllowed = "copyMove";
+    thumbWrap.classList.add("dragging-item");
+  });
+  grid.addEventListener("dragend", (event) => {
+    event.target.closest(".thumb-wrap")?.classList.remove("dragging-item");
+  });
   grid.addEventListener("dragover", (event) => {
     const zoneTarget = event.target.closest(".zone, .tab-zone-link");
     if (!zoneTarget) return;
+    const internal = readInternalTransfer(event.dataTransfer);
+    if (internal && internal.source_zone === zoneTarget.dataset.zone) {
+      event.preventDefault();
+      if (event.dataTransfer) event.dataTransfer.dropEffect = "none";
+      zoneTarget.classList.add("dragging");
+      return;
+    }
     event.preventDefault();
-    if (event.dataTransfer) event.dataTransfer.dropEffect = "copy";
+    if (event.dataTransfer) {
+      event.dataTransfer.dropEffect = internal && (event.ctrlKey || event.metaKey)
+        ? "copy"
+        : internal ? "move" : "copy";
+    }
     zoneTarget.classList.add("dragging");
     setActive(zoneTarget.dataset.zone);
   });
@@ -2831,6 +2994,27 @@
     event.preventDefault();
     zoneTarget.classList.remove("dragging");
     setActive(zoneTarget.dataset.zone);
+    const internal = readInternalTransfer(event.dataTransfer);
+    if (internal) {
+      const sourceZone = state.zones.find(zone => zone.id === internal.source_zone);
+      if (!sourceZone || sourceZone.id === zoneTarget.dataset.zone) {
+        toast("Choose a different destination zone", "error");
+        return;
+      }
+      const filenames = [...new Set(internal.filenames)];
+      if (!filenames.length) {
+        toast("The dragged selection is empty", "error");
+        return;
+      }
+      const items = filenames.map(filename => ({ filename }));
+      transferSelected(
+        sourceZone,
+        zoneTarget.dataset.zone,
+        items,
+        event.ctrlKey || event.metaKey ? "copy" : "move",
+      );
+      return;
+    }
     const zone = state.zones.find(item => item.id === zoneTarget.dataset.zone);
     if (zone?.busy || state.batchBusyZoneIds.has(zoneTarget.dataset.zone)) {
       toast("This zone is busy; try again shortly", "error");

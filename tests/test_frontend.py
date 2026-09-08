@@ -112,6 +112,16 @@ class TestContratsFrontend(unittest.TestCase):
         self.assertIn("reference_separator", self.app_js)
         self.assertIn("bulk-selected", self.style_css)
 
+    def test_transfert_interne_et_actions_copy_move(self):
+        self.assertIn('application/x-pasteberth-transfer', self.app_js)
+        self.assertIn("function transferSelected", self.app_js)
+        self.assertIn("function renderTransferControls", self.app_js)
+        self.assertIn('"/api/transfers"', self.app_js)
+        self.assertIn("event.ctrlKey || event.metaKey ? \"copy\" : \"move\"", self.app_js)
+        self.assertIn("wrap.draggable = true", self.app_js)
+        self.assertIn("dragging-item", self.style_css)
+        self.assertIn("transfer-target", self.style_css)
+
     def test_etat_busy_zone(self):
         self.assertIn('zone_busy: "This zone is busy', self.app_js)
         self.assertIn("batchBusyZoneIds", self.app_js)

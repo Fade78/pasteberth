@@ -59,6 +59,7 @@ _ROUTES: tuple[tuple[str, re.Pattern, str], ...] = tuple(
         ("POST", rf"^/api/zones/{_ZONE_RE}/images/regularize$", "h_zone_regularize"),
         ("POST", rf"^/api/zones/{_ZONE_RE}/images$", "h_zone_upload"),
         ("POST", rf"^/api/zones/{_ZONE_RE}/images/batch-delete$", "h_zone_delete_batch"),
+        ("POST", r"^/api/transfers$", "h_transfer"),
         ("POST", rf"^/api/zones/{_ZONE_RE}/images/archive$", "h_zone_archive"),
         ("DELETE", rf"^/api/zones/{_ZONE_RE}/images/{_FILENAME_RE}$", "h_zone_delete"),
         ("GET", rf"^/previews/{_ZONE_RE}/{_FILENAME_RE}$", "h_preview"),
@@ -1217,6 +1218,68 @@ def make_handler(cfg: Config, service: PasteService, sessions: SessionStore,
                 return
             try:
                 result = service.delete_many(zid, filenames, blocking=False)
+            except ServiceError as exc:
+                self._service_error(exc)
+                return
+            self._json(200, result)
+
+        def _h_transfer(self) -> None:
+            if not self._require_auth_api():
+                return
+            ctype = (self.headers.get("Content-Type") or "").split(";", 1)[0].strip().lower()
+            if ctype != "application/json":
+                self._error(415, "unsupported_media_type", "Content-Type must be application/json")
+                return
+            try:
+                body, _ = self._read_body(max_bytes=cfg.limits.max_batch_body_bytes)
+            except BodyTooLarge:
+                self.close_connection = True
+                self._error(413, "too_large", "transfer request is too large")
+                return
+            except ClientAbort:
+                raise
+            try:
+                payload = json.loads(
+                    body.decode("utf-8"),
+                    object_pairs_hook=_json_object_without_duplicates,
+                )
+            except (UnicodeDecodeError, json.JSONDecodeError, ValueError, RecursionError):
+                self._error(400, "invalid_request", "transfer request must contain valid JSON")
+                return
+            required = {"mode", "source_zone", "target_zone", "filenames"}
+            if not isinstance(payload, dict) or set(payload) != required:
+                self._error(
+                    400,
+                    "invalid_request",
+                    "transfer request must contain only mode, source_zone, target_zone, and filenames",
+                )
+                return
+            mode = payload["mode"]
+            source_zone = payload["source_zone"]
+            target_zone = payload["target_zone"]
+            filenames = payload["filenames"]
+            if (
+                not isinstance(mode, str)
+                or not isinstance(source_zone, str)
+                or not isinstance(target_zone, str)
+                or not isinstance(filenames, list)
+                or not filenames
+                or (
+                    cfg.limits.max_batch_names is not None
+                    and len(filenames) > cfg.limits.max_batch_names
+                )
+                or not all(isinstance(filename, str) for filename in filenames)
+            ):
+                self._error(400, "invalid_request", "invalid transfer fields")
+                return
+            try:
+                result = service.transfer(
+                    source_zone,
+                    target_zone,
+                    filenames,
+                    mode=mode,
+                    blocking=False,
+                )
             except ServiceError as exc:
                 self._service_error(exc)
                 return

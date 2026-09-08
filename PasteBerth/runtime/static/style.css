@@ -548,11 +548,14 @@ code, kbd {
 
 .selection-actions {
   flex: 0 0 auto;
-  min-width: 170px;
+  width: 170px;
+  max-width: 100%;
+  min-width: 0;
 }
 
 .selection-actions .bulk-actions {
   flex-direction: column;
+  flex-wrap: nowrap;
   align-items: stretch;
   border-top: 0;
   padding-top: 0;
@@ -560,6 +563,28 @@ code, kbd {
 
 .selection-actions .bulk-actions > button {
   align-self: stretch;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.selection-actions .transfer-actions {
+  flex: 0 0 auto;
+  flex-direction: column;
+  align-items: stretch;
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+}
+
+.selection-actions .transfer-target,
+.selection-actions .transfer-btn {
+  width: 100%;
+  max-width: none;
+}
+
+.selection-actions .transfer-target {
+  min-width: 0;
+  box-sizing: border-box;
 }
 
 .selection-actions .bulk-summary {
@@ -572,6 +597,43 @@ code, kbd {
   gap: 7px;
   margin-top: auto;
 }
+
+.transfer-actions {
+  display: flex;
+  flex: 1 1 100%;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 7px;
+}
+
+.transfer-target {
+  min-width: 10rem;
+  max-width: 100%;
+  padding: 0.38rem 0.55rem;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.2);
+  color: var(--text);
+  font: inherit;
+  font-size: 0.82rem;
+}
+
+.transfer-btn {
+  align-self: flex-start;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 8px;
+  padding: 0.38rem 0.9rem;
+  color: var(--fg, var(--text));
+  background: rgba(127, 127, 127, 0.22);
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.transfer-btn:hover { background: rgba(127, 127, 127, 0.34); }
+.move-btn { color: #b9f5c9; }
+.copy-transfer-btn { color: #b9d9ff; }
+.transfer-btn:disabled { cursor: not-allowed; opacity: 0.45; }
 
 .meta { display: flex; flex-direction: column; gap: 5px; min-width: 0; }
 .meta-name { display: flex; align-items: center; gap: 0.45rem; min-width: 0; flex-wrap: wrap; }
@@ -603,7 +665,7 @@ code, kbd {
 /* ------------------------------------------------------------ buttons */
 
 .copy-btn, .copy-image-btn, .download-btn, .clear-btn, .zoom-btn, .delete-btn,
-.comment-btn, .comment-save-btn {
+.comment-btn, .comment-save-btn, .transfer-btn {
   align-self: flex-start;
   background: rgba(127, 127, 127, 0.22);
   color: var(--fg, var(--text));
@@ -729,6 +791,7 @@ code, kbd {
 .comment-btn:focus-visible,
 .comment-save-btn:focus-visible,
 .replace-btn:focus-visible,
+.transfer-btn:focus-visible,
 .group-tab:focus-visible,
 .tab-zone-link:focus-visible,
 .thumb-wrap:focus-visible,
@@ -811,6 +874,11 @@ code, kbd {
 
 .thumb-wrap.bulk-selected.selected {
   border-color: var(--halo);
+}
+
+.thumb-wrap.dragging-item {
+  opacity: 0.45;
+  border-color: var(--accent);
 }
 
 .thumb {

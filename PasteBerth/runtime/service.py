@@ -10,7 +10,7 @@ import hashlib
 import logging
 import os
 import threading
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager
 from pathlib import Path
 from urllib.parse import quote
 
@@ -331,6 +331,82 @@ class PasteService:
             blocking=blocking,
         ) as snapshot:
             yield snapshot
+
+    @contextmanager
+    def transfer_operation(
+        self,
+        source_zid: str,
+        target_zid: str,
+        *,
+        blocking: bool = True,
+    ):
+        """Lock two distinct zones in a stable order for an internal transfer."""
+        if source_zid == target_zid:
+            raise ServiceError("invalid_request", "source and target zones must differ")
+        self._refresh_zone_collections()
+        with self._registry_lock:
+            snapshots = {
+                zid: (
+                    self._zone_cfg.get(zid),
+                    self._destinations.get(zid),
+                    self._locks.get(zid),
+                )
+                for zid in (source_zid, target_zid)
+            }
+        if any(value[0] is None or value[1] is None or value[2] is None for value in snapshots.values()):
+            missing = source_zid if snapshots[source_zid][0] is None else target_zid
+            raise ServiceError("unknown_zone", f"unknown zone: {missing}")
+
+        ordered = sorted(
+            [
+                (
+                    zid,
+                    snapshots[zid][0],
+                    snapshots[zid][1],
+                    snapshots[zid][2],
+                )
+                for zid in (source_zid, target_zid)
+            ],
+            key=lambda entry: (str(entry[2].directory), entry[0]),
+        )
+        acquired_locks = []
+        try:
+            for zid, _zone, _destination, zone_lock in ordered:
+                if not zone_lock.acquire(blocking=blocking):
+                    raise ServiceError("zone_busy", f"zone {zid!r} is busy")
+                acquired_locks.append(zone_lock)
+            try:
+                with ExitStack() as stack:
+                    for zid, _zone, destination, _zone_lock in ordered:
+                        try:
+                            stack.enter_context(
+                                destination.operation_lock(
+                                    exclusive=True,
+                                    blocking=blocking,
+                                )
+                            )
+                        except DestinationBusyError as exc:
+                            raise ServiceError("zone_busy", str(exc)) from exc
+                    with self._operation_state_lock:
+                        for zid in (source_zid, target_zid):
+                            self._operation_state[zid] = "transfer"
+                    try:
+                        yield {
+                            source_zid: (snapshots[source_zid][0], snapshots[source_zid][1]),
+                            target_zid: (snapshots[target_zid][0], snapshots[target_zid][1]),
+                        }
+                    finally:
+                        with self._operation_state_lock:
+                            for zid in (source_zid, target_zid):
+                                if self._operation_state.get(zid) == "transfer":
+                                    self._operation_state.pop(zid, None)
+            except ServiceError:
+                raise
+            except (DestinationError, OSError) as exc:
+                raise ServiceError("destination_error", str(exc)) from exc
+        finally:
+            for zone_lock in reversed(acquired_locks):
+                zone_lock.release()
 
     def _prepare_upload(
         self,
@@ -802,6 +878,220 @@ class PasteService:
         except ServiceError:
             raise
         return {"deleted": deleted, "failed": failed}
+
+    def transfer(
+        self,
+        source_zid: str,
+        target_zid: str,
+        filenames: list[str],
+        *,
+        mode: str = "move",
+        blocking: bool = True,
+    ) -> dict:
+        """Copy or move coherent managed pairs between two zones."""
+        if mode not in {"copy", "move"}:
+            raise ServiceError("invalid_request", "transfer mode must be 'copy' or 'move'")
+        if not isinstance(filenames, list) or not filenames:
+            raise ServiceError("invalid_request", "no files to transfer")
+        if len(set(filenames)) != len(filenames):
+            raise ServiceError("invalid_request", "duplicate filenames")
+        for filename in filenames:
+            if not isinstance(filename, str) or not self._valid_filename(filename):
+                raise ServiceError("invalid_filename", "invalid filename")
+
+        with self.transfer_operation(
+            source_zid,
+            target_zid,
+            blocking=blocking,
+        ) as snapshots:
+            source_zone, source_destination = snapshots[source_zid]
+            target_zone, target_destination = snapshots[target_zid]
+            try:
+                source_items = {
+                    item.filename: item for item in source_destination.list()
+                }
+            except (DestinationError, OSError) as exc:
+                raise ServiceError("destination_error", str(exc)) from exc
+            selected = []
+            for filename in filenames:
+                item = source_items.get(filename)
+                if item is None:
+                    raise ServiceError(
+                        "unknown_image",
+                        f"file is unknown in source zone: {filename}",
+                    )
+                selected.append(item)
+
+            for item in selected:
+                try:
+                    target_destination.ensure_transfer_target_available(item.filename)
+                except StorageConflictError as exc:
+                    raise ServiceError("storage_conflict", str(exc)) from exc
+                except (DestinationError, OSError) as exc:
+                    raise ServiceError("destination_error", str(exc)) from exc
+
+            total_bytes = sum(item.size for item in selected)
+            if self.cfg.max_upload_bytes is not None:
+                oversized = next(
+                    (item for item in selected if item.size > self.cfg.max_upload_bytes),
+                    None,
+                )
+                if oversized is not None:
+                    raise ServiceError(
+                        "too_large",
+                        f"content is too large ({oversized.filename!r})",
+                    )
+            transferred: list[str] = []
+            failed: list[dict] = []
+            items: list[dict] = []
+            retention_deleted: list[str] = []
+            published_items: list[tuple[StoredImage, StoredImage]] = []
+            try:
+                target_device = target_destination.device_id
+            except (DestinationError, OSError) as exc:
+                raise ServiceError("destination_error", str(exc)) from exc
+            with self._space_locks[target_device].locked():
+                try:
+                    target_destination.ensure_space(
+                        total_bytes,
+                        target_zone.min_free_percent,
+                    )
+                except StorageLowError as exc:
+                    raise ServiceError("storage_low", str(exc)) from exc
+                except (DestinationError, OSError) as exc:
+                    raise ServiceError("destination_error", str(exc)) from exc
+                for item in selected:
+                    target_published = False
+                    try:
+                        data = source_destination.read(item.filename)
+                        if item.sha256 is not None and hashlib.sha256(data).hexdigest() != item.sha256:
+                            raise StorageConflictError(
+                                f"source content changed: {item.filename!r}"
+                            )
+                        stored = target_destination.save_managed(data, item)
+                        target_published = True
+                        removed = target_destination.apply_retention(
+                            target_zone.retain,
+                            stored.filename,
+                        )
+                        retention_deleted.extend(removed)
+                        # Retention for a later item may remove an earlier
+                        # target. Reconcile all published items against the
+                        # final target state before reporting success or
+                        # deleting any move source.
+                        published_items.append((item, stored))
+                        log.info(
+                            "%s source=%s target=%s file=%s",
+                            mode,
+                            source_zid,
+                            target_zid,
+                            item.filename,
+                        )
+                    except StorageLowError as exc:
+                        failed.append(
+                            {
+                                "filename": item.filename,
+                                "code": "storage_low",
+                                "message": str(exc),
+                                "target_published": target_published,
+                            }
+                        )
+                    except StorageConflictError as exc:
+                        failed.append(
+                            {
+                                "filename": item.filename,
+                                "code": "storage_conflict",
+                                "message": str(exc),
+                                "target_published": target_published,
+                            }
+                        )
+                    except RetentionError as exc:
+                        failed.append(
+                            {
+                                "filename": item.filename,
+                                "code": "retention_error",
+                                "message": str(exc),
+                                "target_published": target_published,
+                            }
+                        )
+                    except UnknownImageError as exc:
+                        failed.append(
+                            {
+                                "filename": item.filename,
+                                "code": "unknown_image",
+                                "message": str(exc),
+                                "target_published": target_published,
+                            }
+                        )
+                    except (DestinationError, OSError) as exc:
+                        failed.append(
+                            {
+                                "filename": item.filename,
+                                "code": "destination_error",
+                                "message": str(exc),
+                                "target_published": target_published,
+                            }
+                        )
+
+                if published_items:
+                    try:
+                        remaining_targets = {
+                            item.filename for item in target_destination.list()
+                        }
+                    except (DestinationError, OSError) as exc:
+                        raise ServiceError("destination_error", str(exc)) from exc
+                    for source_item, stored in published_items:
+                        if stored.filename not in remaining_targets:
+                            failed.append(
+                                {
+                                    "filename": source_item.filename,
+                                    "code": "retention_error",
+                                    "message": "target item was removed by retention",
+                                    "target_published": True,
+                                }
+                            )
+                            continue
+                        if mode == "move":
+                            try:
+                                source_destination.delete(source_item.filename)
+                            except UnknownImageError as exc:
+                                failed.append(
+                                    {
+                                        "filename": source_item.filename,
+                                        "code": "unknown_image",
+                                        "message": str(exc),
+                                        "target_published": True,
+                                    }
+                                )
+                            except (DestinationError, OSError) as exc:
+                                failed.append(
+                                    {
+                                        "filename": source_item.filename,
+                                        "code": "destination_error",
+                                        "message": str(exc),
+                                        "target_published": True,
+                                    }
+                                )
+                                continue
+                        transferred.append(source_item.filename)
+                        items.append(
+                            self.item_payload(
+                                target_zid,
+                                stored,
+                                zone=target_zone,
+                                destination=target_destination,
+                            )
+                        )
+
+            return {
+                "source_zone": source_zid,
+                "target_zone": target_zid,
+                "mode": mode,
+                "transferred": transferred,
+                "failed": failed,
+                "items": items,
+                "retention_deleted": retention_deleted,
+            }
 
     def rename(self, zid: str, source: str, target: str, *, blocking: bool = True) -> dict:
         """Rename a managed pair (file + sidecar) in a zone."""

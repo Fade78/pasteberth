@@ -974,6 +974,7 @@ and previews. The prefix is a configured public path, not part of the browser
 | `DELETE` | `/api/zones/{id}/images/{filename}` | session | Delete one managed item. |
 | `POST` | `/api/zones/{id}/images/batch-delete` | session | Delete several managed items. |
 | `POST` | `/api/zones/{id}/images/archive` | session | Stream selected managed items as a ZIP. |
+| `POST` | `/api/transfers` | session | Copy or move managed items between two configured zones. |
 | `GET` | `/previews/{id}/{filename}` | session | Preview or download a managed item. |
 | `GET` | `/login` | public | Login page when authentication is enabled. |
 | `POST` | `/login` | public | Create a session from a password form, JSON body, or multipart form. |
@@ -1082,6 +1083,28 @@ The response includes fields such as:
 Batch deletion accepts repeated `filename` form fields or a JSON `filenames`
 array. Archive accepts the same selection as a repeated form field or JSON
 array and streams the ZIP without a temporary server archive.
+
+Internal transfers accept exactly this JSON object:
+
+```json
+{
+  "mode": "copy",
+  "source_zone": "default",
+  "target_zone": "secondary",
+  "filenames": ["report.txt", "capture.png"]
+}
+```
+
+`mode` is `copy` or `move`. Only coherent managed data/sidecar pairs are
+eligible. Filenames are preserved; an existing data file, sidecar, foreign file,
+or active transaction at the target returns `409 storage_conflict` before any
+item is copied. Copy leaves the source unchanged. Move publishes each target
+pair before deleting its source. The response contains `transferred`, `items`,
+`retention_deleted`, and per-file `failed` entries; a failed entry may include
+`target_published: true` when the target was durable before a later step failed.
+The target zone's free-space reserve, retention, group, and permission rules
+apply. The two zone locks are acquired in a stable order, and a busy zone
+returns `423 zone_busy` with `Retry-After: 1`.
 
 Long-running deletion and archive operations hold an exclusive zone lock.
 Conflicting requests return:
