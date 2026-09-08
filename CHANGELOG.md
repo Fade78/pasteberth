@@ -4,6 +4,8 @@ This file records user-visible changes to Pasteberth.
 
 ## [Unreleased]
 
+## [2.1.19] - 2026-09-08
+
 ### Internal Transfers
 
 - copy or move one or more managed data/sidecar pairs between configured zones;
