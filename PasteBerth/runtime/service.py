@@ -106,6 +106,10 @@ class PasteService:
         self.cfg = cfg
         self._registry_lock = threading.RLock()
         self._zone_collection_refresh_lock = threading.Lock()
+        self._zone_collection_refresh_condition = threading.Condition()
+        self._zone_collection_refresh_in_progress = False
+        self._zone_collection_refresh_generation = 0
+        self._zone_collection_refresh_closed = False
         self._zone_cfg: dict[str, ZoneConfig] = {}
         self._destinations: dict[str, LocalDestination] = {}
         self._locks: dict[str, threading.RLock] = {}
@@ -229,9 +233,7 @@ class PasteService:
                 zid: tuple(groups) for zid, groups in zone_groups.items()
             }
 
-    def _refresh_zone_collections(self) -> None:
-        if not self.cfg.zone_collections:
-            return
+    def _perform_zone_collection_refresh(self) -> None:
         with self._zone_collection_refresh_lock:
             candidates, diagnostics = discover_zone_collections(
                 self.cfg.zone_collections,
@@ -244,6 +246,65 @@ class PasteService:
                 for message in diagnostic_tuple:
                     log.warning("%s", message)
                 self._zone_collection_diagnostics = diagnostic_tuple
+
+    def _finish_zone_collection_refresh(self) -> None:
+        with self._zone_collection_refresh_condition:
+            self._zone_collection_refresh_in_progress = False
+            self._zone_collection_refresh_generation += 1
+            self._zone_collection_refresh_condition.notify_all()
+
+    def _background_zone_collection_refresh(self) -> None:
+        try:
+            self._perform_zone_collection_refresh()
+        except Exception:
+            log.exception("background zone collection refresh failed")
+        finally:
+            self._finish_zone_collection_refresh()
+
+    def _refresh_zone_collections(self, *, background: bool = False) -> None:
+        if not self.cfg.zone_collections:
+            return
+        with self._zone_collection_refresh_condition:
+            if self._zone_collection_refresh_closed:
+                return
+            generation = self._zone_collection_refresh_generation
+            if self._zone_collection_refresh_in_progress:
+                owner = False
+            else:
+                self._zone_collection_refresh_in_progress = True
+                owner = True
+        if not owner:
+            if not background:
+                with self._zone_collection_refresh_condition:
+                    while (
+                        self._zone_collection_refresh_in_progress
+                        and self._zone_collection_refresh_generation == generation
+                    ):
+                        self._zone_collection_refresh_condition.wait()
+            return
+        if background:
+            try:
+                thread = threading.Thread(
+                    target=self._background_zone_collection_refresh,
+                    name="pasteberth-zone-discovery",
+                    daemon=True,
+                )
+                thread.start()
+            except BaseException:
+                self._finish_zone_collection_refresh()
+                raise
+            return
+        try:
+            self._perform_zone_collection_refresh()
+        finally:
+            self._finish_zone_collection_refresh()
+
+    def close(self) -> None:
+        """Stop new background discovery and wait for an active scan."""
+        with self._zone_collection_refresh_condition:
+            self._zone_collection_refresh_closed = True
+            while self._zone_collection_refresh_in_progress:
+                self._zone_collection_refresh_condition.wait()
 
     def _valid_filename(self, name: object) -> bool:
         return valid_filename(
@@ -574,6 +635,10 @@ class PasteService:
                 group.name: group
                 for group in self._effective_group_configs
             }
+        return self._group_overview_snapshot(groups, configured)
+
+    @staticmethod
+    def _group_overview_snapshot(groups, configured) -> list[dict]:
         return [
             {
                 "name": name,
@@ -589,8 +654,13 @@ class PasteService:
         ]
 
     def overview(self, *, blocking: bool = True) -> dict:
-        self._refresh_zone_collections()
+        self._refresh_zone_collections(background=True)
         with self._registry_lock:
+            group_snapshot = tuple(self._group_zone_ids.items())
+            group_configs = {
+                group.name: group
+                for group in self._effective_group_configs
+            }
             snapshot = tuple(
                 (
                     zid,
@@ -605,6 +675,7 @@ class PasteService:
         for zid, zone, destination, zone_lock, groups in snapshot:
             busy = False
             upload_limit_bytes = None
+            dynamic = zid not in self.cfg.zones
             try:
                 items = self.history(
                     zid,
@@ -613,17 +684,25 @@ class PasteService:
                     _snapshot=(zone, destination, zone_lock),
                 )
             except ServiceError as exc:
-                if exc.code != "zone_busy":
+                if exc.code != "zone_busy" and not (
+                    dynamic and exc.code == "destination_error"
+                ):
                     raise
                 busy = True
                 items = []
             except (DestinationError, OSError) as exc:
-                raise ServiceError("destination_error", str(exc)) from exc
+                if not dynamic:
+                    raise ServiceError("destination_error", str(exc)) from exc
+                busy = True
+                items = []
             if not busy:
                 try:
                     upload_limit_bytes = self._upload_limit_bytes(zone, destination)
                 except (DestinationError, OSError) as exc:
-                    raise ServiceError("destination_error", str(exc)) from exc
+                    if not dynamic:
+                        raise ServiceError("destination_error", str(exc)) from exc
+                    busy = True
+                    items = []
             zones.append(
                 {
                     "id": zid,
@@ -650,12 +729,12 @@ class PasteService:
             "max_image_pixels": self.cfg.max_image_pixels,
             "show_full_path": self.cfg.show_full_path,
             "zones": zones,
-            "groups": self._group_overview_from_registry(),
+            "groups": self._group_overview_snapshot(group_snapshot, group_configs),
         }
 
     def group_overview(self) -> list[dict]:
         """Return groups without reading storage destinations."""
-        self._refresh_zone_collections()
+        self._refresh_zone_collections(background=True)
         return self._group_overview_from_registry()
 
     # --------------------------------------------------------------- upload

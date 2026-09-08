@@ -26,10 +26,14 @@ Collection discovery is read-only with respect to the directory tree and the
 configuration file. It does not create candidates, rewrite the configuration,
 or migrate an existing static zone.
 
-Discovery is refreshed when the service refreshes its zone registry. The Web UI
-polls the zone overview every 10 seconds while visible, so a new matching
-directory normally appears on the next poll without a service restart.
-Directory resolution and other service operations use the same refresh path.
+Discovery is refreshed when the service refreshes its zone registry. Web UI
+overview requests start that refresh in the background and serve the last
+complete registry while it runs. The Web UI polls the zone overview every 10
+seconds while visible, so a new matching directory normally appears on the
+first poll after discovery finishes, without a service restart. Directory
+resolution and other service operations use the same refresh path synchronously.
+The `/api/groups` endpoint uses the same background refresh and returns the last
+complete group snapshot while a scan is running.
 
 ## 2. Configuration
 

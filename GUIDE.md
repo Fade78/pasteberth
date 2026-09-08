@@ -49,8 +49,9 @@ The reverse flow is also supported:
 
 For a tree of projects, configure one `[[zone_collection]]` rule instead of adding one
 static zone per project. When a new project creates a matching exchange
-directory, the service discovers it during its next zone read. A visible Web UI
-polls that read every 10 seconds, so the new project normally appears without a
+directory, the service discovers it during the background scan started by its
+next zone read. A visible Web UI polls that read every 10 seconds, so the new
+project normally appears on the first poll after the scan completes, without a
 service restart or configuration edit.
 
 The browser never needs to access the returned filesystem path. The path is
@@ -397,10 +398,14 @@ sidecars will not.
 Regular files copied or moved directly into a collection zone have no coherent
 sidecar, so they remain foreign and are ignored. Uploads through the browser,
 API, or CLI create the data/sidecar pair. A visible browser polls `/api/zones`
-every 10 seconds; that request rescans collections, so a new matching project
-directory appears without a daemon restart. A hidden tab refreshes when it
-becomes visible. The complete discovery contract, including aliases,
-diagnostics, permissions, group expansion, and lifecycle, is in
+every 10 seconds; the request starts a background collection scan and returns
+the last completed snapshot while a scan is running. A new matching project
+directory therefore appears on the first poll after the scan completes, without
+a daemon restart. The `/api/groups` endpoint uses the same background discovery
+behavior and returns the last completed group snapshot while scanning. A hidden
+tab refreshes when it becomes visible. The complete
+discovery contract, including aliases, diagnostics, permissions, group
+expansion, and lifecycle, is in
 [`docs/zone-collection-contract.md`](docs/zone-collection-contract.md).
 
 ## 5. Web UI
@@ -582,6 +587,10 @@ pasteberth audit [--config PATH]
 
 `audit` checks configuration, directories, ownership, permissions, listener
 policy, host policy, and TLS settings without modifying the deployment.
+It also prints an `INFO` line with the discovery duration, rule count, and
+candidate count, including when no collection rules are configured. The duration
+covers the filesystem scan and candidate construction, not the later per-zone
+audit.
 
 Exit codes are:
 

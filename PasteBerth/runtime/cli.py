@@ -191,6 +191,8 @@ def _cmd_serve(args: argparse.Namespace) -> int:
     except OSError as exc:
         log.error("cannot listen on %s:%d: %s", cfg.listen_address, cfg.port, exc)
         return 1
+    finally:
+        service.close()
     log.info("server stopped")
     return 0
 

@@ -51,9 +51,10 @@ filesystem.
 Use one `[[zone_collection]]` rule for a project tree such as
 `/home/me/Depots/*/work/exchange`. When a new project creates a matching,
 readable and writable exchange directory, Pasteberth discovers it on the next zone refresh;
-a visible browser normally sees it within the next 10-second poll. No daemon
-restart and no configuration edit are required. The new directory is exposed as
-a zone. Add an explicit group whose pattern selects the collection ID, such as
+a visible browser normally sees it on the next 10-second poll after that refresh
+finishes. No daemon restart and no configuration edit are required. The new
+directory is exposed as a zone. Add an explicit group whose pattern selects
+the collection ID, such as
 `^@repositories$`, when the zones should appear in a group.
 
 ### Agent or script to a browser

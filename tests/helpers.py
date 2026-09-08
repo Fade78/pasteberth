@@ -334,6 +334,7 @@ class LiveServer:
         self.httpd.shutdown()
         self.httpd.server_close()
         self.thread.join(timeout=5)
+        self.service.close()
 
     def restart(self) -> None:
         """Simule un redémarrage du service : nouvelles instances, mêmes disques."""

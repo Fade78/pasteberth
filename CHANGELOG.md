@@ -11,7 +11,9 @@ This file records user-visible changes to Pasteberth.
 - expose accessible Web UI buttons and internal drag-and-drop, while preserving
   the existing external file-drop upload path;
 - reject target conflicts before a batch starts and report explicit per-file
-  transfer outcomes.
+  transfer outcomes;
+- keep Web UI zone polls responsive while dynamic collection discovery runs in a
+  background thread, and report discovery duration from `audit`.
 
 ## [2.1.18] - 2026-09-07
 

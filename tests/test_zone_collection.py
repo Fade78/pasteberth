@@ -1,10 +1,12 @@
 from dataclasses import replace
 import shutil
 import tempfile
+import threading
 import unittest
 from pathlib import Path
 from unittest import mock
 
+from PasteBerth.runtime import service as service_module
 from PasteBerth.runtime import zone_collection as zone_collection_module
 from PasteBerth.runtime.zone_collection import (
     _zone_collection_color,
@@ -372,6 +374,7 @@ pattern = [\"^@repositories$\"]
             encoding="utf-8",
         )
         self.service = PasteService(load_config(config))
+        self.addCleanup(self.service.close)
 
     def test_dynamic_lifecycle_ignores_direct_files_and_retains_uploads(self):
         zone_id = "repo-work-exchange"
@@ -417,3 +420,124 @@ pattern = [\"^@repositories$\"]
             "new-repo-work-exchange",
             {zone["id"] for zone in overview["zones"]},
         )
+
+    def test_overview_ne_bloque_pas_pendant_une_decouverte_lente(self):
+        original_discovery = service_module.discover_zone_collections
+        started = threading.Event()
+        release = threading.Event()
+        finished = threading.Event()
+        result = {}
+
+        def slow_discovery(*args, **kwargs):
+            started.set()
+            release.wait(5)
+            return original_discovery(*args, **kwargs)
+
+        def read_overview():
+            result["overview"] = self.service.overview()
+            finished.set()
+
+        with mock.patch.object(
+            service_module,
+            "discover_zone_collections",
+            side_effect=slow_discovery,
+        ):
+            worker = threading.Thread(target=read_overview)
+            worker.start()
+            try:
+                self.assertTrue(started.wait(1))
+                self.assertTrue(finished.wait(1))
+            finally:
+                release.set()
+                worker.join(2)
+
+        self.assertFalse(worker.is_alive())
+        self.assertIn("zones", result["overview"])
+
+    def test_overview_signale_une_zone_disparue_pendant_le_scan(self):
+        original_discovery = service_module.discover_zone_collections
+        started = threading.Event()
+        release = threading.Event()
+
+        def slow_discovery(*args, **kwargs):
+            started.set()
+            release.wait(5)
+            return original_discovery(*args, **kwargs)
+
+        with mock.patch.object(
+            service_module,
+            "discover_zone_collections",
+            side_effect=slow_discovery,
+        ):
+            self.service.overview()
+            self.assertTrue(started.wait(1))
+            shutil.rmtree(self.candidate)
+            overview = self.service.overview()
+            release.set()
+
+        zone = next(zone for zone in overview["zones"] if zone["id"] == "repo-work-exchange")
+        self.assertTrue(zone["busy"])
+
+    def test_operation_explicite_attend_la_fin_du_scan(self):
+        original_discovery = service_module.discover_zone_collections
+        started = threading.Event()
+        release = threading.Event()
+        finished = threading.Event()
+
+        def slow_discovery(*args, **kwargs):
+            started.set()
+            release.wait(5)
+            return original_discovery(*args, **kwargs)
+
+        def read_history():
+            self.service.history("repo-work-exchange")
+            finished.set()
+
+        with mock.patch.object(
+            service_module,
+            "discover_zone_collections",
+            side_effect=slow_discovery,
+        ):
+            self.service.overview()
+            self.assertTrue(started.wait(1))
+            worker = threading.Thread(target=read_history)
+            worker.start()
+            try:
+                self.assertFalse(finished.wait(0.1))
+            finally:
+                release.set()
+                worker.join(1)
+
+        self.assertTrue(finished.is_set())
+        self.assertFalse(worker.is_alive())
+
+    def test_close_attend_la_decouverte_en_cours(self):
+        original_discovery = service_module.discover_zone_collections
+        started = threading.Event()
+        release = threading.Event()
+        closed = threading.Event()
+
+        def slow_discovery(*args, **kwargs):
+            started.set()
+            release.wait(5)
+            return original_discovery(*args, **kwargs)
+
+        with mock.patch.object(
+            service_module,
+            "discover_zone_collections",
+            side_effect=slow_discovery,
+        ) as discovery:
+            self.service.overview()
+            self.assertTrue(started.wait(1))
+            closer = threading.Thread(
+                target=lambda: (self.service.close(), closed.set())
+            )
+            closer.start()
+            self.assertFalse(closed.wait(0.1))
+            release.set()
+            self.assertTrue(closed.wait(1))
+            closer.join(1)
+            self.service.overview()
+            discovery.assert_called_once()
+
+        self.assertFalse(closer.is_alive())
