@@ -1493,6 +1493,32 @@ test("colle du texte et l'affiche", async ({ page }) => {
   await page.getByRole("button", { name: "Close" }).click();
 });
 
+test("copie un CSV UTF-8 sans BOM avec des caractères Unicode", async ({ page }) => {
+  await deferClipboard(page);
+  const csv = "name,city\nZoë,東京\n";
+  const response = await page.request.post("/api/zones/default/images", {
+    multipart: {
+      image: {
+        name: "unicode.csv",
+        mimeType: "text/csv",
+        buffer: Buffer.from(csv, "utf8"),
+      },
+      preserve_name: "1",
+    },
+  });
+  expect(response.ok()).toBe(true);
+
+  await openApp(page);
+  const defaultZone = page.locator('[data-zone="default"]');
+  const copyButton = defaultZone.locator(".copy-image-btn");
+  await expect(copyButton).toHaveText("Copy Text");
+  await copyButton.click();
+  await expect.poll(() => page.evaluate(() => window.__clipboardWrites.length)).toBe(1);
+  const copied = await page.evaluate(() => window.__clipboardWrites[0].text);
+  expect(copied).toBe(csv);
+  await page.evaluate(() => window.__clipboardWrites[0].resolve());
+});
+
 test("un Ctrl-V maintenu ne depose le meme buffer qu'une fois", async ({ page }) => {
   await openApp(page);
   const defaultZone = page.locator('[data-zone="default"]');
