@@ -86,7 +86,7 @@
     {
       "name": "Native TOML parser 3",
       "passed": true,
-      "detail": "/tmp/a \"quote\""
+      "detail": "/home/devint3/Depots/pasteberth/work/tmp/site/a \"quote\""
     },
     {
       "name": "Directory discovery 3",
@@ -129,6 +129,6 @@
     "passed": 18,
     "failed": 0
   },
-  "checked_at": "2026-09-09T18:19:39.549087+00:00",
-  "generated_configs_sha256": "620c5b23b7e665ca573b8974329491f0dca2ad76e26420eb2f3210b652d0cd71"
+  "checked_at": "2026-09-09T21:10:09.381015+00:00",
+  "generated_configs_sha256": "1e0d4dd3a688e44915fb897a49652ab7451199cc5b98d27087e3e2cdfade01cc"
 }

@@ -10,6 +10,26 @@ The Unreleased product frontend adds a date to card times when stored `created_a
 is more than 24 hours old. Copies and moves preserve that timestamp; it is not
 arrival time in the current zone. Missing or invalid timestamps show `Unknown time`.
 The demo receives the fix through unchanged source copies, not a preview-only hack.
+The Unreleased frontend also reads `overview.max_archive_files` and shows an error
+toast before submitting an oversized ZIP selection. The demo advertises and
+enforces 64 files per ZIP; this is not a simulation of backend concurrency budgets.
+
+## Workspace Setup
+
+Run these commands from the repository root before the commands below:
+
+```sh
+REPO="$PWD"
+export TMPDIR="$REPO/work/tmp"
+export PYTHONDONTWRITEBYTECODE=1
+python3 site/tools/scratch.py
+```
+
+The helper safely creates `work/tmp/site`, rejecting symlinks and non-directory
+components before creation. Explicit QA scratch uses that directory by default;
+child processes, browser profiles and downloads inherit `TMPDIR`. No old scratch
+directories are moved or deleted. Persisted QA reports remain in `site/qa`, and
+product copies and generated viewing assets remain in `site/`.
 
 ## Serve
 
@@ -105,19 +125,22 @@ python3 site/tools/check_config.py
 site/.venv/bin/python site/tools/qa_http.py
 node --check site/assets/site.js
 node --check site/assets/demo-adapter.js
+node --check site/assets/product/app.js
 ```
 
 Run `qa_site.py` **before** `check_config.py`: it writes freshly browser-generated
-snippets to ignored `qa/work/generated-configs.json`. The native checks parse these
-with the current repository's parser and test temporary directory discovery,
+snippets to ignored `work/tmp/site/generated-configs.json` at the repository root.
+The native checks parse these with the current repository's parser and test
+temporary directory discovery,
 `first-directory` labels without Git, retention 100, leaf eligibility and invalid
-IDs. Their temporary filesystem stays in `site/qa/work/`; they do not create a
+IDs. Their temporary filesystem stays in `work/tmp/site/`; they do not create a
 service, modify real zones or write into the runtime package.
 
 `test_sources.py` checks frontend equality, reproducible generated outputs,
 an empty host MIME database, all output escape cases (26 symlink scenarios),
-historical screenshot hashes, local links/anchors, the public export allowlist,
-and the copy example's data/sidecar guard (nine destination scenarios, GNU cp 9.7
+scratch-path creation/refusal, historical screenshot hashes, local links/anchors,
+the public export allowlist, and the copy example's data/sidecar guard (nine
+destination scenarios, GNU cp 9.7
 tested, `register` stubbed). Symlink cases use isolated site fixtures and spy on
 all write calls, so the expected refusal must precede even an in-site write.
 The suite rebuilds generated outputs in place
@@ -133,7 +156,10 @@ image/text paste events and a mocked rich clipboard. It verifies the frontend's
 sanitizer and original HTML bytes separately. Direct adapter tests cover declared
 text MIME/anonymous names, five concurrent 8 MiB uploads, concurrent replacements,
 and a transfer racing an upload, including copy rejection and move at capacity.
-These are browser-memory tests, not daemon storage or native clipboard tests.
+ZIP regressions verify the advertised 64-file limit, adapter rejection of 65 files
+before reading blobs, and the unchanged UI's error toast without form submission.
+A 64-file selection still downloads an exact, valid ZIP. These are browser-memory
+tests, not daemon storage or native clipboard tests.
 
 Current JSON reports go in `qa/`; old archive reports were not imported. Large
 rendered previews are opt-in and ignored:
@@ -155,12 +181,16 @@ is evidence for this revision.
 | Check | Actual outcome | Evidence |
 | --- | --- | --- |
 | Rebuild and JavaScript syntax | Passed | `rebuild.py`, `node --check` on site and adapter JS |
-| Sources, write confinement, MIME, captures, links, export allowlist and copy guard | 7 passed, 0 failed | `qa/source-report.json` |
+| Sources, scratch/write confinement, MIME, captures, links, export allowlist and copy guard | 9 passed, 0 failed | `qa/source-report.json` |
 | In-memory interaction QA, EN/FR at nine widths (320-1920px) | 70 passed, 0 failed | `qa/report.json` |
 | Locale, palette and current frontend equality | 72 passed, 0 failed | `qa/brand-language-report.json` |
-| Demo clipboard, MIME, anonymous names and concurrent quota | 6 passed, 0 failed | `qa/demo-report.json` |
+| Demo clipboard, MIME, anonymous names, concurrent quota and ZIP count | 8 passed, 0 failed | `qa/demo-report.json` |
 | Browser-generated TOML and real temporary discovery | 18 passed, 0 failed | `qa/native-config-report.json` |
 | Actual static HTTP, Markdown, URL/Storage, root and mount | 34 passed, 0 failed | `qa/http-report.json` |
+
+Total: **211 passed, 0 failed**, comprising the existing 207 checks plus two
+scratch-path and two archive-count regressions. JavaScript syntax checks also
+include the synced product `assets/product/app.js`.
 
 The earlier integration generated EN/FR desktop/mobile **site** previews with
 `qa_site.py --screenshots` and visually reviewed desktop EN, full-page mobile EN
@@ -174,6 +204,15 @@ isolated Python 3.13 environment with Playwright 1.62.0; the existing cached
 Chromium executable was selected through `CHROMIUM`. A first native-config run
 failed on an indentation error in the adapted test script; it was corrected and
 the complete native check rerun successfully. No runtime fix was involved.
+During this refresh, a scratch-path edit introduced an indentation error in
+`qa_site.py`, and the new selection test reused detached thumbnails after a UI
+rerender. The indentation was corrected and the test now uses normal click plus
+Shift-click range selection. Both complete affected suites and native checks were
+rerun successfully; no product workaround was added.
+A repeated parallel run also timed out when the existing comment textarea was
+detached between opening and filling it, consistent with the product's periodic
+rerender. Running the full interaction suite alone, followed by the native checks,
+passed. No runtime edit or test retry workaround was introduced for that race.
 
 The independent-review regressions reproduced escaping output paths, directory
 copy/sidecar conflicts, host-dependent MIME output, HTML becoming plain text,
@@ -212,6 +251,8 @@ Demo uploads are limited to 8 MiB per file and 32 MiB of files in total; this is
 not a strict JavaScript memory ceiling or the server's configured upload limit
 (20 MiB default). Reset/reload discards additions. Demo behavior does not reproduce
 server authentication, locking, transactions or storage guarantees.
+The demo's 64-file ZIP limit mirrors the Unreleased default, not every server
+configuration. It does not simulate the per-process active-archive slot pool.
 After asynchronous reads/decoding, the adapter rechecks filename conflicts and
 net stored-byte growth immediately before a synchronous commit. Replacements
 subtract the currently stored file's size. Transfer checks/commits do not yield;
@@ -232,6 +273,22 @@ filesystem-call timeout or guaranteed discovery deadline. These scanner and
 cooldown changes are not published 2.1.21 behavior and are not exercised by the
 memory-only discovery animation. Groups are views, not ACLs. The optional
 review-workflow example adds no process enforcement, messaging or notifications.
+
+Unreleased preview/download GET and HEAD and ZIP requests use the already
+published zone registry, without starting discovery or waiting for a scan. New
+zones remain unavailable until publication. Acquisition captures selected metadata
+and open payload handles under shared filesystem locks; it does not load the whole
+history, but still enumerates names and reads transaction journals. Zone locks are
+released before headers, ZIP compression and network output, while opened versions
+remain available for streaming alongside cooperating managed replacement/deletion.
+This is not direct O(1) lookup, a hard response deadline, protection from arbitrary
+external in-place writes, or a new native-platform guarantee.
+
+Unreleased archive defaults add 64 files per ZIP and four active archives per
+process. Writer contention can return `423 zone_busy` for HTTP ZIP acquisition;
+an exhausted archive slot pool returns `503 server_busy` with `Retry-After: 1`.
+Preview acquisition still waits for a writer by default. These backend behaviors
+are documented from current source, not exercised or certified by this memory demo.
 
 The `cp + register` example deliberately uses a fresh name and GNU cp supporting
 `-T --update=none-fail`, chained with `&&`. Explicit checks reject existing data

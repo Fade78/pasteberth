@@ -102,6 +102,15 @@ ZIP download must be enabled for the zone and is subject to archive limits. It
 retrieves selected data files, not a managed-pair backup with sidecars. Deleting
 managed items removes the data and sidecar, so download anything you need first.
 
+**Unreleased (after `2.1.21`):** ZIP defaults cap each selection at 64 files and
+the server at four active archives per process, alongside the existing 256 MiB
+source-byte and 300-second streaming limits. Once acquired, downloads serve
+open versions without zone locks, allowing managed writes, including replacement
+or deletion of those files, to proceed. Acquisition can still wait on storage;
+ZIP writer contention returns `423`, while full archive capacity returns `503`.
+This does not protect against external in-place edits. Check download completion
+before relying on the result; see the [bundle recipe](recipes/selection-bundle.md).
+
 ## Refresh and Retention
 
 Visible browser tabs refresh every 10 seconds; hidden tabs refresh when made
@@ -113,8 +122,11 @@ Collection zones appear after a scan observes them and a subsequent refresh
 reads the completed registry. **Unreleased:** overview polls reuse that registry
 during a cooldown of the greater of 10 seconds or the last full refresh
 duration, measured from completion. The next eligible poll can start one
-background job. Explicit service actions bypass that cooldown or wait for a
-running refresh. This is polling, not instant filesystem notification or a
+background job. Mutations, directory resolution, and explicit history reads
+bypass that cooldown or wait for a running refresh. Downloads instead use the
+published registry without starting or joining a scan: a new zone stays unknown
+until published, and removal takes effect through a later publication.
+This is polling, not instant filesystem notification or a
 response-time guarantee; overview history and free-space reads can still block.
 If an expected zone or registered file stays missing, use
 [troubleshooting](troubleshooting.md) rather than repeatedly writing the file.

@@ -1,6 +1,7 @@
 {
   "auth_enabled": false,
   "max_upload_bytes": 8388608,
+  "max_archive_files": 64,
   "max_image_pixels": 25000000,
   "show_full_path": true,
   "zones": [

@@ -348,6 +348,10 @@ class UnknownImageError(DestinationError):
     """The file is no longer a known Pasteberth object."""
 
 
+class _InvalidEntryError(DestinationError):
+    """Malformed metadata or an unsafe entry, rather than an I/O failure."""
+
+
 class DestinationBusyError(DestinationError):
     """The destination is already locked by another operation."""
 
@@ -897,6 +901,8 @@ class LocalDestination(Destination):
         self,
         directory_fd: DirectoryHandle,
         name: str,
+        *,
+        strict_io: bool = False,
     ) -> bool:
         """Do not execute an old client upload as a deletion marker."""
         if not self._legacy_pbdel_filename(name):
@@ -904,7 +910,9 @@ class LocalDestination(Destination):
         sidecar_name = name + ".json"
         try:
             sidecar = self._fs.entry_info(directory_fd, sidecar_name)
-        except (OSError, UnsupportedFilesystemError):
+        except (OSError, UnsupportedFilesystemError) as exc:
+            if strict_io:
+                raise DestinationError(f"cannot inspect {sidecar_name!r}: {exc}") from exc
             # Ambiguous recovery must be non-destructive.
             return True
         return sidecar is not None and sidecar.is_regular and not sidecar.is_symlink
@@ -2739,6 +2747,8 @@ class LocalDestination(Destination):
                 encoded = fh.read(max_bytes + 1) if max_bytes is not None else fh.read()
         except FileNotFoundError:
             raise
+        except UnsafeLinkError as exc:
+            raise _InvalidEntryError(f"unsafe sidecar: {name!r}") from exc
         except DestinationError:
             raise
         except OSError as exc:
@@ -2747,13 +2757,13 @@ class LocalDestination(Destination):
             self.limits.max_metadata_bytes is not None
             and len(encoded) > self.limits.max_metadata_bytes
         ):
-            raise DestinationError(f"sidecar is too large: {name!r}")
+            raise _InvalidEntryError(f"sidecar is too large: {name!r}")
         try:
             raw = json.loads(encoded.decode("utf-8"))
         except (UnicodeError, ValueError, RecursionError) as exc:
-            raise DestinationError(f"sidecar is unreadable: {name!r}") from exc
+            raise _InvalidEntryError(f"sidecar is unreadable: {name!r}") from exc
         if not isinstance(raw, dict):
-            raise DestinationError(f"invalid sidecar: {name!r}")
+            raise _InvalidEntryError(f"invalid sidecar: {name!r}")
         return raw
 
     def _validated_item(
@@ -2868,6 +2878,24 @@ class LocalDestination(Destination):
         """Operate only on a file with a present regular sidecar."""
         if not self._valid_filename(filename):
             raise DestinationError(f"invalid filename: {filename!r}")
+        try:
+            _item, file_handle, meta_identity = self._owned_item(
+                directory_fd, filename, allow_stale_sidecar=allow_stale_sidecar,
+            )
+            return file_handle, meta_identity
+        except FileNotFoundError as exc:
+            raise UnknownImageError(f"unknown Pasteberth file: {filename!r}") from exc
+        except (DestinationError, OSError, TypeError, ValueError, KeyError) as exc:
+            raise DestinationError(f"sidecar is unreadable for {filename!r}") from exc
+
+    def _owned_item(
+        self,
+        directory_fd: DirectoryHandle,
+        filename: str,
+        *,
+        allow_stale_sidecar: bool = False,
+    ) -> tuple[StoredImage, FileHandle, tuple[int, int]]:
+        """Validate metadata against one retained, safely opened payload."""
         meta_name = self._meta_name(filename)
         file_handle = None
         try:
@@ -2884,15 +2912,14 @@ class LocalDestination(Destination):
             file_handle.seek(0)
             if meta_identity is None:
                 raise UnknownImageError(f"unknown Pasteberth file: {filename!r}")
-            return file_handle, meta_identity
-        except FileNotFoundError as exc:
+            return item, file_handle, meta_identity
+        except BaseException:
             if file_handle is not None and not file_handle.closed:
-                file_handle.close()
-            raise UnknownImageError(f"unknown Pasteberth file: {filename!r}") from exc
-        except (DestinationError, OSError, TypeError, ValueError, KeyError) as exc:
-            if file_handle is not None and not file_handle.closed:
-                file_handle.close()
-            raise DestinationError(f"sidecar is unreadable for {filename!r}") from exc
+                try:
+                    file_handle.close()
+                except OSError:
+                    pass
+            raise
 
     def _generate_name(self, ext: str) -> str:
         stamp = datetime.now().astimezone().strftime("%Y-%m-%d_%H-%M-%S")
@@ -3163,6 +3190,8 @@ class LocalDestination(Destination):
             return platform_fs().identity(directory_fd, name)
         except FileNotFoundError:
             return None
+        except UnsafeLinkError as exc:
+            raise _InvalidEntryError(f"cannot inspect {name!r}: {exc}") from exc
         except (OSError, UnsupportedFilesystemError) as exc:
             raise DestinationError(f"cannot inspect {name!r}: {exc}") from exc
 
@@ -3770,63 +3799,54 @@ class LocalDestination(Destination):
             replaced=item.replaced,
         )
 
-    def list(self) -> list[StoredImage]:
-        self._ensure_dir()
-        items: list[StoredImage] = []
-        with self._directory_fd() as directory_fd:
+    def _blocked_read_targets(
+        self,
+        directory_fd: DirectoryHandle,
+        names: tuple[str, ...],
+        requested: set[str] | None = None,
+    ) -> set[str]:
+        """Share list visibility, inspecting only relevant public identities."""
+        blocked_targets: set[str] = set()
+        committed_targets: set[str] = set()
+        for name in names:
             try:
-                entries = sorted(self._fs.entries(directory_fd), key=lambda e: e.name)
-            except (OSError, UnsupportedFilesystemError) as exc:
-                raise DestinationError(
-                    f"cannot read {self.directory}: {exc}"
-                ) from exc
-            blocked_targets: set[str] = set()
-            committed_targets: set[str] = set()
-            for entry in entries:
-                if _delete_token(entry.name) is not None:
-                    if self._historical_pbdel_pair(directory_fd, entry.name):
+                if _delete_token(name) is not None:
+                    if self._historical_pbdel_pair(
+                        directory_fd, name, strict_io=requested is not None,
+                    ):
                         continue
-                    try:
-                        transaction = self._parse_delete_transaction(
-                            entry.name,
-                            self._read_meta(directory_fd, entry.name),
-                        )
-                        blocked_targets.add(transaction["target"])
-                    except (DestinationError, ValueError, TypeError, KeyError):
-                        pass
-                    continue
-                if _rename_token(entry.name) is not None:
-                    try:
-                        transaction = self._parse_rename_transaction(
-                            entry.name,
-                            self._read_meta(directory_fd, entry.name),
-                        )
-                        source = transaction["source"]
-                        target = transaction["target"]
-                        if transaction["state"] == "prepared":
-                            blocked_targets.update({source, target})
-                        elif (
-                            self._entry_identity(directory_fd, target)
-                            != self._transaction_identity(transaction, "source_identity")
-                            or self._entry_identity(directory_fd, target + ".json")
-                            != self._transaction_identity(transaction, "new_meta_identity")
-                            or self._entry_identity(directory_fd, source) is not None
-                            or self._entry_identity(directory_fd, source + ".json") is not None
-                        ):
-                            blocked_targets.update({source, target})
-                        else:
-                            committed_targets.add(target)
-                    except (DestinationError, ValueError, TypeError, KeyError):
+                    transaction = self._parse_delete_transaction(
+                        name, self._read_meta(directory_fd, name),
+                    )
+                    blocked_targets.add(transaction["target"])
+                elif _rename_token(name) is not None:
+                    transaction = self._parse_rename_transaction(
+                        name, self._read_meta(directory_fd, name),
+                    )
+                    source = transaction["source"]
+                    target = transaction["target"]
+                    if requested is not None and requested.isdisjoint((source, target)):
                         continue
-                    continue
-                if not _internal_transaction_name(entry.name):
-                    continue
-                try:
+                    if transaction["state"] == "prepared":
+                        blocked_targets.update({source, target})
+                    elif (
+                        self._entry_identity(directory_fd, target)
+                        != self._transaction_identity(transaction, "source_identity")
+                        or self._entry_identity(directory_fd, target + ".json")
+                        != self._transaction_identity(transaction, "new_meta_identity")
+                        or self._entry_identity(directory_fd, source) is not None
+                        or self._entry_identity(directory_fd, source + ".json") is not None
+                    ):
+                        blocked_targets.update({source, target})
+                    else:
+                        committed_targets.add(target)
+                elif _internal_transaction_name(name):
                     transaction = self._parse_transaction(
-                        entry.name,
-                        self._read_meta(directory_fd, entry.name),
+                        name, self._read_meta(directory_fd, name),
                     )
                     target = transaction["target"]
+                    if requested is not None and target not in requested:
+                        continue
                     if transaction["state"] == "prepared":
                         blocked_targets.add(target)
                     elif (
@@ -3838,9 +3858,71 @@ class LocalDestination(Destination):
                         blocked_targets.add(target)
                     else:
                         committed_targets.add(target)
-                except (DestinationError, ValueError, TypeError, KeyError):
-                    continue
-            blocked_targets.difference_update(committed_targets)
+            except (_InvalidEntryError, ValueError, TypeError, KeyError):
+                continue
+            except DestinationError:
+                # list() historically skips unreadable markers. Acquisition
+                # must not turn a systemic failure into an apparently safe read.
+                if requested is not None:
+                    raise
+        blocked_targets.difference_update(committed_targets)
+        return blocked_targets
+
+    def acquire_reads(self, filenames: list[str]) -> list[tuple[StoredImage, FileHandle]]:
+        """Acquire visible managed files under the caller's operation_lock.
+
+        The caller MUST hold a shared or exclusive operation_lock. Results are
+        in request order (including duplicates), with raw handles positioned at
+        zero. Ownership transfers to the caller, who must close every handle;
+        they remain usable after the lock and bound directory close. On any
+        failure all handles opened here are closed. Missing, invalid or blocked
+        files raise UnknownImageError; filesystem failures raise DestinationError.
+        """
+        directory_fd = self._operation_directory.get()
+        if directory_fd is None or directory_fd.closed:
+            raise DestinationError("acquire_reads requires destination.operation_lock")
+        for filename in filenames:
+            if not self._valid_filename(filename):
+                raise UnknownImageError(f"unknown Pasteberth file: {filename!r}")
+        acquired: list[tuple[StoredImage, FileHandle]] = []
+        try:
+            names = self._fs.entry_names(directory_fd)
+            blocked = self._blocked_read_targets(directory_fd, names, set(filenames))
+            for filename in filenames:
+                if filename in blocked:
+                    raise UnknownImageError(f"unknown Pasteberth file: {filename!r}")
+                try:
+                    item, handle, _meta_identity = self._owned_item(directory_fd, filename)
+                except (
+                    FileNotFoundError, UnsafeLinkError, _InvalidEntryError,
+                    StorageConflictError, TypeError, ValueError, KeyError,
+                ) as exc:
+                    raise UnknownImageError(f"unknown Pasteberth file: {filename!r}") from exc
+                acquired.append((item, handle))
+            return acquired
+        except BaseException as exc:
+            for _item, handle in acquired:
+                try:
+                    handle.close()
+                except OSError:
+                    pass
+            if isinstance(exc, (OSError, UnsupportedFilesystemError)):
+                raise DestinationError(f"cannot acquire reads from {self.directory}: {exc}") from exc
+            raise
+
+    def list(self) -> list[StoredImage]:
+        self._ensure_dir()
+        items: list[StoredImage] = []
+        with self._directory_fd() as directory_fd:
+            try:
+                entries = sorted(self._fs.entries(directory_fd), key=lambda e: e.name)
+            except (OSError, UnsupportedFilesystemError) as exc:
+                raise DestinationError(
+                    f"cannot read {self.directory}: {exc}"
+                ) from exc
+            blocked_targets = self._blocked_read_targets(
+                directory_fd, tuple(entry.name for entry in entries),
+            )
             for entry in entries:
                 # Dotted names for dropped files are legitimate; internal work
                 # files are not sidecars.

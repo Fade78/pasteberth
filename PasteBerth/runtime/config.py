@@ -201,6 +201,8 @@ class LimitsConfig:
     max_batch_names: int | None = 10_000
     max_batch_body_bytes: int | None = 2 * 1024**2
     max_archive_bytes: int | None = 256 * 1024**2
+    max_archive_files: int | None = 64
+    max_active_archives: int | None = 4
     max_archive_duration_seconds: float | None = 300.0
     max_comment_body_bytes: int | None = 8 * 1024
     max_http_header_bytes: int | None = 64 * 1024
@@ -351,6 +353,8 @@ def _parse_limits(raw: object, warnings: list[str]) -> LimitsConfig:
         "max_batch_names",
         "max_batch_body_size",
         "max_archive_size",
+        "max_archive_files",
+        "max_active_archives",
         "max_archive_duration_seconds",
         "max_comment_body_size",
         "max_http_header_size",
@@ -413,6 +417,8 @@ def _parse_limits(raw: object, warnings: list[str]) -> LimitsConfig:
         max_batch_names=integer("max_batch_names", 10_000),
         max_batch_body_bytes=size("max_batch_body_size", 2 * 1024**2),
         max_archive_bytes=size("max_archive_size", 256 * 1024**2),
+        max_archive_files=integer("max_archive_files", 64),
+        max_active_archives=integer("max_active_archives", 4),
         max_archive_duration_seconds=seconds("max_archive_duration_seconds", 300.0),
         max_comment_body_bytes=size("max_comment_body_size", 8 * 1024),
         max_http_header_bytes=size("max_http_header_size", 64 * 1024),

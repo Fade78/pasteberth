@@ -1,6 +1,7 @@
 # Documentation Maintenance
 
-This documentation describes runtime **2.1.21**. A useful recipe is a promise
+This documentation uses runtime **2.1.21** as its released baseline; changes
+after that tag must be marked **Unreleased**. A useful recipe is a promise
 that its stated prerequisites, commands, and observable outcome match the
 implementation. Verify that promise before shortening it into site copy.
 
@@ -36,6 +37,7 @@ running a focused probe, not by trusting an older paragraph.
 | `drop` always calls daemon; `register` is local and leaves data unchanged | `runtime/cli.py`: `_cmd_drop`, `_cmd_register_path`; `runtime/storage.py`: `_register_named` | `tests/test_cli.py`, `tests/test_storage.py` |
 | Collection eligibility, IDs, labels, and groups | `runtime/zone_collection.py`, `runtime/config.py` | `tests/test_zone_collection.py`, `tests/test_config.py` |
 | Request-triggered scans and busy overview behavior | `runtime/service.py`: `_refresh_zone_collections`, `overview`, `history` | `tests/test_zone_collection.py`, `tests/test_webapp.py` |
+| Unreleased published-registry downloads, retained handles, lock scope, limits, and cleanup | `runtime/service.py`: `open_preview`, `archive_files`; `runtime/storage.py`: `acquire_reads`; `runtime/webapp.py`, `runtime/config.py` | `tests/test_downloads.py`, `tests/test_managed_reads.py`, `tests/test_discovery_refresh.py`, `tests/test_config.py` |
 | Transfer metadata, partial outcomes, and retention | `runtime/service.py`: `transfer`; `runtime/storage.py`: `apply_retention` | `tests/test_transfer.py`, `tests/test_storage.py` |
 | MCP offers only the `drop` application tool | `runtime/mcp.py`: `DROP_TOOL`, `McpServer._dispatch`; `runtime/cli.py` | `tests/test_mcp.py`, `tests/test_cli.py` |
 | Shared authentication, password rotation, and request boundaries | `runtime/auth.py`: `SessionStore`; `runtime/webapp.py`; `runtime/cli.py`: server setup | `tests/test_auth.py`, `tests/test_webapp.py` |
@@ -51,6 +53,7 @@ editorial direction, but are not required to build or test documentation.
 - **Discovery versus registration:** collections expose eligible directories; they do not publish every file in them or create project directories.
 - **Local versus daemon policy:** `register` uses its selected local validation. It does not enforce the daemon's zone retention or per-zone free-space reserve.
 - **Snapshot:** the overview uses a registry snapshot and per-zone history reads, not an atomic content snapshot across zones. A busy zone's empty history is not proof of deletion.
+- **Unreleased downloads:** registry membership is eventual, with no download-triggered discovery or wait for a scan. Acquisition retains selected metadata and handles under shared filesystem locks; streaming holds no zone locks. It still enumerates names and reads journals, can wait on a writer or filesystem, and is not a snapshot against external in-place edits.
 - **Retention:** the current publication is protected during its own retention pass. Later publications may evict earlier items, including transfers in the same batch.
 - **Metadata:** a digest is not a signature, source metadata is not authenticated identity, and `changed_at` is currently null rather than a usable modification timestamp.
 - **Replacement and transfer:** a stable name is not versioning. A multi-file operation may partly succeed; a target may be published before a subsequent step fails.

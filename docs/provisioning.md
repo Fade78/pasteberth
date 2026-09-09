@@ -116,8 +116,11 @@ version still `2.1.21`):** `/api/zones` and `/api/groups` share a background
 cooldown of `max(10 seconds, last full refresh duration)` from completion,
 including startup, foreground, and failed refresh attempts. Duration includes
 registry installation. The next eligible poll can launch one job; not every
-overview request starts a scan. Explicit service actions such as directory
-resolution bypass the cooldown or wait for an in-flight refresh, synchronously.
+overview request starts a scan. Mutations, directory resolution, and explicit
+history reads bypass the cooldown or wait for an in-flight refresh, synchronously.
+Downloads use the published registry without starting discovery or waiting for
+a scan. A newly eligible zone therefore returns `404` on download until
+published; removals take effect through later registry publication.
 A hidden browser tab refreshes when it becomes visible. There is no exact
 discovery deadline, and overview history/free-space reads can still block.
 
@@ -127,7 +130,7 @@ discovery deadline, and overview history/free-space reads can still block.
 - The resolved candidate must remain below the base, match the case-sensitive pattern, fit `max_depth`, and contain no subdirectory, including a directory link.
 - IDs join relative components with `-` and convert to lowercase. They must match `^[a-z0-9][a-z0-9_-]{0,63}$`; invalid, overlong, or colliding IDs are rejected rather than truncated or given suffixes. Prefer short project directory names using letters, digits, hyphens, and underscores.
 - A static zone takes precedence at its directory. Multiple collections may include the same candidate only when their zone settings agree. Groups may present that one zone in several views without copying its files.
-- A new eligible directory appears after a discovery refresh observes it. A removed, inaccessible, nonmatching, or no-longer-leaf directory drops out after discovery observes the change. Losing eligibility is not an instruction to delete its files.
+- A new eligible directory appears after a discovery refresh publishes it. A removed, inaccessible, nonmatching, or no-longer-leaf directory drops out after a later refresh publishes that change, not necessarily on the next request. Losing eligibility is not an instruction to delete its files.
 - Renaming a project can change both its zone ID and references. Old references do not redirect, and previously known MCP zone IDs can stop working.
 - Discovery is not a recursive filesystem browser, an ACL system, or a queue. Provisioning an exchange point does not assign work or publish a tool's outputs automatically.
 

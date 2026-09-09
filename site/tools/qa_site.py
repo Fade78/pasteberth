@@ -4,7 +4,8 @@ from datetime import datetime, timezone
 from html import unescape
 import asyncio,json,re,zipfile,io,hashlib,sys,tempfile,os
 from playwright.async_api import async_playwright
-OUT=Path(__file__).resolve().parents[1];WORK=OUT/'qa/work';WORK.mkdir(parents=True,exist_ok=True)
+from scratch import scratch_directory
+OUT=Path(__file__).resolve().parents[1];WORK=scratch_directory()
 report={'scope':'Pasteberth website v2.1, Chromium local in-memory rendering','tests':[],'errors':[],'network_requests':[]}
 def record(name,ok,detail=None):report['tests'].append({'name':name,'passed':bool(ok),**({'detail':detail}if detail is not None else {})});print(('PASS ' if ok else 'FAIL ')+name,flush=True)
 async def run():
@@ -47,7 +48,7 @@ async def run():
   await page.locator('#copy-reference').click();record('Clipboard refusal opens manual fallback',await page.locator('#copy-dialog').is_visible());await page.locator('#copy-dialog .close-dialog').click()
   # Configuration generator: produce actual snippets for native parser checks.
   configs=[]
-  for root,pattern,name in [('/repo','{project}/ignoredbygit/exchange','atlas'),('/srv/workspaces','{project}/work/exchange','Project-A'),('/tmp/a "quote"','{project}/out','unit_2')]:
+  for root,pattern,name in [('/repo','{project}/ignoredbygit/exchange','atlas'),('/srv/workspaces','{project}/work/exchange','Project-A'),(str(WORK/'a "quote"'),'{project}/out','unit_2')]:
    for field,value in [('root-path',root),('path-pattern',pattern),('project-name',name)]:await page.locator('#'+field).fill(value)
    valid=not await page.locator('#copy-config').is_disabled();configs.append(await page.locator('#generated-config').inner_text());record('Generator valid '+name,valid)
   for field,value in [('root-path','relative/path'),('root-path','/srv/../etc'),('path-pattern','{project}/../exchange'),('path-pattern','x/{project}'),('project-name','project.v2'),('project-name','<script>alert(1)</script>'),('project-name','a'*80)]:

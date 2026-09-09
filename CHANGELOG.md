@@ -16,12 +16,39 @@ This file records user-visible changes to Pasteberth.
 - throttle background discovery after completion by the greater of 10 seconds
   or the last full refresh duration, including registry installation, startup,
   foreground, and failed attempts; the next eligible overview poll can launch
-  one job, while explicit service actions bypass cooldown or join a running
-  refresh without rescanning within that action;
+  one job, while mutations, directory resolution, and explicit history reads
+  bypass cooldown or join a running refresh without rescanning within that action;
 - add per-rule scan and registry-installation debug timings; overview history
   and free-space reads remain synchronous, with no hard response deadline.
 
-These changes are not released; the runtime version remains `2.1.21`.
+### Downloads And Archive Budgets
+
+- use the published registry for preview/download GET and HEAD and ZIP requests,
+  without starting discovery or waiting for a scan; new zones return `404` until
+  published, and membership changes take effect through later registry publication;
+- capture selected metadata and payload handles under shared stable/directory
+  filesystem locks, bypassing the Python zone lock so shared history reads can
+  coexist; preserve transaction visibility through names enumeration and journal
+  reads without reading unrelated payloads or ordinary sidecars;
+- release zone locks before headers, compression, or body output, reading at most
+  64 KiB up to each captured size; managed replacement/deletion can proceed while
+  open versions stream, without new per-file lock files or a sidecar migration;
+- route preview HEAD through the same acquisition and representation headers as
+  GET without a response body; preview acquisition still defaults to blocking on
+  a writer, while HTTP ZIP acquisition is nonblocking and can return `423 zone_busy`;
+- add `[limits].max_archive_files = 64` and `max_active_archives = 4`, accepting
+  positive integers or `"unlimited"`; a full per-process archive slot pool returns
+  `503 server_busy` with `Retry-After: 1`, distinct from writer contention;
+- retain the 256 MiB source-byte and 300-second ZIP streaming defaults, release
+  handles and slots on completion or failure, timeout, and disconnect, and apply
+  the preview request timeout as inactivity during emission while retaining the
+  initial acquisition deadline.
+
+Acquisition still enumerates names and reads journals, and filesystem calls can
+block. These changes promise neither O(1) reads nor a hard 100 ms response, do
+not protect against arbitrary external in-place writes, and add no thread pool
+or native Windows support guarantee. Existing cooperating CLI writers remain
+compatible. These changes are not released; the runtime version remains `2.1.21`.
 
 ## [2.1.21] - 2026-09-09
 

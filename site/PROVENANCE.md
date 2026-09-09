@@ -14,6 +14,9 @@ is more than 24 hours old, and handles missing or invalid timestamps as
 `Unknown time`. `created_at` is preserved across copies and moves between zones;
 it is not arrival time in the current zone. This is actual product frontend code,
 copied unchanged into the demo, not a preview-only date adjustment.
+It also consumes `overview.max_archive_files`, refusing an oversized ZIP selection
+with an error toast before form submission. The separate demo seed advertises 64
+files per ZIP, and the adapter rejects a larger request before reading file blobs.
 
 The Unreleased scanner reuses filesystem observations within one discovery pass,
 not across refreshes. Background discovery remains request-triggered. Visible-tab
@@ -24,6 +27,23 @@ that cooldown; foreground requests can refresh without waiting for it. No hard
 filesystem-call timeout or autonomous watcher is added. The memory demo does not
 run this scanner or certify its timing; these claims come from the current source,
 not published 2.1.21 behavior or daemon screenshots.
+
+Unreleased preview/download GET and HEAD and ZIP requests use the published zone
+registry without starting discovery or joining a scan. A short shared filesystem
+lock phase captures selected metadata and open payload handles, not whole-history
+payloads or unrelated ordinary sidecars. It still enumerates names and reads
+transaction journals. Headers, compression and network output occur after zone
+locks are released; retained handles allow opened versions to stream alongside
+cooperating managed replacement/deletion. Filesystem calls can still block: there
+is no direct O(1) lookup, hard response deadline, arbitrary external in-place-write
+protection or new native Windows support guarantee.
+
+New archive defaults are 64 files and four active archives per process. HTTP ZIP
+acquisition may return `423 zone_busy` on writer contention, whereas a full archive
+slot pool returns `503 server_busy` with `Retry-After: 1`. Preview acquisition still
+waits for a writer by default. The demo enforces only its advertised file-count
+limit, not this slot pool, locking or streaming lifecycle. These are current-source
+Unreleased backend changes, not published 2.1.21 behavior or site QA certifications.
 
 `source-manifest.json` pins four byte-for-byte frontend copies and records the
 source commit as context. The hashes, rather than a clean-tree assertion, identify
@@ -42,6 +62,8 @@ assets are fixed in the builder rather than taken from the host registry.
 | Collections, eligibility, labels and IDs | `../PasteBerth/runtime/config.py`, `zone_collection.py`, `../docs/zone-collection-contract.md` |
 | Unreleased scanner reuse and completion-based cooldown | `../PasteBerth/runtime/zone_collection.py`, `service.py`; unchanged visible-tab poll interval in `static/app.js` |
 | Unreleased card date display | `../PasteBerth/runtime/static/app.js`: `fmtTime(item.created_at)` |
+| Unreleased published-registry reads and unlocked streaming | `../PasteBerth/runtime/service.py`, `storage.py`, `webapp.py`, `platformfs/` |
+| Unreleased archive budgets and UI count preflight | `../PasteBerth/runtime/config.py`, `service.py`, `static/app.js`; demo limit in `tools/demo-seed.json`, `assets/demo-adapter.js` |
 | Upload and retention defaults | `../PasteBerth/runtime/config.py`: 20 MiB upload, collection retain 10 |
 | Product status | `../CHANGELOG.md`, runtime `__init__.py`, `../pyproject.toml` |
 
@@ -106,13 +128,22 @@ changes are in the builder, presentation examples and memory adapter, **not** th
 copied product frontend or the daemon. Historical screenshots and their hashes
 remain unchanged.
 
-The new regression cases were run against the unfixed site first and exposed
-the reported problems. Current evidence includes seven source/build/allowlist
-tests, six demo regression tests, 70 interaction checks, 72 language/palette/source
-checks, 18 parser/discovery checks and 34 static-HTTP checks. See `README.md` for
+The earlier independent-review regression cases were run against the unfixed site
+first and exposed the reported problems. Current evidence includes nine
+source/build/allowlist/scratch tests, eight demo regression tests, 70 interaction
+checks, 72 language/palette/source checks, 18 parser/discovery checks and 34
+static-HTTP checks. See `README.md` for
 commands, test-harness corrections and limits; reports pin the tested artifacts.
+This refresh adds two scratch-path and two ZIP-count regressions to the prior
+207 checks, for 211 passing checks. Historical capture hashes remain unchanged.
 
 Current results belong in `qa/`, with the actual commands and scope in `README.md`.
+Explicit QA scratch now defaults to repository `work/tmp/site`, with symlink and
+non-directory components rejected before creation. Commands set `TMPDIR` to
+repository `work/tmp` for child-process scratch and disable Python bytecode writes.
+Old `qa/work/` contents are neither moved nor deleted. Source-confinement fixtures
+live in the new scratch location; refused symlink builds must still make no writes,
+even inside the fixture. Real generated assets and product copies stay in `site/`.
 Optional generated `previews/` are ignored and depict the **site and simulated
 demo**, not a new daemon run. No private screenshots or identifiers were imported.
 No deployment, publication, commit or backend modification is part of this work.

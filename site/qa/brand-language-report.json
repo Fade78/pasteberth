@@ -496,7 +496,7 @@
     {
       "name": "Current frontend equals runtime assets/product/app.js",
       "passed": true,
-      "detail": "05806be23af96fe3d99db3f179db93a11f56f46e6e17ff1e63f2418b3db82e38"
+      "detail": "bf3620b65ea0de7008b6dafe22bcb457d130d5070fe98b08d255510241ea9ccf"
     },
     {
       "name": "Current frontend equals runtime assets/product/style.css",
@@ -531,6 +531,6 @@
     "passed": 72,
     "failed": 0
   },
-  "checked_at": "2026-09-09T18:19:38.530483+00:00",
-  "preview_sha256": "44d2d0d95e0d4f250c3b830f4414cae7df477232db81ff6ce69af84b24a825d5"
+  "checked_at": "2026-09-09T21:10:09.306799+00:00",
+  "preview_sha256": "32cdbc6a5366132a05d8c7d12bba8a1a7936ca1f933d712aa7cd4eddeb486cc2"
 }

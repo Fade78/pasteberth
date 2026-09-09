@@ -71,7 +71,8 @@ The available `[limits]` keys are `max_image_dimension`, `max_image_raw_size`,
 `max_multipart_boundary_length`, `max_multipart_parts`,
 `max_multipart_header_size`, `max_multipart_field_name_length`,
 `max_multipart_body_size`, `max_batch_names`, `max_batch_body_size`,
-`max_archive_size`, `max_archive_duration_seconds`, `max_comment_body_size`,
+`max_archive_size`, `max_archive_files`, `max_active_archives`,
+`max_archive_duration_seconds`, `max_comment_body_size`,
 `max_http_header_size`, `max_login_body_size`, `max_login_fields`,
 `max_login_delay_seconds`, `max_login_concurrent_checks`,
 `max_login_tracked_ips`, `login_forget_after_seconds`,
@@ -89,10 +90,19 @@ request, including framing and auxiliary fields. It is independent from
 limits default to `256MiB` of uncompressed selected files and `300` seconds of
 total streaming time; ZIP output remains streamed without a temporary archive.
 
+**Unreleased (after `2.1.21`):** `max_archive_files = 64` bounds retained source
+handles per ZIP; `max_active_archives = 4` bounds concurrent ZIP acquisitions and
+transfers across all zones in one process. Both accept positive integers or
+`"unlimited"`. They do not change `max_batch_names` or the byte/duration budgets.
+Exceeding the file count returns `413 too_large`; a full archive slot pool
+returns `503 server_busy` with `Retry-After: 1`, not the `423 zone_busy` used for
+an exclusive writer blocking ZIP acquisition. Restart after changing limits.
+
 #### Operational budget defaults
 
-These are TOML key names, not the private Python attribute names. Size values
-accept a byte count or a size string such as `"8KiB"` or `"20MiB"`.
+The table covers 37 TOML keys, including the two **Unreleased** archive limits.
+These are not private Python attribute names. Size values accept a byte count
+or a size string such as `"8KiB"` or `"20MiB"`.
 
 | `[limits]` Key | Default | Budget |
 |---|---:|---|
@@ -112,6 +122,8 @@ accept a byte count or a size string such as `"8KiB"` or `"20MiB"`.
 | `max_batch_names` | `10000` | Filenames in one batch selection. |
 | `max_batch_body_size` | `"2MiB"` | Batch/transfer and direct-drop JSON request body. |
 | `max_archive_size` | `"256MiB"` | Total uncompressed selected files. |
+| `max_archive_files` | `64` | **Unreleased:** selected source files retained open per ZIP. |
+| `max_active_archives` | `4` | **Unreleased:** concurrent ZIP acquisitions/transfers per process, across all zones. |
 | `max_archive_duration_seconds` | `300` | Total archive streaming duration. |
 | `max_comment_body_size` | `"8KiB"` | Comment request body. |
 | `max_http_header_size` | `"64KiB"` | HTTP request header budget. |
@@ -131,6 +143,15 @@ accept a byte count or a size string such as `"8KiB"` or `"20MiB"`.
 | `max_pending_requests` | `8` | Connections waiting for headers. |
 | `http_header_timeout_seconds` | `5` | Pending-header timeout. |
 | `http_request_timeout_seconds` | `60` | Request timeout; streaming responses also have activity and archive deadlines. |
+
+**Unreleased:** previews now stream as well as ZIPs. The request timeout applies
+to the initial request/acquisition phase, then measures inactivity while a
+download emits content, rather than total elapsed transfer time. ZIP's separate
+300-second default deadline starts with the streaming phase. Expiry or client
+disconnect closes the response and releases handles and archive slots as the
+handler unwinds, but cannot interrupt a blocked filesystem call. Shared read
+acquisition can still wait for an exclusive writer; these budgets are not hard
+filesystem-latency guarantees.
 
 Removing one budget does not remove the others or a proxy's limits. Large
 uploads and multipart bodies are read into memory; `"unlimited"` is not a

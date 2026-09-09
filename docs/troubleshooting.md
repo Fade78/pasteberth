@@ -72,14 +72,41 @@ valid.
 
 ### A request returns `423 zone_busy`
 
-Another process is holding the zone's exclusive operation lock. Wait for the
+Another operation is holding a conflicting zone lock. Wait for the
 `Retry-After` delay, refresh the history, and retry. Do not remove the lock
 file manually.
 
 The overview can still return `200` with `busy: true`, `count: null`, and
 `images: []` for that zone. This means its history is unavailable, not that
 the files were deleted. The per-zone history request returns `423` while
-the zone remains locked.
+the conflicting lock remains held.
+
+**Unreleased (after `2.1.21`):** ZIP holds shared filesystem locks only during
+acquisition, then streams retained handles without zone locks. It returns `423`
+if an exclusive writer prevents nonblocking acquisition, not because another
+ZIP is streaming. Preview acquisition remains blocking by default and can wait
+for that writer; shared history reads can coexist with download acquisition.
+
+### A ZIP returns `413` or `503`, or a download stops
+
+**Unreleased:** `max_archive_files` defaults to 64 selected files; exceeding it
+returns `413 too_large` before source opens. The existing source-byte limit is
+256 MiB, separate from ZIP output size and batch body/name budgets. Reduce the
+selection or ask the operator to review the relevant limit.
+
+`max_active_archives` defaults to four ZIP acquisitions/transfers per process,
+across all zones. Full capacity returns `503 server_busy` with `Retry-After: 1`,
+distinct from writer-lock `423`. Wait before retrying; an active ZIP no longer
+locks the zone for the duration of the transfer.
+
+The request deadline still covers initial acquisition. While preview or ZIP
+output is emitted, the request timeout measures inactivity, not total elapsed
+download time. ZIP also has a 300-second default streaming-phase deadline.
+Timeout, disconnect, or a source read failure closes the response and releases
+handles and archive slots as the handler unwinds; a blocked filesystem call can
+delay this cleanup. A failure after headers does not append a JSON error to the
+file. Treat partial downloads as incomplete, and check logs and proxy timeouts.
+See [HTTP downloads](reference/api.md#downloads-unreleased).
 
 ### A filename replacement is refused
 
@@ -150,8 +177,11 @@ overview starts a scan. Zone and group overviews share a cooldown of
 startup, foreground, and failed refresh attempts. The duration includes
 registry installation. The next eligible poll can start one background job;
 polls during a refresh do not start another. A removed, inaccessible, or newly
-nonmatching directory can leave the active registry
-without deleting its contents. See the [collection contract](zone-collection-contract.md).
+nonmatching directory leaves the active registry when a later refresh publishes
+its removal, without deleting its contents. Downloads neither trigger discovery
+nor wait for a scan, even for an unknown ID; a new zone returns `404` until
+published. Do not use repeated download requests to force discovery. See the
+[collection contract](zone-collection-contract.md).
 
 ### Discovery or overview is slow
 
@@ -163,11 +193,15 @@ shared across rules only within that pass; later scans read the filesystem
 again. Narrow bases and appropriate `max_depth` values can reduce traversal;
 the optimization does not change regex semantics.
 
-**Unreleased:** explicit service actions bypass the background cooldown or
-wait for the in-flight refresh, with one refresh or join per service action.
+**Unreleased:** mutations, directory resolution, and explicit history reads
+bypass the background cooldown or wait for the in-flight refresh, with one
+refresh or join per service action.
 This avoids duplicate scans within an action, not waits on slow filesystem
-calls. Zone-overview history and free-space checks also remain synchronous and
-can block independently of discovery. Neither the 10-second browser poll nor
+calls. Downloads now use the published registry without any discovery wait or
+trigger, but still enumerate directory names, read journals, and acquire selected
+metadata and handles under shared filesystem locks. Zone-overview history and
+free-space checks also remain synchronous and can block independently of
+discovery. Neither the 10-second browser poll nor
 the cooldown is a response deadline. A hard 100 ms scan timeout cannot be
 enforced by checking elapsed time around blocking filesystem calls. A bounded
 wait would require separate worker scheduling and a policy for incomplete

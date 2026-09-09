@@ -54,8 +54,8 @@ class TestDiscoveryRefresh(unittest.TestCase):
             ))
 
     def archive(self, service, zid, filenames):
-        with service.archive_files(zid, filenames) as (_destination, items):
-            return items
+        with service.archive_files(zid, filenames) as selected:
+            return [item for item, _handle in selected]
 
     def test_startup_result_throttles_both_poll_endpoints(self):
         self.discovery.assert_called_once()
@@ -267,7 +267,7 @@ class TestDiscoveryRefresh(unittest.TestCase):
             service.has_zone("repo-work-exchange")
             self.assertEqual(space_lock.call_count, expected)
 
-    def test_each_operation_refreshes_only_once(self):
+    def test_mutations_and_history_refresh_once_downloads_never_refresh(self):
         for zid in ("source", "repo-work-exchange"):
             stage_name = ".pbdrop-" + "a" * 24 + ".tmp"
             stage = self.service._zone_cfg[zid].directory / stage_name
@@ -288,7 +288,10 @@ class TestDiscoveryRefresh(unittest.TestCase):
                 with self.subTest(zid=zid, operation=index):
                     self.discovery.reset_mock()
                     operation()
-                    self.discovery.assert_called_once()
+                    if index in (1, 5):
+                        self.discovery.assert_not_called()
+                    else:
+                        self.discovery.assert_called_once()
 
     def test_zone_validation_still_precedes_payload_validation(self):
         static = PasteService(replace(self.cfg, zone_collections=()))
@@ -304,6 +307,8 @@ class TestDiscoveryRefresh(unittest.TestCase):
                 (lambda zid: service.preview(zid, "../bad"), "unknown_image"),
                 (lambda zid: self.archive(service, zid, []), "invalid_request"),
                 (lambda zid: service.regularize_staged_upload(zid, "bad", "bad", "bad"), "destination_error"),
+                (lambda zid: self.archive(service, zid, ["../bad"]), "invalid_filename"),
+                (lambda zid: self.archive(service, zid, ["missing.txt"]), "unknown_image"),
             ]
             for zid in (*zones, "missing"):
                 for index, (operation, code) in enumerate(operations):
@@ -312,7 +317,89 @@ class TestDiscoveryRefresh(unittest.TestCase):
                         with self.assertRaises(ServiceError) as raised:
                             operation(zid)
                         self.assertEqual(raised.exception.code, "unknown_zone" if zid == "missing" else code)
-                        self.assertEqual(self.discovery.call_count, int(bool(service.cfg.zone_collections)))
+                        expected = bool(service.cfg.zone_collections) and index not in (6, 7, 9, 10)
+                        self.assertEqual(self.discovery.call_count, int(expected))
+
+    def test_downloads_use_published_snapshot_during_blocked_discovery(self):
+        for zid in ("source", "repo-work-exchange"):
+            self.service.upload(zid, b"content", "text/plain", "one.txt", True)
+        started = threading.Event()
+        release = threading.Event()
+        scan = self.discovery._mock_wraps
+
+        def slow_scan(*args):
+            started.set()
+            if not release.wait(5):
+                raise AssertionError("scan was not released")
+            return scan(*args)
+
+        self.now = self.service._zone_collection_refresh_after
+        self.discovery.reset_mock()
+        self.discovery.side_effect = slow_scan
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            try:
+                self.service.group_overview()
+                self.assertTrue(started.wait(3))
+                for zid in ("source", "repo-work-exchange"):
+                    self.assertEqual(
+                        pool.submit(self.service.preview, zid, "one.txt").result(timeout=1)[0],
+                        b"content",
+                    )
+                    items = pool.submit(self.archive, self.service, zid, ["one.txt"]).result(timeout=1)
+                    self.assertEqual(items[0].filename, "one.txt")
+                for download in (
+                    lambda: self.service.preview("missing", "one.txt"),
+                    lambda: self.archive(self.service, "missing", ["one.txt"]),
+                ):
+                    with self.assertRaises(ServiceError) as raised:
+                        pool.submit(download).result(timeout=1)
+                    self.assertEqual(raised.exception.code, "unknown_zone")
+                self.discovery.assert_called_once()
+            finally:
+                release.set()
+                self.wait_for_refresh()
+
+    def test_downloads_do_not_discover_new_directory_until_background_publication(self):
+        candidate = self.tmp / "projects" / "new" / "work" / "exchange"
+        candidate.mkdir(parents=True)
+        self.discovery.reset_mock()
+        for download in (
+            lambda: self.service.preview("new-work-exchange", "one.txt"),
+            lambda: self.archive(self.service, "new-work-exchange", ["one.txt"]),
+        ):
+            with self.assertRaises(ServiceError) as raised:
+                download()
+            self.assertEqual(raised.exception.code, "unknown_zone")
+        self.discovery.assert_not_called()
+        self.now = self.service._zone_collection_refresh_after
+        self.service.group_overview()
+        self.wait_for_refresh()
+        self.discovery.assert_called_once()
+        with self.assertRaises(ServiceError) as raised:
+            self.service.preview("new-work-exchange", "one.txt")
+        self.assertEqual(raised.exception.code, "unknown_image")
+        self.discovery.assert_called_once()
+
+    def test_dynamic_download_eligibility_remains_last_published_snapshot(self):
+        zid = "repo-work-exchange"
+        self.service.upload(zid, b"content", "text/plain", "one.txt", True)
+        self.discovery.reset_mock()
+        self.discovery.return_value = ([], [])
+        self.assertEqual(self.service.preview(zid, "one.txt")[0], b"content")
+        self.assertEqual(self.archive(self.service, zid, ["one.txt"])[0].filename, "one.txt")
+        self.discovery.assert_not_called()
+        self.now = self.service._zone_collection_refresh_after
+        self.service.group_overview()
+        self.wait_for_refresh()
+        for download in (
+            lambda: self.service.preview(zid, "one.txt"),
+            lambda: self.archive(self.service, zid, ["one.txt"]),
+        ):
+            with self.assertRaises(ServiceError) as raised:
+                download()
+            self.assertEqual(raised.exception.code, "unknown_zone")
+        self.assertTrue(self.candidate.is_dir())
+        self.discovery.assert_called_once()
 
     def test_transfer_validation_precedes_discovery(self):
         for args, kwargs, code in (

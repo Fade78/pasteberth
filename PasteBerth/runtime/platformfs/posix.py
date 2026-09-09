@@ -225,7 +225,9 @@ class PosixPlatformFS(PlatformFS):
             raise
         except UnsafeLinkError:
             raise
-        except OSError:
+        except OSError as exc:
+            if exc.errno == errno.ELOOP:
+                raise UnsafeLinkError(f"file is a symlink: {name!r}") from exc
             raise
 
     def create_exclusive(
@@ -300,6 +302,11 @@ class PosixPlatformFS(PlatformFS):
         except FileNotFoundError:
             return None
         return self._entry_info_from_stat(name, info)
+
+    def entry_names(self, directory: DirectoryHandle) -> tuple[str, ...]:
+        directory_fd = self._native_fd(directory)
+        os.lseek(directory_fd, 0, os.SEEK_SET)
+        return tuple(os.listdir(directory_fd))
 
     def entries(self, directory: DirectoryHandle) -> tuple[EntryInfo, ...]:
         directory_fd = self._native_fd(directory)

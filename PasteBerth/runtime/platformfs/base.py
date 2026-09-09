@@ -226,6 +226,10 @@ class PlatformFS:
     def entries(self, directory: DirectoryHandle) -> tuple[EntryInfo, ...]:
         raise NotImplementedError
 
+    def entry_names(self, directory: DirectoryHandle) -> tuple[str, ...]:
+        """Enumerate the bound directory without inspecting individual entries."""
+        raise NotImplementedError
+
     def entry_info(self, directory: DirectoryHandle, name: str) -> EntryInfo | None:
         raise NotImplementedError
 

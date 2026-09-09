@@ -88,12 +88,34 @@ traversable and satisfy the rule's depth and subtree constraints.
 a background cooldown of `max(10 seconds, last full refresh duration)` from
 completion, including registry installation. Startup, foreground, and failed
 refresh attempts also set it. The next eligible poll can launch one job;
-not every overview starts a scan. Explicit service actions bypass the cooldown
-or wait for an in-flight refresh, without a duplicate refresh in the same
-action. Scanner caches are shared across rules within one pass only. Overview
+not every overview starts a scan. Mutations, directory resolution, and explicit
+history reads bypass the cooldown or wait for an in-flight refresh, without a
+duplicate refresh in the same action. Scanner caches are shared across rules
+within one pass only. Overview
 history and free-space checks remain synchronous and can block; there is no
 hard discovery or response deadline. These changes are not in the `2.1.21`
 release.
+
+**Unreleased downloads:** GET/HEAD previews and ZIP use the published registry
+without starting discovery or waiting for a scan. New zone IDs return `404`
+until published; removals take effect through later registry publication.
+Selected metadata and file handles are acquired under shared filesystem locks,
+then streamed without zone locks, so managed replacement/deletion can continue
+even on those filenames. Acquisition still checks directory identity, enumerates
+names, and reads journals; it can wait on storage or an exclusive writer.
+This is not snapshot protection against external in-place writes, a sidecar
+format change, or a new per-file lock protocol; older cooperating CLI writers
+remain compatible.
+
+New `[limits]` defaults are `max_archive_files = 64` and
+`max_active_archives = 4` across all zones per process. Both accept positive
+integers or `"unlimited"`. ZIP slot exhaustion returns `503 server_busy` with
+`Retry-After: 1`; nonblocking ZIP acquisition can instead return `423 zone_busy`
+for an exclusive writer. Preview acquisition remains blocking by default.
+The 256 MiB source-byte and 300-second ZIP streaming defaults remain; the
+request deadline covers initial acquisition and becomes inactivity-based during
+emission. Handles and slots are released on completion, timeout, disconnect,
+or failure as the handler unwinds, not by forcibly interrupting filesystem I/O.
 
 Shared Web authentication is not per-user authorization. Groups and collections
 organize zones but do not grant or restrict access. Filesystem group permissions

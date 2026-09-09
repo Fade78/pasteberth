@@ -1185,25 +1185,21 @@ class WindowsPlatformFS(PlatformFS):
         finally:
             self._close_native(handle)
 
-    def entries(self, directory: DirectoryHandle) -> tuple[EntryInfo, ...]:
+    def entry_names(self, directory: DirectoryHandle) -> tuple[str, ...]:
         self._directory_stable(directory)
-        pattern = ntpath.join(self._native_directory_path(directory), "*")
+        directory_path = self._native_directory_path(directory)
+        pattern = ntpath.join(directory_path, "*")
         data = _WIN32_FIND_DATAW()
         search = self._api.FindFirstFileW(self._extended_path(pattern), ctypes.byref(data))
         if not _valid_handle(search):
             _raise_code(ctypes.get_last_error(), "FindFirstFileW", pattern)
         search_handle = _handle_value(search)
-        result: list[EntryInfo] = []
+        result: list[str] = []
         try:
             while True:
                 name = data.cFileName
                 if name not in (".", ".."):
-                    try:
-                        entry = self.entry_info(directory, name)
-                    except FileNotFoundError:
-                        entry = None
-                    if entry is not None:
-                        result.append(entry)
+                    result.append(name)
                 if self._api.FindNextFileW(search_handle, ctypes.byref(data)):
                     continue
                 code = ctypes.get_last_error()
@@ -1212,6 +1208,22 @@ class WindowsPlatformFS(PlatformFS):
                 _raise_code(code, "FindNextFileW", pattern)
         finally:
             self._api.FindClose(ctypes.c_void_p(search_handle))
+        self._directory_stable(directory)
+        if self._compare_path(self._native_directory_path(directory)) != self._compare_path(
+            directory_path
+        ):
+            raise EntryChangedError(f"directory moved during enumeration: {directory.path}")
+        return tuple(result)
+
+    def entries(self, directory: DirectoryHandle) -> tuple[EntryInfo, ...]:
+        result: list[EntryInfo] = []
+        for name in self.entry_names(directory):
+            try:
+                entry = self.entry_info(directory, name)
+            except FileNotFoundError:
+                entry = None
+            if entry is not None:
+                result.append(entry)
         return tuple(result)
 
     def identity(

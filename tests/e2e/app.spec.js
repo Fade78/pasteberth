@@ -1115,6 +1115,71 @@ test("copie, télécharge et supprime la sélection d'une zone", async ({ page }
   await expect(defaultZone.locator(".thumb-wrap")).toHaveCount(0);
 });
 
+for (const { name, limit, count, blocked } of [
+  { name: "rejects selections above the published maximum", limit: 2, count: 3, blocked: true },
+  { name: "submits at the published maximum", limit: 2, count: 2, blocked: false },
+  { name: "submits without a client cap when unlimited", limit: null, count: 65, blocked: false },
+  { name: "submits without a client cap for older APIs", limit: undefined, count: 65, blocked: false },
+]) {
+  test(`ZIP preflight ${name}`, async ({ page }) => {
+    const filenames = Array.from({ length: count }, (_, index) => `file-${index}.bin`);
+    await page.route("**/api/zones", async (route) => {
+      const response = await route.fetch();
+      const overview = await response.json();
+      if (limit === undefined) delete overview.max_archive_files;
+      else overview.max_archive_files = limit;
+      overview.zones.find(zone => zone.id === "default").images = filenames.map(filename => ({
+        id: filename,
+        filename,
+        kind: "binary",
+        size: 4,
+        created_at: "2026-01-01T12:00:00Z",
+        reference: `@${filename}`,
+        preview_url: `data:image/png;base64,${ONE_PIXEL_PNG}`,
+      }));
+      await route.fulfill({ response, json: overview });
+    });
+    const archiveRequests = [];
+    page.on("request", request => {
+      if (request.url().endsWith("/images/archive")) archiveRequests.push(request);
+    });
+    await page.route("**/images/archive", route => route.fulfill({ status: 204 }));
+    await page.addInitScript(() => {
+      window.__archiveFormSubmits = 0;
+      const submit = HTMLFormElement.prototype.submit;
+      HTMLFormElement.prototype.submit = function () {
+        window.__archiveFormSubmits += 1;
+        return submit.call(this);
+      };
+    });
+    await openApp(page);
+    const zone = page.locator('.zone[data-zone="default"]');
+    await zone.locator(".thumb-wrap").first().click();
+    await zone.locator(".thumb-wrap").last().click({ modifiers: ["Shift"] });
+    await expect(zone.locator(".bulk-summary")).toHaveText(`${count} files selected`);
+    const button = zone.getByRole("button", { name: `Download ${count} files as ZIP` });
+
+    if (blocked) {
+      await button.click();
+      await expect(page.locator("#toast")).toHaveText(
+        "ZIP downloads allow a maximum of 2 files; 3 selected",
+      );
+      expect(await page.evaluate(() => window.__archiveFormSubmits)).toBe(0);
+      await expect(page.locator('form[action$="/images/archive"]')).toHaveCount(0);
+      expect(archiveRequests).toHaveLength(0);
+    } else {
+      const requestPromise = page.waitForRequest("**/images/archive");
+      await button.click();
+      const request = await requestPromise;
+      expect(request.method()).toBe("POST");
+      expect(request.isNavigationRequest()).toBe(true);
+      expect(new URLSearchParams(request.postData()).getAll("filename")).toEqual(filenames);
+      expect(await page.evaluate(() => window.__archiveFormSubmits)).toBe(1);
+      expect(archiveRequests).toHaveLength(1);
+    }
+  });
+}
+
 test("copie une sélection vers une autre zone depuis les actions accessibles", async ({ page }) => {
   await openApp(page);
   const defaultZone = page.locator('.zone[data-zone="default"]');

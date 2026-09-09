@@ -17,7 +17,6 @@ import ipaddress
 import json
 import logging
 import re
-import shutil
 import socket
 import ssl
 import threading
@@ -63,6 +62,7 @@ _ROUTES: tuple[tuple[str, re.Pattern, str], ...] = tuple(
         ("POST", rf"^/api/zones/{_ZONE_RE}/images/archive$", "h_zone_archive"),
         ("DELETE", rf"^/api/zones/{_ZONE_RE}/images/{_FILENAME_RE}$", "h_zone_delete"),
         ("GET", rf"^/previews/{_ZONE_RE}/{_FILENAME_RE}$", "h_preview"),
+        ("HEAD", rf"^/previews/{_ZONE_RE}/{_FILENAME_RE}$", "h_preview"),
         ("POST", r"^/login$", "h_login_post"),
         ("POST", r"^/logout$", "h_logout"),
         ("GET", r"^/login$", "h_login_page"),
@@ -136,21 +136,28 @@ class _ChunkedWriter:
     def __init__(self, handler):
         self.handler = handler
         self.offset = 0
+        self.aborted = False
 
     def write(self, data) -> int:
-        data = bytes(data)
-        if not data:
-            return 0
-        deadline = getattr(self.handler, "_archive_deadline", None)
-        if deadline is not None and time.monotonic() >= deadline:
-            raise TimeoutError("archive duration exceeded")
-        self.handler.wfile.write(f"{len(data):X}\r\n".encode("ascii"))
-        self.handler.wfile.write(data)
-        self.handler.wfile.write(b"\r\n")
-        self.handler.wfile.flush()
-        self.offset += len(data)
-        self.handler._stream_last_activity = time.monotonic()
-        return len(data)
+        try:
+            if self.aborted:
+                raise ClientAbort()
+            data = bytes(data)
+            if not data:
+                return 0
+            deadline = getattr(self.handler, "_archive_deadline", None)
+            if deadline is not None and time.monotonic() >= deadline:
+                raise TimeoutError("archive duration exceeded")
+            for chunk in (f"{len(data):X}\r\n".encode("ascii"), data, b"\r\n"):
+                self.handler._check_download_active()
+                self.handler.wfile.write(chunk)
+            self.flush()
+            self.offset += len(data)
+            self.handler._stream_last_activity = time.monotonic()
+            return len(data)
+        except BaseException:
+            self.aborted = True
+            raise
 
     def tell(self) -> int:
         return self.offset
@@ -159,7 +166,14 @@ class _ChunkedWriter:
         return False
 
     def flush(self) -> None:
-        self.handler.wfile.flush()
+        try:
+            if self.aborted:
+                raise ClientAbort()
+            self.handler._check_download_active()
+            self.handler.wfile.flush()
+        except BaseException:
+            self.aborted = True
+            raise
 
 
 def _parse_filename_list(
@@ -229,48 +243,63 @@ def make_handler(cfg: Config, service: PasteService, sessions: SessionStore,
         protocol_version = "HTTP/1.1"
         timeout = cfg.limits.http_request_timeout_seconds
 
-        def _expire_request(self) -> None:
-            if self.timeout is None:
-                return
-            if getattr(self, "_streaming_response", False):
-                elapsed = time.monotonic() - getattr(
-                    self, "_stream_last_activity", time.monotonic()
-                )
-                if elapsed < self.timeout:
-                    timer = threading.Timer(self.timeout - elapsed, self._expire_request)
-                    timer.daemon = True
-                    self._request_timer = timer
-                    timer.start()
+        def _expire_request(self, token: object) -> None:
+            with self._request_timer_lock:
+                if token is not self._request_token or self.timeout is None:
                     return
-            self.close_connection = True
-            try:
-                self.connection.shutdown(socket.SHUT_RDWR)
-            except OSError:
-                pass
+                delay = 0
+                if self._streaming_response:
+                    delay = self.timeout - (time.monotonic() - self._stream_last_activity)
+                if delay <= 0:
+                    self.close_connection = True
+                    self._request_expired = True
+                    # Ownership must remain locked through shutdown, not just its check.
+                    try:
+                        self.connection.shutdown(socket.SHUT_RDWR)
+                    except OSError:
+                        pass
+                    return
+            timer = threading.Timer(delay, self._expire_request, args=(token,))
+            timer.daemon = True
+            with self._request_timer_lock:
+                if token is not self._request_token:
+                    timer.cancel()
+                    return
+                self._request_timer = timer
+                timer.start()
 
-        def _expire_archive(self) -> None:
-            if getattr(self, "_archive_deadline", None) is None:
-                return
-            self._archive_deadline = 0
-            self.close_connection = True
-            try:
-                self.connection.shutdown(socket.SHUT_RDWR)
-            except OSError:
-                pass
+        def _expire_archive(self, token: object) -> None:
+            with self._request_timer_lock:
+                if token is not self._request_token or self._archive_deadline is None:
+                    return
+                self._archive_deadline = 0
+                self.close_connection = True
+                try:
+                    self.connection.shutdown(socket.SHUT_RDWR)
+                except OSError:
+                    pass
 
         def handle_one_request(self) -> None:
             # Socket timeouts reset on reads; this timer imposes a real maximum
             # duration for the whole request.
-            self._response_started = False
-            self._streaming_response = False
+            token = object()
+            with self._request_timer_lock:
+                self._request_token = token
+                self._response_started = False
+                self._streaming_response = False
+                self._request_expired = False
+                self._stream_last_activity = time.monotonic()
+                self._request_deadline = (
+                    None if self.timeout is None else self._stream_last_activity + self.timeout
+                )
             self.rfile.reset()
-            timer = None
-            if self.timeout is not None:
-                timer = threading.Timer(self.timeout, self._expire_request)
-                timer.daemon = True
-                self._request_timer = timer
-                timer.start()
             try:
+                if self.timeout is not None:
+                    timer = threading.Timer(self.timeout, self._expire_request, args=(token,))
+                    timer.daemon = True
+                    with self._request_timer_lock:
+                        self._request_timer = timer
+                        timer.start()
                 super().handle_one_request()
             except HeaderTooLarge:
                 self.close_connection = True
@@ -281,14 +310,17 @@ def make_handler(cfg: Config, service: PasteService, sessions: SessionStore,
             except (OSError, TimeoutError):
                 self.close_connection = True
             finally:
-                if timer is not None:
-                    timer.cancel()
-                active_timer = getattr(self, "_request_timer", None)
-                if active_timer is not None and active_timer is not timer:
-                    active_timer.cancel()
-                self._streaming_response = False
+                with self._request_timer_lock:
+                    self._request_token = None
+                    if self._request_timer is not None:
+                        self._request_timer.cancel()
+                        self._request_timer = None
+                    self._streaming_response = False
 
         def setup(self) -> None:
+            self._request_timer_lock = threading.Lock()
+            self._request_token = None
+            self._request_timer = None
             super().setup()
             # The server admits a connection to a short pending-header pool
             # before this handler can promote it after parsing the headers.
@@ -579,7 +611,11 @@ def make_handler(cfg: Config, service: PasteService, sessions: SessionStore,
                 self._finish(status, "text/html; charset=utf-8", body, **kwargs)
 
         def _service_error(self, exc: ServiceError) -> None:
-            extra = [("Retry-After", "1")] if exc.code == "zone_busy" else []
+            if getattr(self, "_response_started", False):
+                self.close_connection = True
+                return
+            self._check_download_active()
+            extra = [("Retry-After", "1")] if exc.code in {"zone_busy", "server_busy"} else []
             self._error(exc.status, exc.code, str(exc), extra_headers=extra)
 
         # ------------------------------------------------------------- lecture
@@ -704,7 +740,7 @@ def make_handler(cfg: Config, service: PasteService, sessions: SessionStore,
                     handler = getattr(self, "_" + name)
                     handler(*match.groups())
                     return
-            if self.command not in ("GET", "POST"):
+            if self.command not in ("GET", "HEAD", "POST"):
                 self._error(405, "method_not_allowed", "method is not allowed")
             elif any(p.fullmatch(path) for _, p, _ in _ROUTES):
                 self._error(405, "method_not_allowed", "method is not allowed for this resource")
@@ -727,7 +763,7 @@ def make_handler(cfg: Config, service: PasteService, sessions: SessionStore,
                     "internal error on %s",
                     _safe_log_text(self.path, limit=200),
                 )
-                if getattr(self, "_response_started", False):
+                if getattr(self, "_response_started", False) or getattr(self, "_request_expired", False):
                     self.close_connection = True
                     return
                 try:
@@ -736,6 +772,7 @@ def make_handler(cfg: Config, service: PasteService, sessions: SessionStore,
                     self.close_connection = True
 
         do_POST = do_GET
+        do_HEAD = do_GET
         do_PUT = do_GET
         do_DELETE = do_GET
         do_PATCH = do_GET
@@ -1316,50 +1353,88 @@ def make_handler(cfg: Config, service: PasteService, sessions: SessionStore,
                 return
             self._json(200, item)
 
-        def _send_zip_response(self, zid: str, destination, items) -> None:
-            self._response_started = True
-            self._streaming_response = True
-            self._stream_last_activity = time.monotonic()
+        def _check_download_active(self) -> None:
+            deadline = getattr(self, "_request_deadline", None)
+            if (
+                getattr(self, "_request_expired", False)
+                or self.connection.fileno() < 0
+                or (
+                    not getattr(self, "_streaming_response", False)
+                    and deadline is not None
+                    and time.monotonic() >= deadline
+                )
+            ):
+                raise ClientAbort()
+            archive_deadline = getattr(self, "_archive_deadline", None)
+            if archive_deadline is not None and time.monotonic() >= archive_deadline:
+                raise TimeoutError("archive duration exceeded")
+
+        def _start_download_stream(self) -> None:
+            with self._request_timer_lock:
+                self._check_download_active()
+                self._stream_last_activity = time.monotonic()
+                self._streaming_response = True
+                self._response_started = True
+
+        def _send_zip_response(self, zid: str, items) -> None:
+            self._start_download_stream()
             duration = cfg.limits.max_archive_duration_seconds
             self._archive_deadline = (
                 None if duration is None else self._stream_last_activity + duration
             )
             archive_timer = None
-            if duration is not None:
-                archive_timer = threading.Timer(duration, self._expire_archive)
-                archive_timer.daemon = True
-                archive_timer.start()
-            self.send_response(200)
-            self.send_header("Content-Type", "application/zip")
-            self.send_header("Transfer-Encoding", "chunked")
-            self.send_header("Cache-Control", "no-store")
-            self.send_header(
-                "Content-Disposition",
-                f'attachment; filename="pasteberth-{zid}.zip"',
-            )
-            if self.close_connection:
-                self.send_header("Connection", "close")
-            for key, value in self._security_headers():
-                self.send_header(key, value)
-            self.end_headers()
-
-            writer = _ChunkedWriter(self)
             try:
+                if duration is not None:
+                    archive_timer = threading.Timer(
+                        duration, self._expire_archive, args=(self._request_token,)
+                    )
+                    archive_timer.daemon = True
+                    archive_timer.start()
+                self.send_response(200)
+                self.send_header("Content-Type", "application/zip")
+                self.send_header("Transfer-Encoding", "chunked")
+                self.send_header("Cache-Control", "no-store")
+                self.send_header(
+                    "Content-Disposition",
+                    f'attachment; filename="pasteberth-{zid}.zip"',
+                )
+                if self.close_connection:
+                    self.send_header("Connection", "close")
+                for key, value in self._security_headers():
+                    self.send_header(key, value)
+                self.end_headers()
+
+                writer = _ChunkedWriter(self)
                 with zipfile.ZipFile(
                     writer,
                     mode="w",
                     compression=zipfile.ZIP_DEFLATED,
                     allowZip64=True,
                 ) as archive:
-                    for item in items:
-                        zip_info = zipfile.ZipInfo(item.filename)
-                        zip_info.compress_type = zipfile.ZIP_DEFLATED
-                        zip_info.external_attr = 0o600 << 16
-                        with (
-                            destination.open_read(item.filename) as source,
-                            archive.open(zip_info, mode="w", force_zip64=True) as target,
-                        ):
-                            shutil.copyfileobj(source, target, length=64 * 1024)
+                    try:
+                        for item, source in items:
+                            zip_info = zipfile.ZipInfo(item.filename)
+                            zip_info.compress_type = zipfile.ZIP_DEFLATED
+                            zip_info.external_attr = 0o600 << 16
+                            with archive.open(zip_info, mode="w", force_zip64=True) as target:
+                                try:
+                                    remaining = item.size
+                                    while remaining:
+                                        self._check_download_active()
+                                        chunk = source.read(min(64 * 1024, remaining))
+                                        self._check_download_active()
+                                        if not chunk:
+                                            raise OSError("archive source ended early")
+                                        target.write(chunk)
+                                        remaining -= len(chunk)
+                                except BaseException:
+                                    # ZIP entry/archive exits otherwise write trailers on failure.
+                                    writer.aborted = True
+                                    raise
+                    except BaseException:
+                        writer.aborted = True
+                        raise
+                self._check_download_active()
                 self.wfile.write(b"0\r\n\r\n")
                 self.wfile.flush()
                 self._stream_last_activity = time.monotonic()
@@ -1369,11 +1444,15 @@ def make_handler(cfg: Config, service: PasteService, sessions: SessionStore,
                     len(items),
                     writer.offset,
                 )
+            except BaseException:
+                self.close_connection = True
+                raise
             finally:
-                self._streaming_response = False
-                self._archive_deadline = None
-                if archive_timer is not None:
-                    archive_timer.cancel()
+                with self._request_timer_lock:
+                    self._streaming_response = False
+                    self._archive_deadline = None
+                    if archive_timer is not None:
+                        archive_timer.cancel()
 
         def _h_zone_archive(self, zid: str) -> None:
             if not self._require_auth_api():
@@ -1382,11 +1461,8 @@ def make_handler(cfg: Config, service: PasteService, sessions: SessionStore,
             if filenames is None:
                 return
             try:
-                with service.archive_files(zid, filenames, blocking=False) as (
-                    destination,
-                    items,
-                ):
-                    self._send_zip_response(zid, destination, items)
+                with service.archive_files(zid, filenames, blocking=False) as items:
+                    self._send_zip_response(zid, items)
             except ServiceError as exc:
                 self._service_error(exc)
                 return
@@ -1405,32 +1481,47 @@ def make_handler(cfg: Config, service: PasteService, sessions: SessionStore,
             if not self._require_auth_api():
                 return
             try:
-                data, mime = service.preview(zid, filename)
+                with service.open_preview(zid, filename) as (item, source):
+                    self._start_download_stream()
+                    try:
+                        self.send_response(200)
+                        self.send_header("Content-Type", item.mime)
+                        self.send_header("Content-Length", str(item.size))
+                        self.send_header("Cache-Control", "no-store")
+                        if self.close_connection:
+                            self.send_header("Connection", "close")
+                        for key, value in self._security_headers():
+                            self.send_header(key, value)
+                        if item.mime not in ("image/png", "image/jpeg", "image/webp"):
+                            # Never render stored HTML on the application's origin.
+                            fallback = "".join(
+                                char if 32 <= ord(char) < 127 and char not in {'"', "\\"} else "_"
+                                for char in filename
+                            ) or "download"
+                            encoded = urllib.parse.quote(filename, safe="")
+                            self.send_header(
+                                "Content-Disposition",
+                                f'attachment; filename="{fallback}"; filename*=UTF-8\'\'{encoded}',
+                            )
+                        self.end_headers()
+                        remaining = 0 if self.command == "HEAD" else item.size
+                        while remaining:
+                            self._check_download_active()
+                            chunk = source.read(min(64 * 1024, remaining))
+                            self._check_download_active()
+                            if not chunk:
+                                raise OSError("preview source ended early")
+                            self.wfile.write(chunk)
+                            self.wfile.flush()
+                            self._stream_last_activity = time.monotonic()
+                            remaining -= len(chunk)
+                    except BaseException:
+                        self.close_connection = True
+                        raise
+                    finally:
+                        with self._request_timer_lock:
+                            self._streaming_response = False
             except ServiceError as exc:
                 self._service_error(exc)
-                return
-            extra = []
-            if mime not in ("image/png", "image/jpeg", "image/webp"):
-                # Attachment: stored HTML must never be rendered same-origin
-                # by direct navigation (defense in depth; CSP already blocks
-                # inline scripts).
-                fallback = "".join(
-                    char if 32 <= ord(char) < 127 and char not in {'"', "\\"} else "_"
-                    for char in filename
-                ) or "download"
-                encoded = urllib.parse.quote(filename, safe="")
-                extra = [
-                    (
-                        "Content-Disposition",
-                        f'attachment; filename="{fallback}"; filename*=UTF-8\'\'{encoded}',
-                    )
-                ]
-            self._finish(
-                200,
-                mime,
-                data,
-                cache_control="no-store",
-                extra_headers=extra,
-            )
 
     return PasteberthHandler

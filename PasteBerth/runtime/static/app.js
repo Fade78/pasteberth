@@ -23,6 +23,7 @@
     activeId: null,
     authEnabled: true,
     showFullPath: true,
+    maxArchiveFiles: null,
     offline: false,
     selectedByZone: Object.create(null),
     knownItemSignaturesByZone: Object.create(null),
@@ -891,13 +892,18 @@
     return ok;
   }
 
-  function downloadArchive(zone, items) {
+  function downloadArchive(zone, items, event) {
     if (zone.busy || state.batchBusyZoneIds.has(zone.id)) {
       toast("This zone is busy; try again shortly", "error");
       return;
     }
     if (zone.allow_zip_download === false) {
       toast("ZIP downloads are disabled for this zone", "error");
+      return;
+    }
+    if (state.maxArchiveFiles !== null && items.length > state.maxArchiveFiles) {
+      event.stopPropagation();
+      toast(`ZIP downloads allow a maximum of ${state.maxArchiveFiles} files; ${items.length} selected`, "error");
       return;
     }
     const target = `pb-archive-${Date.now()}-${Math.random().toString(36).slice(2)}`;
@@ -1099,7 +1105,7 @@
       archive.setAttribute("aria-label", `Download ${items.length} files as ZIP`);
       archive.disabled = zone.allow_zip_download === false;
       archive.title = archive.disabled ? "ZIP downloads are disabled for this zone" : "";
-      archive.addEventListener("click", () => downloadArchive(zone, items));
+      archive.addEventListener("click", event => downloadArchive(zone, items, event));
       const remove = document.createElement("button");
       remove.type = "button";
       remove.className = "delete-btn";
@@ -2208,6 +2214,7 @@
       updateNewItemState(nextZones);
       state.authEnabled = overview.auth_enabled !== false;
       state.showFullPath = overview.show_full_path !== false;
+      state.maxArchiveFiles = overview.max_archive_files ?? null;
       logoutForm.hidden = !state.authEnabled;
       state.zones = nextZones;
       state.groups = overview.groups || [];

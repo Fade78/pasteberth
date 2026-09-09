@@ -263,6 +263,20 @@ class TestParsing(unittest.TestCase):
         self.assertEqual(cfg.limits.http_header_timeout_seconds, 0.25)
         self.assertIsNone(cfg.limits.http_request_timeout_seconds)
 
+    def test_archive_handle_budgets(self):
+        defaults = make_cfg(self.tmp)
+        self.assertEqual(defaults.limits.max_archive_files, 64)
+        self.assertEqual(defaults.limits.max_active_archives, 4)
+        for key in ("max_archive_files", "max_active_archives"):
+            with self.subTest(key=key):
+                configured = make_cfg(self.tmp, limits={key: 8})
+                self.assertEqual(getattr(configured.limits, key), 8)
+                unlimited = make_cfg(self.tmp, limits={key: "unlimited"})
+                self.assertIsNone(getattr(unlimited.limits, key))
+                for invalid in (0, -1, True, 1.5, "eight"):
+                    with self.subTest(value=invalid), self.assertRaises(ConfigError):
+                        make_cfg(self.tmp, limits={key: invalid})
+
     def test_file_attente_ne_peut_pas_etre_sans_limite(self):
         with self.assertRaisesRegex(ConfigError, "request_queue_size"):
             make_cfg(self.tmp, limits={"request_queue_size": "unlimited"})

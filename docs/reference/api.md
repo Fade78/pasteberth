@@ -4,6 +4,11 @@
 
 ## HTTP API
 
+**Unreleased:** the overview also reports the effective top-level
+`max_archive_files` (an integer, or `null` for no configured count limit).
+The Web UI checks this limit before submitting a ZIP selection; the server
+remains authoritative. Archive capacity failures still return HTTP 503.
+
 The browser API is same-origin and uses the session cookie. There is no CORS
 API or bearer-token API. Non-browser clients can use HTTP login and cookies.
 The supplied Web UI and the bundled HTTP client are implementation examples.
@@ -30,6 +35,7 @@ and previews. The prefix is a configured public path, not part of the browser
 | `POST` | `/api/zones/{id}/images/archive` | session | Stream selected managed items as a ZIP. |
 | `POST` | `/api/transfers` | session | Copy or move managed items between two configured zones. |
 | `GET` | `/previews/{id}/{filename}` | session | Preview or download a managed item. |
+| `HEAD` | `/previews/{id}/{filename}` | session | **Unreleased:** same acquisition and representation headers as GET, without a body. |
 | `GET` | `/login` | public | Login page when authentication is enabled. |
 | `POST` | `/login` | public | Create a session from a password form, JSON body, or multipart form. |
 | `POST` | `/logout` | session | Revoke the current session. |
@@ -171,7 +177,7 @@ The main application error codes are:
 | `428` | `replacement_required` | Explicit replacement was required but not requested. |
 | `429` | `rate_limited` | Login attempts are temporarily throttled. |
 | `500` | `destination_error`, `internal` | The server could not complete a storage or internal operation. |
-| `503` | `retention_error`, `server_busy` | Retention failed after publication, or request admission capacity is exhausted. |
+| `503` | `retention_error`, `server_busy` | Retention failed after publication, or request admission capacity is exhausted; **Unreleased:** also ZIP capacity. |
 | `507` | `storage_low` | The configured free-space reserve would be exceeded. |
 
 This is the application error shape, not a guarantee for proxy failures,
@@ -201,11 +207,70 @@ The response includes fields such as:
 }
 ```
 
+### Downloads (Unreleased)
+
+These changes are after `2.1.21`. Preview/download `GET` and `HEAD`, and ZIP
+`POST`, look up the zone in the last published registry. They neither start
+discovery nor wait for an in-flight scan, even for an unknown ID. A new zone
+returns `404 unknown_zone` until a refresh publishes it; an ineligible zone is
+removed when a later registry publishes that change, not necessarily on the
+next download request. The selected destination's directory identity and
+managed files are still checked. Mutations, directory resolution, and explicit
+per-zone history reads retain synchronous global refresh or join behavior.
+
+The service captures selected metadata and open payload handles under shared
+filesystem operation locks, then releases those locks before sending headers
+or content. It bypasses the per-zone Python `RLock`, so acquisition can coexist
+with shared history reads. Preview acquisition uses the service default
+`blocking=True` and can wait for an exclusive writer; the HTTP ZIP route uses
+`blocking=False` and returns `423 zone_busy` with `Retry-After: 1` if a writer
+holds the lock. Neither mode bounds filesystem I/O latency.
+Previews remain subject to `max_upload_size`; a larger item returns `413 too_large`.
+
+GET streams at most 64 KiB per source read, up to the captured item size.
+`Content-Type` and `Content-Length` come from that captured metadata, with
+`Cache-Control: no-store` and the normal security headers. Non-PNG/JPEG/WebP
+content uses attachment disposition, including UTF-8 filename encoding; stored
+HTML is not rendered on the application's origin. HEAD performs the same
+acquisition and validation but sends no body, including on errors. HEAD is
+routed explicitly for previews; it is not enabled for every GET route.
+
+Once acquisition succeeds, cooperating managed operations can replace or delete
+even the selected files while their open versions continue to stream. This is
+not a snapshot against arbitrary external in-place writes. Missing, invalid,
+or transaction-hidden items return `404 unknown_image`; filesystem failures
+return `500 destination_error` before headers. Failures after streaming starts
+close the response rather than append a second JSON response. See
+[managed reads](storage.md#managed-reads-unreleased) for visibility and lock scope.
+
+The `http_request_timeout_seconds` deadline still covers the initial request
+and acquisition phase. During preview or ZIP emission it is an inactivity timeout, not a total
+transfer deadline. ZIP also has its separate total streaming-duration budget.
+Timeout or disconnect closes the response and releases retained handles as the
+handler unwinds; a timer cannot interrupt a blocked filesystem call.
+
 ### Multiple operations
 
 Batch deletion accepts repeated `filename` form fields or a JSON `filenames`
 array. Archive accepts the same selection as a repeated form field or JSON
 array and streams the ZIP without a temporary server archive.
+
+**Unreleased:** ZIP retains all selected handles for the transfer, but holds no
+zone locks while compressing or sending. `[limits].max_archive_files` defaults
+to `64`; a larger selection returns `413 too_large` before opening sources.
+`[limits].max_active_archives` defaults to `4` concurrent acquisitions/transfers
+across all zones in one server process. A nonblocking semaphore reserves each
+slot; exhaustion returns `503 server_busy` with `Retry-After: 1`, distinct from
+the writer-lock `423`. These two settings accept positive integers or
+`"unlimited"`; batch name/body limits also apply.
+
+The existing defaults remain `max_archive_size = "256MiB"` of selected
+uncompressed source bytes and `max_archive_duration_seconds = 300` for the
+streaming phase, not acquisition plus streaming. ZIP source reads are at most
+64 KiB and stop at each captured size. Every retained handle and the archive
+slot are released on completion, timeout, disconnect, or failure. A truncated
+transfer is not a completed ZIP; retry only after checking the failure and
+selection. See [resource budgets](configuration.md#operational-budget-defaults).
 
 Internal transfers accept exactly this JSON object:
 
@@ -241,8 +306,9 @@ Transfers are not an atomic batch or an atomic move between two filesystems;
 the locks coordinate Pasteberth operations, not external writers. See
 [transaction scope](storage.md#transaction-scope) and [retention](storage.md#retention).
 
-Long-running deletion and archive operations hold an exclusive zone lock.
-Conflicting requests return:
+Long-running batch deletion holds an exclusive zone lock. In `2.1.21`, archives
+also hold that lock; **Unreleased** ZIP transfers instead use the short shared
+acquisition described above. Conflicting nonblocking lock requests return:
 
 ```text
 423 zone_busy

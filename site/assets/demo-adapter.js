@@ -103,6 +103,7 @@ window.fetch=async function(url,options={}) {
  }
  if(method==='POST' && tail==='archive'){
   const names=JSON.parse(options.body).filenames||[],entries=[];
+  if(state.max_archive_files!==null && names.length>state.max_archive_files)return error('too_large',`Local demo limit: ${state.max_archive_files} files per ZIP`,413);
   for(const name of names){const f=files.get(key(z.id,name));if(!f)return error('unknown_image','Unknown file',404);entries.push({name,bytes:new Uint8Array(await f.blob.arrayBuffer())});}
   return new Response(archive(entries),{headers:{'Content-Type':'application/zip','Content-Disposition':'attachment; filename="pasteberth-demo.zip"'}});
  }

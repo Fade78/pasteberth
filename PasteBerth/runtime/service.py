@@ -1,8 +1,8 @@
 """Business logic: upload -> validation -> storage -> retention.
 
-The service is the only path from the web layer to destinations; it serializes
-operations per zone to keep retention coherent under concurrency while leaving
-zones independent from one another.
+The service is the only path from the web layer to destinations. Mutations and
+history serialize per zone; downloads acquire stable handles under a short
+shared filesystem lock and release it before serving content.
 """
 from __future__ import annotations
 
@@ -10,6 +10,7 @@ import hashlib
 import logging
 import os
 import threading
+from collections.abc import Iterator
 from contextlib import ExitStack, contextmanager
 from pathlib import Path
 from time import monotonic
@@ -27,7 +28,7 @@ from .images import (
     mime_allowed,
     mime_syntax_allowed,
 )
-from .platformfs import platform_fs
+from .platformfs import FileHandle, platform_fs
 from .storage import (
     CREATION_METHODS,
     DestinationError,
@@ -90,6 +91,7 @@ class ServiceError(Exception):
         "storage_conflict": 409,
         "replacement_required": 428,
         "zone_busy": 423,
+        "server_busy": 503,
         "zip_disabled": 403,
         "invalid_request": 400,
         "invalid_comment": 400,
@@ -119,6 +121,10 @@ class PasteService:
         self._space_locks: dict[int, _DeviceSpaceLock] = {}
         self._operation_state: dict[str, str] = {}
         self._operation_state_lock = threading.Lock()
+        self._archive_slots = (
+            None if cfg.limits.max_active_archives is None
+            else threading.BoundedSemaphore(cfg.limits.max_active_archives)
+        )
         self._zone_collection_diagnostics: tuple[str, ...] = ()
         self._install_registry(cfg.zones, (), initial=True)
         self._refresh_zone_collections()
@@ -355,7 +361,7 @@ class PasteService:
         """Run an operation against an already captured registry snapshot."""
         with self._operation_state_lock:
             active = self._operation_state.get(zid)
-        if active in {"delete_batch", "archive"}:
+        if active == "delete_batch":
             raise ServiceError(
                 "zone_busy",
                 f"zone {zid!r} is busy with a {active} operation",
@@ -751,6 +757,7 @@ class PasteService:
             "auth_enabled": self.auth_enabled,
             "max_upload_bytes": self.cfg.max_upload_bytes,
             "max_image_pixels": self.cfg.max_image_pixels,
+            "max_archive_files": self.cfg.limits.max_archive_files,
             "show_full_path": self.cfg.show_full_path,
             "zones": zones,
             "groups": self._group_overview_snapshot(group_snapshot, group_configs),
@@ -1244,38 +1251,56 @@ class PasteService:
         log.info("comment updated zone=%s filename=%s", zid, filename)
         return self.item_payload(zid, stored, zone=zone, destination=destination)
 
-    def preview(
+    @contextmanager
+    def open_preview(
         self, zid: str, filename: str, *, blocking: bool = True
-    ) -> tuple[bytes, str]:
-        """Return binary content and MIME for known files only."""
-        if not self.has_zone(zid):
+    ) -> Iterator[tuple[StoredImage, FileHandle]]:
+        """Acquire a published zone's file; no locks survive into the consumer."""
+        with self._registry_lock:
+            destination = self._destinations.get(zid)
+        if destination is None:
             raise ServiceError("unknown_zone", f"unknown zone: {zid}")
         if not self._valid_filename(filename):
             raise ServiceError("unknown_image", "invalid filename")
+        selected = []
         try:
-            with self.zone_operation(
-                zid, kind="preview", exclusive=False, blocking=blocking, refresh=False
-            ) as (_zone, destination):
-                known = {
-                    item.filename: item
-                    for item in destination.list()
-                }
-                item = known.get(filename)
-                if item is None:
-                    raise ServiceError("unknown_image", "file is unknown in this zone")
+            try:
+                with destination.operation_lock(exclusive=False, blocking=blocking):
+                    selected = destination.acquire_reads([filename])
+                item, handle = selected[0]
                 if (
                     self.cfg.max_upload_bytes is not None
                     and item.size > self.cfg.max_upload_bytes
                 ):
                     raise ServiceError("too_large", "preview is too large to serve")
-                data = destination.read(filename)
-        except ServiceError:
-            raise
-        except UnknownImageError as exc:
-            raise ServiceError("unknown_image", str(exc)) from exc
+            except DestinationBusyError as exc:
+                raise ServiceError("zone_busy", str(exc)) from exc
+            except UnknownImageError as exc:
+                raise ServiceError("unknown_image", str(exc)) from exc
+            except (DestinationError, OSError) as exc:
+                raise ServiceError("destination_error", str(exc)) from exc
+            yield item, handle
+        finally:
+            for _item, handle in selected:
+                handle.close()
+
+    def preview(
+        self, zid: str, filename: str, *, blocking: bool = True
+    ) -> tuple[bytes, str]:
+        """Return bytes for Python callers; HTTP uses open_preview to stream."""
+        try:
+            with self.open_preview(zid, filename, blocking=blocking) as (item, handle):
+                chunks = []
+                remaining = item.size
+                while remaining:
+                    chunk = handle.read(min(64 * 1024, remaining))
+                    if not chunk:
+                        raise ServiceError("destination_error", "preview ended early")
+                    chunks.append(chunk)
+                    remaining -= len(chunk)
+                return b"".join(chunks), item.mime
         except (DestinationError, OSError) as exc:
             raise ServiceError("destination_error", str(exc)) from exc
-        return data, item.mime
 
     @contextmanager
     def archive_files(
@@ -1284,53 +1309,54 @@ class PasteService:
         filenames: list[str],
         *,
         blocking: bool = True,
-    ):
-        """Expose archive files while holding a zone lock."""
-        if not self.has_zone(zid):
+    ) -> Iterator[list[tuple[StoredImage, FileHandle]]]:
+        """Retain selected handles and a global permit, but no zone locks."""
+        with self._registry_lock:
+            zone = self._zone_cfg.get(zid)
+            destination = self._destinations.get(zid)
+        if zone is None or destination is None:
             raise ServiceError("unknown_zone", f"unknown zone: {zid}")
         if not filenames:
             raise ServiceError("invalid_request", "no files to archive")
-        if len(set(filenames)) != len(filenames):
-            raise ServiceError("invalid_request", "duplicate filenames")
+        max_files = self.cfg.limits.max_archive_files
+        if max_files is not None and len(filenames) > max_files:
+            raise ServiceError("too_large", "too many files requested for archive")
         for filename in filenames:
             if not isinstance(filename, str) or not self._valid_filename(filename):
                 raise ServiceError("invalid_filename", "invalid filename")
-        with self.zone_operation(
-            zid, kind="archive", exclusive=True, blocking=blocking, refresh=False
-        ) as (zone, destination):
-            if not zone.allow_zip_download:
-                raise ServiceError(
-                    "zip_disabled",
-                    "ZIP downloads are disabled for this zone",
-                )
-            known = {item.filename: item for item in destination.list()}
-            selected = []
+        if len(set(filenames)) != len(filenames):
+            raise ServiceError("invalid_request", "duplicate filenames")
+        if not zone.allow_zip_download:
+            raise ServiceError("zip_disabled", "ZIP downloads are disabled for this zone")
+        if self._archive_slots is not None and not self._archive_slots.acquire(blocking=False):
+            raise ServiceError("server_busy", "archive capacity is temporarily exhausted")
+        selected = []
+        try:
             try:
-                for filename in filenames:
-                    item = known.get(filename)
-                    if item is None:
-                        raise ServiceError(
-                            "unknown_image",
-                            f"file is unknown in this zone: {filename}",
-                        )
-                    # Verify every pair before sending HTTP headers.
-                    with destination.open_read(filename):
-                        pass
-                    selected.append(item)
-                total_bytes = sum(item.size for item in selected)
+                with destination.operation_lock(exclusive=False, blocking=blocking):
+                    selected = destination.acquire_reads(filenames)
+                total_bytes = sum(item.size for item, _handle in selected)
                 max_archive_bytes = self.cfg.limits.max_archive_bytes
                 if max_archive_bytes is not None and total_bytes > max_archive_bytes:
                     raise ServiceError(
                         "too_large",
                         "selected files exceed the archive size limit",
                     )
-            except ServiceError:
-                raise
+            except DestinationBusyError as exc:
+                raise ServiceError("zone_busy", str(exc)) from exc
             except UnknownImageError as exc:
                 raise ServiceError("unknown_image", str(exc)) from exc
             except (DestinationError, OSError) as exc:
                 raise ServiceError("destination_error", str(exc)) from exc
-            yield destination, selected
+            yield selected
+        finally:
+            try:
+                with ExitStack() as cleanup:
+                    for _item, handle in selected:
+                        cleanup.callback(handle.close)
+            finally:
+                if self._archive_slots is not None:
+                    self._archive_slots.release()
 
     # ---------------------------------------------------------------- divers
 

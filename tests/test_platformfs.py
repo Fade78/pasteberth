@@ -97,6 +97,39 @@ class PlatformFSContract(unittest.TestCase):
             )
             self.assertTrue(file_audit.private, file_audit.detail)
 
+    def test_entry_names_do_not_inspect_entries_and_refresh_after_create(self):
+        with self.fs.open_directory(self.directory_path, create=True) as directory:
+            self.assertEqual(self.fs.entry_names(directory), ())
+            with self.fs.create_exclusive(directory, "payload.bin"):
+                pass
+            (self.directory_path / "subdirectory").mkdir()
+            with mock.patch.object(self.fs, "entry_info", side_effect=AssertionError), \
+                 mock.patch.object(self.fs, "entries", side_effect=AssertionError):
+                names = self.fs.entry_names(directory)
+            self.assertIsInstance(names, tuple)
+            self.assertEqual(set(names), {"payload.bin", "subdirectory"})
+
+    def test_entry_names_follow_bound_directory_after_rename(self):
+        with self.fs.open_directory(self.directory_path, create=True) as directory:
+            with self.fs.create_exclusive(directory, "original.bin"):
+                pass
+            moved = self.directory_path.with_name("moved")
+            self.directory_path.rename(moved)
+            self.directory_path.mkdir()
+            (self.directory_path / "foreign.bin").write_bytes(b"foreign")
+            self.assertEqual(self.fs.entry_names(directory), ("original.bin",))
+
+    @unittest.skipIf(os.name == "nt", "POSIX descriptor enumeration")
+    def test_entry_names_do_not_stat_or_use_scandir_metadata(self):
+        with self.fs.open_directory(self.directory_path, create=True) as directory:
+            with self.fs.create_exclusive(directory, "payload.bin"):
+                pass
+            (self.directory_path / "broken-link").symlink_to("missing")
+            with mock.patch("os.stat", side_effect=AssertionError), \
+                 mock.patch("os.scandir", side_effect=AssertionError):
+                self.assertEqual(set(self.fs.entry_names(directory)),
+                                 {"payload.bin", "broken-link"})
+
     def test_safe_component_validation(self):
         with self.fs.open_directory(self.directory_path, create=True) as directory:
             for name in ("../escape", "a/b", "a\\b", "", ".."):

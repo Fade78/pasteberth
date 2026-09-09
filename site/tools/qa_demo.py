@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
-"""Demo regressions: synthetic clipboard events, mocked rich writes and memory quota."""
+"""Demo regressions: synthetic clipboard, mocked rich writes, memory quota and ZIP count limits."""
 import hashlib
+import io
 import json
 import os
 import unittest
+import zipfile
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -164,6 +166,64 @@ class DemoTests(unittest.IsolatedAsyncioTestCase):
           return {copy,upload,refused,move,used:await demoTest.used()};
         }''')
         self.assertEqual(result, {'copy':200,'upload':413,'refused':413,'move':200,'used':32*1024**2})
+
+    async def test_archive_adapter_enforces_advertised_count_before_reading(self):
+        result = await self.page.evaluate('''async () => {
+          await demoTest.clear(); const z=(await demoTest.zones())[0].id;
+          const names=Array.from({length:65},(_,i)=>`zip-${i}.bin`);
+          for (const name of names) await demoTest.upload(1,name,z);
+          const overview=await (await fetch('/api/zones')).json();
+          const read=Blob.prototype.arrayBuffer; let reads=0;
+          Blob.prototype.arrayBuffer=function(){reads++;return read.call(this);};
+          try {
+            const request=filenames=>fetch(`/api/zones/${z}/images/archive`,{method:'POST',body:JSON.stringify({filenames})});
+            const refused=await request(names), error=await refused.json(), rejectedReads=reads;
+            const accepted=await request(names.slice(0,64));
+            return {limit:overview.max_archive_files,refused:refused.status,error:error.error.code,
+              rejectedReads,accepted:accepted.status,mime:accepted.headers.get('content-type'),reads};
+          } finally { Blob.prototype.arrayBuffer=read; }
+        }''')
+        self.assertEqual(result, {'limit':64,'refused':413,'error':'too_large','rejectedReads':0,
+                                  'accepted':200,'mime':'application/zip','reads':64})
+
+    async def test_archive_ui_preflights_65_and_downloads_64(self):
+        # Expand only the synthetic seed; the adapter and product UI remain unchanged.
+        adapter = '<script>' + (ROOT / 'assets/demo-adapter.js').read_text()
+        fixture = '''<script>
+          const seed=window.PB_DEMO_SEED, zone=seed.overview.zones[0], item=zone.images[0];
+          zone.images=Array.from({length:65},(_,i)=>{
+            const filename=`selection-${i}.png`;
+            seed.files[filename]=seed.files[item.filename];
+            return {...item,id:filename,filename};
+          });
+          zone.count=zone.images.length;
+        </script>'''
+        await self.page.set_content((ROOT / 'demo.html').read_text().replace(adapter, fixture + adapter, 1), wait_until='load')
+        thumbs = self.page.locator('.zone').first.locator('.thumb-wrap')
+        await thumbs.nth(64).wait_for()
+        await self.page.evaluate('''() => {
+          window.archiveSubmissions=0;
+          const submit=HTMLFormElement.prototype.submit;
+          HTMLFormElement.prototype.submit=function(){window.archiveSubmissions++;return submit.call(this);};
+        }''')
+        await thumbs.first.click()
+        await thumbs.nth(64).click(modifiers=['Shift'])
+        await self.page.get_by_role('button', name='Download 65 files as ZIP', exact=True).click()
+        toast = self.page.locator('#toast')
+        self.assertEqual(await toast.inner_text(), 'ZIP downloads allow a maximum of 64 files; 65 selected')
+        self.assertTrue(await toast.is_visible())
+        self.assertIn('error', await toast.get_attribute('class'))
+        self.assertEqual(await self.page.evaluate('window.archiveSubmissions'), 0)
+        self.assertEqual(await self.page.locator('iframe[name^="pb-archive-"]').count(), 0)
+        await thumbs.nth(64).click(modifiers=['Control'])
+        async with self.page.expect_download() as download:
+            await self.page.get_by_role('button', name='Download 64 files as ZIP', exact=True).click()
+        data = Path(await (await download.value).path()).read_bytes()
+        with zipfile.ZipFile(io.BytesIO(data)) as archive:
+            self.assertEqual(set(archive.namelist()), {f'selection-{i}.png' for i in range(64)})
+            self.assertIsNone(archive.testzip())
+            self.assertEqual(archive.read('selection-0.png'), (ROOT / 'assets/examples/atlas.png').read_bytes())
+        self.assertEqual(await self.page.evaluate('window.archiveSubmissions'), 1)
 
 
 if __name__ == '__main__':

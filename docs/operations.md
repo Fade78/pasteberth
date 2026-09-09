@@ -38,6 +38,15 @@ counts managed items, not bytes; foreign files still consume disk space.
 `max_upload_size` and multipart/request budgets limit requests, not total
 storage. See [retention](reference/storage.md#retention).
 
+**Unreleased:** ZIP transfers retain source handles without zone locks, so even
+selected files can be replaced or deleted by managed operations during output.
+Plan for up to 64 source files per archive and four concurrent archives per
+process by default, bounded separately from request admission. Retained open
+versions can defer reclamation of deleted data until handles close. Monitor
+`503 server_busy` archive-slot exhaustion separately from writer-lock `423`;
+both return `Retry-After: 1`. The 256 MiB source-byte and 300-second streaming
+limits remain. See [resource budgets](reference/configuration.md#operational-budget-defaults).
+
 `pasteberth audit --config /absolute/path/config.toml` is a read-only deployment
 check. It includes listener binding and TLS checks, so run it before startup or
 with the service stopped when checking whether its configured port can bind.
@@ -56,10 +65,14 @@ completes; this is not a filesystem watcher or a fixed discovery deadline.
 a background cooldown of `max(10 seconds, last full refresh duration)` from
 completion. The duration includes scanning and registry installation; startup,
 foreground, and failed refresh attempts also set the cooldown. Its expiry
-does not launch work: the next eligible poll can start one job. Explicit
-service actions bypass the cooldown or join an in-flight refresh, without a
-second refresh in the same action. Slow explicit actions can therefore still
-wait on discovery.
+does not launch work: the next eligible poll can start one job. Mutations,
+directory resolution, and explicit history reads bypass the cooldown or join
+an in-flight refresh, without a second refresh in the same action. Those actions
+can therefore still wait on discovery. Preview/download GET and HEAD and ZIP
+neither trigger nor join scans: they use the published registry. New zones
+return `404` until published, and removals take effect through later publication.
+Acquisition still checks the destination and can block on filesystem I/O or an
+exclusive writer; this change does not add a hard response-time guarantee.
 
 **Unreleased diagnostics:** debug logs separate scan and registry-install
 durations and report per-rule scan timing, matches, and newly cached paths.

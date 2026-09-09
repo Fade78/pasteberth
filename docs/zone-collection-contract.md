@@ -17,8 +17,8 @@ scheduling tradeoffs, and timeout limits, see
 
 A zone collection discovers existing directories and exposes them as Pasteberth
 zones without writing those directories into `config.toml`. A discovered zone
-exists while its directory satisfies the collection rule and disappears when it
-no longer does.
+appears when a registry refresh publishes its eligibility and disappears when
+a later refresh publishes its removal. Membership is not a filesystem watcher.
 
 The primary use case is a repository tree:
 
@@ -44,8 +44,9 @@ after a scan observes it and a later poll reads the completed registry, without
 a service restart. `/api/groups` uses the same background refresh path.
 **Unreleased:** not every overview request starts a scan; both endpoints share
 the cooldown described in [refresh and lifecycle](#7-refresh-and-lifecycle).
-Directory resolution and other explicit service operations use the refresh
-path synchronously.
+Directory resolution, mutations, and explicit per-zone history use the refresh
+path synchronously. **Unreleased:** preview/download GET and HEAD and ZIP use
+the published registry without starting discovery or waiting for a scan.
 
 ## 2. Configuration
 
@@ -247,18 +248,32 @@ startup, foreground, background, and failed attempts. Its expiry does not
 itself schedule work: the next eligible overview poll can launch one job, and
 requests arriving while a refresh runs do not launch another.
 
-**Unreleased:** explicit service actions bypass the background cooldown. They
-perform a synchronous refresh or wait for the in-flight refresh instead of
+**Unreleased:** mutations, directory resolution, and explicit per-zone history
+reads bypass the background cooldown. They perform a synchronous refresh or
+wait for the in-flight refresh instead of
 starting a second one. Actions that already refreshed during zone validation do not
 refresh again when acquiring their operation lock: one refresh or join per
 service action, not one scan per helper call. A multi-request client workflow
 can still invoke several service actions. This is request coalescing and
 throttling, not a watcher, a hard timeout, or a discovery deadline.
 
+**Unreleased downloads:** preview/download GET and HEAD and ZIP use only the
+last published registry. They do not start or wait for discovery, even if the
+cooldown has expired or the requested ID is unknown. A new zone returns
+`404 unknown_zone` until published; an already published zone can remain
+addressable after losing eligibility until a later registry publishes its
+removal. Selected-file and directory-identity checks still apply. This is an
+explicit change from `2.1.21`'s request-time refresh, not fresh collection
+validation localized to the selected zone.
+
 The service replaces the dynamic zone configuration, destinations, locks, and
 group memberships as one in-memory snapshot. A later request sees the current
 snapshot; a request already holding a zone lock completes against its current
-operation state.
+operation state. **Unreleased:** a download captures its destination from that
+snapshot and retains selected metadata and payload handles after shared
+filesystem acquisition; it holds no zone lock while streaming. A later registry
+publication does not revoke those handles. See
+[managed reads](reference/storage.md#managed-reads-unreleased).
 
 This is a registry snapshot, not an atomic snapshot of all zone contents.
 Overview requests still read each history and check free space synchronously;

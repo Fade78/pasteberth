@@ -32,6 +32,11 @@ retrieved without Pasteberth interpreting their formats. Preview and clipboard
 actions depend on the content and browser. Storage persists on disk, but zone
 retention can remove older items: this is a working area, not a backup service.
 
+**Unreleased:** downloads use already published zones without waiting for
+discovery. Once files are acquired, even long ZIP transfers release zone locks
+so managed writes can continue. Acquisition can still wait on storage or a writer;
+see the [download contract](docs/reference/api.md#downloads-unreleased).
+
 ## Make It Yours
 
 | Your situation | A useful starting point |
@@ -109,9 +114,10 @@ visible browser polls every 10 seconds and shows new zones after a scan
 completes; this is not an instantaneous filesystem watcher. **Unreleased:**
 overview polls reuse the completed registry during a cooldown of the greater
 of 10 seconds or the last full refresh duration, measured from completion.
-The next eligible poll can start one background job; explicit service actions
-bypass the cooldown or wait for an in-flight refresh. Candidates must meet the
-collection's path, ID, permission, and leaf-directory rules.
+The next eligible poll can start one background job; mutations and explicit
+history reads still refresh or wait for an in-flight scan. Downloads neither
+start nor join scans, so new zones stay unknown until published. Candidates must
+meet the collection's path, ID, permission, and leaf-directory rules.
 Discovery neither creates projects nor registers the files inside them.
 
 Start with [project zones](docs/recipes/project-zones.md), or follow
@@ -124,8 +130,9 @@ The documented runtime is **2.1.21**, officially supported on **Linux** with
 runtime dependency.
 
 Changes labelled **Unreleased** describe the working tree, not the `2.1.21`
-release. They include discovery optimizations and a date alongside the time
-for items older than 24 elapsed hours in the selected-item panel; see the
+release. They include streamed downloads, archive budgets, discovery
+optimizations, and a date alongside the time for items older than 24 elapsed
+hours in the selected-item panel; see the
 [changelog](CHANGELOG.md#unreleased).
 
 For an instance already installed, go straight to

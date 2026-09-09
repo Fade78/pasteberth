@@ -807,7 +807,7 @@ class TestPreviewsConcurrence(Base):
         both_active = threading.Event()
         release = threading.Event()
         results = []
-        original_preview = self.server.service.preview
+        original_preview = self.server.service.open_preview
 
         def blocked_preview(*args):
             nonlocal active
@@ -821,7 +821,7 @@ class TestPreviewsConcurrence(Base):
         def fetch_preview():
             results.append(self.req("GET", preview_url))
 
-        with mock.patch.object(self.server.service, "preview", side_effect=blocked_preview):
+        with mock.patch.object(self.server.service, "open_preview", side_effect=blocked_preview):
             threads = [threading.Thread(target=fetch_preview) for _ in range(2)]
             for thread in threads:
                 thread.start()
@@ -1455,7 +1455,7 @@ class TestOperationsDeZone(Base):
 
     def test_zone_busy_est_visible_et_non_bloquant(self):
         with self.server.service.zone_operation(
-            "default", kind="archive", exclusive=True
+            "default", kind="delete_batch", exclusive=True
         ):
             status, _, response = self.req("GET", "/api/zones")
             self.assertEqual(status, 200)

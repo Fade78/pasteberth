@@ -17,18 +17,48 @@ from unittest.mock import patch
 from urllib.parse import unquote, urlsplit
 
 import rebuild
+import scratch
 from rebuild import ROOT, build_demo, build_preview, product_sources
+
+WORK = scratch.scratch_directory()
 
 
 class SiteSources(unittest.TestCase):
+    def test_scratch_defaults_outside_site(self):
+        self.assertEqual(WORK, rebuild.REPO / 'work/tmp/site')
+        self.assertFalse(WORK.is_relative_to(ROOT))
+        with tempfile.TemporaryDirectory(dir=WORK) as td, patch.object(scratch, 'REPO', Path(td)):
+            expected = Path(td) / 'work/tmp/site'
+            self.assertEqual(scratch.scratch_directory(), expected)
+            self.assertTrue(expected.is_dir())
+            self.assertEqual(scratch.scratch_directory(), expected)
+
+    def test_scratch_rejects_unsafe_paths_before_creation(self):
+        for relative in ('work', 'work/tmp', 'work/tmp/site'):
+            for kind in ('symlink', 'dangling', 'file'):
+                with self.subTest(path=relative, kind=kind), tempfile.TemporaryDirectory(dir=WORK) as td:
+                    repo = Path(td) / 'repo'
+                    path = repo / relative
+                    path.parent.mkdir(parents=True)
+                    outside = Path(td) / 'outside'
+                    if kind == 'file':
+                        path.write_text('preserve me')
+                    else:
+                        if kind == 'symlink':
+                            outside.mkdir()
+                        path.symlink_to(outside)
+                    with patch.object(scratch, 'REPO', repo), patch.object(Path, 'mkdir') as mkdir:
+                        with self.assertRaises(ValueError):
+                            scratch.scratch_directory()
+                        mkdir.assert_not_called()
+
     def test_copy_example_refuses_overwrite_before_register(self):
-        (ROOT / 'qa/work').mkdir(parents=True, exist_ok=True)
         snippet = unescape(re.search(r'<code id="method-code">(.*?)</code>',
                                     (ROOT / 'index.html').read_text(), re.S)[1])
         self.assertIn('cp -T --update=none-fail', snippet)
         for conflict in ('fresh', 'file', 'directory', 'symlink-file', 'symlink-directory',
                          'dangling', 'sidecar-file', 'sidecar-directory', 'sidecar-dangling'):
-            with self.subTest(conflict=conflict), tempfile.TemporaryDirectory(dir=ROOT / 'qa/work') as directory:
+            with self.subTest(conflict=conflict), tempfile.TemporaryDirectory(dir=WORK) as directory:
                 work = Path(directory)
                 source = work / 'report.pdf'
                 target = work / 'report-new.pdf'
@@ -66,14 +96,13 @@ class SiteSources(unittest.TestCase):
                     self.assertEqual((existing / 'sentinel').read_bytes(), b'preserve me')
 
     def test_build_rejects_escaping_symlinks_before_any_write(self):
-        (ROOT / 'qa/work').mkdir(parents=True, exist_ok=True)
         generated = ['demo.html', 'preview.html', 'assets/example-data.js']
         cases = [(path, sync) for sync in (False, True) for path in generated]
         cases += [(path, True) for path in [*rebuild.PRODUCT, 'source-manifest.json']]
         cases += [('assets', False), ('assets/product', True)]
         for path, sync in cases:
             for dangling in (False, True):
-                with self.subTest(path=path, sync=sync, dangling=dangling), tempfile.TemporaryDirectory(dir=ROOT / 'qa/work') as td:
+                with self.subTest(path=path, sync=sync, dangling=dangling), tempfile.TemporaryDirectory(dir=WORK) as td:
                     fixture = Path(td) / 'site'
                     shutil.copytree(ROOT, fixture, ignore=shutil.ignore_patterns('.venv', 'qa', 'previews', '__pycache__', 'export.*'))
                     target = fixture / path
@@ -182,7 +211,7 @@ if __name__ == '__main__':
     failed_tests = {getattr(test, 'test_case', test).id() for test, _ in result.failures + result.errors}
     (ROOT / 'qa').mkdir(exist_ok=True)
     report = {
-        'scope': 'Source equality, deterministic MIME-independent rebuild, no writes before symlink validation, historical capture hashes, local links, explicit public allowlist and GNU cp data/sidecar guard (register stubbed)',
+        'scope': 'Source equality, deterministic MIME-independent rebuild, work/tmp/site scratch validation, no writes before symlink validation, historical capture hashes, local links, explicit public allowlist and GNU cp data/sidecar guard (register stubbed)',
         'checked_at': datetime.now(timezone.utc).isoformat(),
         'preview_sha256': hashlib.sha256((ROOT / 'preview.html').read_bytes()).hexdigest(),
         'summary': {'passed': result.testsRun - len(failed_tests), 'failed': len(failed_tests)},
