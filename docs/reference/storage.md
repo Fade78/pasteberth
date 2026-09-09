@@ -250,6 +250,20 @@ for one item. For several selected items it instead lists filenames, sizes, and
 stored dates, and exposes the group actions. Individual preview/download actions
 are not shown in that state.
 
+### Displayed dates
+
+**Unreleased (runtime version still `2.1.21`):** the selected-item panel shows
+both date and time when the stored `created_at` is more than 24 elapsed hours
+old according to the browser clock. At exactly 24 hours or less it shows only
+the time; crossing midnight alone does not add a date. Formatting uses the
+browser's local timezone and the existing `en` locale, not a new locale setting.
+Missing or invalid timestamps display `Unknown time`.
+
+Tooltips and multiple-selection rows already show the full date and time and
+continue to do so. Copy and move preserve `created_at`: it is the stored item
+creation time, not arrival time in the destination zone. This display change
+adds no timestamp field and does not change history or retention ordering.
+
 ### Retention
 
 `retain = N` is the managed-item count target, not a time-to-live or byte quota.

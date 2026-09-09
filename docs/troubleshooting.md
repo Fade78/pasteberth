@@ -142,10 +142,38 @@ candidate has no subdirectories. Check daemon read/traversal permission and
 write permission for actual operations. Overlapping collection settings must
 agree. A group pattern selects IDs, not labels, and is not a discovery rule.
 
-New candidates appear after a background scan completes and a subsequent
-visible-browser poll; a hidden tab refreshes on becoming visible. A removed,
-inaccessible, or newly nonmatching directory can leave the active registry
+New candidates appear after a background scan observes them and a subsequent
+visible-browser poll reads the completed registry; a hidden tab refreshes on
+becoming visible. **Unreleased (runtime version still `2.1.21`):** not every
+overview starts a scan. Zone and group overviews share a cooldown of
+`max(10 seconds, last full refresh duration)` from completion, including
+startup, foreground, and failed refresh attempts. The duration includes
+registry installation. The next eligible poll can start one background job;
+polls during a refresh do not start another. A removed, inaccessible, or newly
+nonmatching directory can leave the active registry
 without deleting its contents. See the [collection contract](zone-collection-contract.md).
+
+### Discovery or overview is slow
+
+Measure before changing collection rules. `pasteberth audit` reports discovery
+duration, but not the service's registry-installation or overview storage cost.
+**Unreleased:** debug logs separate scan and installation timings and include
+per-rule timing, matches, and newly cached paths. Filesystem observations are
+shared across rules only within that pass; later scans read the filesystem
+again. Narrow bases and appropriate `max_depth` values can reduce traversal;
+the optimization does not change regex semantics.
+
+**Unreleased:** explicit service actions bypass the background cooldown or
+wait for the in-flight refresh, with one refresh or join per service action.
+This avoids duplicate scans within an action, not waits on slow filesystem
+calls. Zone-overview history and free-space checks also remain synchronous and
+can block independently of discovery. Neither the 10-second browser poll nor
+the cooldown is a response deadline. A hard 100 ms scan timeout cannot be
+enforced by checking elapsed time around blocking filesystem calls. A bounded
+wait would require separate worker scheduling and a policy for incomplete
+scans, not just a timer in the traversal loop. See
+[discovery performance](discovery-performance.md) for the strategy comparison
+and limitations.
 
 ### Registration succeeds but retention or server policy was not applied
 

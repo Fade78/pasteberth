@@ -104,10 +104,14 @@ configuration edit or daemon restart is needed after the rule is loaded.
 Groups can present all projects or focused views of the same zones, without
 duplicating their files.
 
-Discovery scans are triggered by service reads, with background scans for Web
-overviews. A visible browser polls every 10 seconds and shows new zones after
-a scan completes; this is not an instantaneous filesystem watcher. Candidates
-must meet the collection's path, ID, permission, and leaf-directory rules.
+Discovery is request-triggered, with background scans for Web overviews. A
+visible browser polls every 10 seconds and shows new zones after a scan
+completes; this is not an instantaneous filesystem watcher. **Unreleased:**
+overview polls reuse the completed registry during a cooldown of the greater
+of 10 seconds or the last full refresh duration, measured from completion.
+The next eligible poll can start one background job; explicit service actions
+bypass the cooldown or wait for an in-flight refresh. Candidates must meet the
+collection's path, ID, permission, and leaf-directory rules.
 Discovery neither creates projects nor registers the files inside them.
 
 Start with [project zones](docs/recipes/project-zones.md), or follow
@@ -118,6 +122,11 @@ Start with [project zones](docs/recipes/project-zones.md), or follow
 The documented runtime is **2.1.21**, officially supported on **Linux** with
 **Python 3.11+** and a supported local filesystem. It has no third-party Python
 runtime dependency.
+
+Changes labelled **Unreleased** describe the working tree, not the `2.1.21`
+release. They include discovery optimizations and a date alongside the time
+for items older than 24 elapsed hours in the selected-item panel; see the
+[changelog](CHANGELOG.md#unreleased).
 
 For an instance already installed, go straight to
 [Using Pasteberth](docs/using-pasteberth.md). To explore without starting a

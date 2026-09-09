@@ -19,7 +19,7 @@ the directory with permissions suitable for the daemon.
 ```
 
 3. Verify permissions, including existing parents; `umask` does not change existing directories. Do not put subdirectories inside `exchange`.
-4. Open the `Workspaces` group and wait for a refresh after the background scan completes. A visible Web UI polls every 10 seconds.
+4. Open the `Workspaces` group and wait for a scan that observes the new directory and a later poll that reads its result. A visible Web UI polls every 10 seconds; the Unreleased cooldown below can delay scan startup.
 5. Confirm the `beta` label, then publish a small allowed artifact and verify its history entry and download.
 
 ## Observable Result
@@ -28,6 +28,12 @@ The new zone has ID `beta-work-exchange` and label `beta` with
 `label_mode = "first-directory"`. It appears without a per-project config
 edit, daemon restart, or SSH action by the Web client. The template need not
 call a Pasteberth API or add a dependency to the project.
+
+**Unreleased (runtime version still `2.1.21`):** overview requests reuse the
+completed registry during a cooldown of the greater of 10 seconds or the last
+full refresh duration, measured from completion. The next eligible poll can
+start one background job; explicit service actions bypass the cooldown or
+wait for a running refresh. This is not a fixed discovery or response deadline.
 
 ## Pitfalls
 

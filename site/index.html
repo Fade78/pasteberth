@@ -633,8 +633,8 @@
 <span class="en" lang="en">Files dropped in this demo stay in this tab’s memory. They disappear when you reset or reload it.</span>
 </p>
 <p>
-<span class="fr" lang="fr">Démo 2.1.21 en anglais ; affiche initiale : capture historique 2.1.18 du 8 septembre 2026. Copie selon les permissions du navigateur.</span>
-<span class="en" lang="en">2.1.21 demo in English; initial poster: historical 2.1.18 capture from the 8 September 2026 archive. Clipboard access depends on browser permissions.</span>
+<span class="fr" lang="fr">Démo en anglais du frontend de travail (Unreleased ; version déclarée 2.1.21). Affiche initiale : capture historique 2.1.18 du 8 septembre 2026. Copie selon les permissions du navigateur.</span>
+<span class="en" lang="en">English working-tree frontend demo (Unreleased; declared version 2.1.21). Initial poster: historical 2.1.18 capture from the 8 September 2026 archive. Clipboard access depends on browser permissions.</span>
 </p>
 </div>
 <details class="version-note">
@@ -647,9 +647,10 @@
 </svg>
 </summary>
 <p>
-<span class="fr" lang="fr">Le frontend est copié sans modification depuis le runtime 2.1.21 de ce dépôt. Le serveur est simulé dans l’onglet : ni authentification, ni verrous, ni transactions ou garanties de stockage. Les transferts font partie du produit depuis 2.1.19. Limites propres à la démo : 8 Mio par fichier et 32 Mio de fichiers au total, pas un plafond strict de mémoire JavaScript. Le serveur a ses propres limites configurables (upload : 20 Mio par défaut).</span>
-<span class="en" lang="en">The frontend is copied unchanged from this repository’s 2.1.21 runtime. The server is simulated in this tab: no authentication, locks, transactions or storage guarantees. Transfers are part of the product since 2.1.19. Demo-only limits: 8 MiB per file and 32 MiB of files in total, not a strict JavaScript memory cap. The server has separate configurable limits (upload: 20 MiB by default).</span>
+<span class="fr" lang="fr">Le frontend est copié à l’identique depuis l’arbre de travail de ce dépôt, avec des modifications Unreleased absentes de la version publiée 2.1.21. Le runtime déclare toujours 2.1.21. Le serveur est simulé dans l’onglet : ni authentification, ni verrous, ni transactions ou garanties de stockage. Les transferts font partie du produit depuis 2.1.19. Limites propres à la démo : 8 Mio par fichier et 32 Mio de fichiers au total, pas un plafond strict de mémoire JavaScript. Le serveur a ses propres limites configurables (upload : 20 Mio par défaut).</span>
+<span class="en" lang="en">The frontend is copied byte-for-byte from this repository’s working tree, including Unreleased changes absent from published 2.1.21. The runtime still declares 2.1.21. The server is simulated in this tab: no authentication, locks, transactions or storage guarantees. Transfers are part of the product since 2.1.19. Demo-only limits: 8 MiB per file and 32 MiB of files in total, not a strict JavaScript memory cap. The server has separate configurable limits (upload: 20 MiB by default).</span>
 </p>
+<p><span class="fr" lang="fr">Unreleased : les cartes ajoutent la date à l’heure lorsque le <code>created_at</code> enregistré remonte à plus de 24 heures. Cet horodatage est conservé lors des copies et déplacements entre zones ; ce n’est pas l’heure d’arrivée dans la zone actuelle. Ce correctif appartient au frontend du produit, pas à un artifice de prévisualisation.</span><span class="en" lang="en">Unreleased: cards add the date to the time when stored <code>created_at</code> is more than 24 hours old. Copies and moves between zones preserve that timestamp; it is not arrival time in the current zone. This fix belongs to the product frontend, not a preview-only workaround.</span></p>
 <p><span class="fr" lang="fr">Les trois captures sont historiques : code affichant 2.1.18, conservées de l’archive datée du 8 septembre 2026. Elles ne montrent pas une installation 2.1.21.</span><span class="en" lang="en">The three screenshots are historical: code displaying 2.1.18, retained from the archive dated 8 September 2026. They do not show a 2.1.21 installation.</span> <a href="PROVENANCE.md">Provenance</a></p>
 <div class="capture-links">
 <button type="button" data-image="assets/interface-focus.png">
@@ -820,8 +821,8 @@ cp -T --update=none-fail -- report.pdf "$DEST" &amp;&amp;
 </span>
 </button>
 <p class="small-note">
-<span class="fr" lang="fr">Simulation accélérée. Le navigateur visible interroge le service toutes les 10 secondes. Les requêtes de vue déclenchent un scan asynchrone ; une réponse ultérieure expose son résultat. Ce n’est ni un watcher filesystem ni une boucle autonome permanente.</span>
-<span class="en" lang="en">Accelerated simulation. The visible browser polls every 10 seconds. Overview requests trigger an asynchronous scan; a later response exposes its result. This is neither a filesystem watcher nor a standalone perpetual scanning loop.</span>
+<span class="fr" lang="fr">Simulation accélérée, sans scan réel. Le navigateur visible interroge toujours le service toutes les 10 secondes. Unreleased, et non dans la version publiée 2.1.21 : après la fin d’un rafraîchissement, les requêtes de vue ne peuvent déclencher le prochain scan asynchrone qu’après une pause égale au maximum de 10 secondes et de la durée totale du dernier rafraîchissement. Une réponse ultérieure expose le résultat. Aucun délai maximal strict ne borne les appels filesystem ; ce n’est ni un watcher ni une boucle autonome permanente.</span>
+<span class="en" lang="en">Accelerated simulation, without a real scan. The visible browser still polls every 10 seconds. Unreleased, not in published 2.1.21: after a refresh completes, overview requests become eligible to start the next asynchronous scan only after a cooldown of max(10 seconds, last full refresh duration). A later response exposes the result. There is no hard filesystem-call timeout, filesystem watcher or standalone perpetual scanning loop.</span>
 </p>
 </div>
 <div class="discovery-visual">
@@ -1023,8 +1024,8 @@ cp -T --update=none-fail -- report.pdf "$DEST" &amp;&amp;
 </span>
 </div>
 <p class="muted">
-<span class="fr" lang="fr">Référence : runtime 2.1.21 de ce dépôt. La présence de code Windows ou macOS ne vaut pas validation native. Ce site ne certifie pas le backend.</span>
-<span class="en" lang="en">Reference: this repository’s 2.1.21 runtime. Windows or macOS code does not imply native validation. This site does not certify the backend.</span>
+<span class="fr" lang="fr">Référence : arbre de travail de ce dépôt, avec des modifications Unreleased ; version déclarée et dernière publication : 2.1.21. La présence de code Windows ou macOS ne vaut pas validation native. Ce site ne certifie pas le backend.</span>
+<span class="en" lang="en">Reference: this repository’s working tree, including Unreleased changes; declared and latest published version: 2.1.21. Windows or macOS code does not imply native validation. This site does not certify the backend.</span>
 </p>
 <a class="text-link" href="../GUIDE.md">
 <span class="fr" lang="fr">Lire le guide de déploiement</span>
@@ -1247,8 +1248,8 @@ cd pasteberth
 <span class="en" lang="en">No telemetry. No remote fonts or assets loaded.</span>
 </span>
 <span>
-<span class="fr" lang="fr">Site 2.1 · démo du runtime 2.1.21 · captures historiques 2.1.18</span>
-<span class="en" lang="en">Site 2.1 · runtime 2.1.21 demo · historical 2.1.18 captures</span> · <a href="LICENSE-Pasteberth.txt">AGPL-3.0-or-later</a>
+<span class="fr" lang="fr">Site 2.1 · démo Unreleased (version déclarée 2.1.21) · captures historiques 2.1.18</span>
+<span class="en" lang="en">Site 2.1 · Unreleased demo (declared version 2.1.21) · historical 2.1.18 captures</span> · <a href="LICENSE-Pasteberth.txt">AGPL-3.0-or-later</a>
 </span>
 </div>
 </footer>

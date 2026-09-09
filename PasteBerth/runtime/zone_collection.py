@@ -5,6 +5,8 @@ import hashlib
 import logging
 import os
 import re
+import stat
+import time
 from collections.abc import Hashable, Iterable, Mapping
 from dataclasses import dataclass, replace
 from pathlib import Path
@@ -49,14 +51,70 @@ def _zone_settings_signature(rule: ZoneCollectionConfig) -> tuple[object, ...]:
     )
 
 
-def _directory_key(path: Path) -> Hashable:
-    try:
-        info = path.stat()
-    except OSError:
+class _DiscoveryPass:
+    """Filesystem observations shared by rules, never by discovery calls."""
+
+    def __init__(self) -> None:
+        self.resolutions: dict[Path, tuple[Path | None, str | None]] = {}
+        self.stats: dict[Path, os.stat_result | None] = {}
+        self.entries: dict[
+            Path, tuple[tuple[tuple[str, bool, str | None], ...], str | None]
+        ] = {}
+        self.subtrees: dict[Path, tuple[bool, str | None]] = {}
+
+    def resolve(self, path: Path) -> tuple[Path | None, str | None]:
+        if path not in self.resolutions:
+            try:
+                # A cached parent alone cannot prove its ancestors are still
+                # free of symlinks. Keep strict, full resolution for new paths.
+                resolved = path.resolve(strict=True)
+            except (OSError, RuntimeError, ValueError) as exc:
+                self.resolutions[path] = (None, str(exc))
+            else:
+                self.resolutions[path] = (resolved, None)
+                self.resolutions.setdefault(resolved, (resolved, None))
+        return self.resolutions[path]
+
+    def stat(self, path: Path) -> os.stat_result | None:
+        if path not in self.stats:
+            try:
+                self.stats[path] = path.stat()
+            except OSError:
+                self.stats[path] = None
+        return self.stats[path]
+
+    def directory_key(self, path: Path) -> Hashable:
+        info = self.stat(path)
+        if info is not None and info.st_ino:
+            return ("identity", info.st_dev, info.st_ino)
         return ("path", os.path.normcase(os.path.normpath(str(path))))
-    if info.st_ino:
-        return ("identity", info.st_dev, info.st_ino)
-    return ("path", os.path.normcase(os.path.normpath(str(path))))
+
+    def inspect(
+        self, path: Path, *, leaf_only: bool = False,
+    ) -> tuple[tuple[tuple[str, bool, str | None], ...], str | None]:
+        # Key by canonical PATH, not inode: bind aliases can have different
+        # children/mounts, and their entry paths must remain relative to this base.
+        if path not in self.entries:
+            entries: list[tuple[str, bool, str | None]] = []
+            try:
+                with os.scandir(path) as scan:
+                    for entry in sorted(scan, key=lambda entry: entry.name):
+                        try:
+                            is_directory = entry.is_dir(follow_symlinks=True)
+                        except OSError as exc:
+                            entries.append((entry.name, False, str(exc)))
+                        else:
+                            if is_directory:
+                                entries.append((entry.name, True, None))
+                        if leaf_only and entries:
+                            # Reject at the first directory/error without checking
+                            # the tail. This partial probe is NOT traversal data.
+                            return (tuple(entries), None)
+            except OSError as exc:
+                self.entries[path] = ((), str(exc))
+            else:
+                self.entries[path] = (tuple(entries), None)
+        return self.entries[path]
 
 
 def _relative_path(path: Path, base: Path) -> str | None:
@@ -83,31 +141,38 @@ def _git_label(path: Path, relative: str) -> str:
     return relative
 
 
-def _candidate_subtree_ok(path: Path) -> tuple[bool, str | None]:
+def _candidate_subtree_ok(
+    path: Path, context: _DiscoveryPass,
+) -> tuple[bool, str | None]:
     """Reject candidates containing any subdirectory."""
-    try:
-        entries = sorted(os.scandir(path), key=lambda entry: entry.name)
-    except OSError as exc:
-        return False, f"cannot inspect subtree {path}: {exc}"
-    for entry in entries:
-        try:
-            if entry.is_dir(follow_symlinks=True):
-                return False, f"contains user subdirectory {entry.name!r}"
-        except OSError as exc:
-            return False, f"cannot inspect directory entry {entry.name!r}: {exc}"
-    return True, None
+    if path not in context.subtrees:
+        entries, error = context.inspect(path, leaf_only=True)
+        result: tuple[bool, str | None] = (True, None)
+        if error is not None:
+            result = (False, f"cannot inspect subtree {path}: {error}")
+        else:
+            for name, is_directory, entry_error in entries:
+                if entry_error is not None:
+                    result = (False, f"cannot inspect directory entry {name!r}: {entry_error}")
+                    break
+                if is_directory:
+                    result = (False, f"contains user subdirectory {name!r}")
+                    break
+        context.subtrees[path] = result
+    return context.subtrees[path]
 
 
 def _scan_collection(
     rule: ZoneCollectionConfig,
     rule_index: int,
+    context: _DiscoveryPass,
 ) -> tuple[list[tuple[Path, str, Hashable]], list[str]]:
     prefix = f"zone collection #{rule_index + 1}"
-    try:
-        base = rule.base_directory.resolve(strict=True)
-    except (OSError, RuntimeError, ValueError) as exc:
-        return [], [f"{prefix}: base directory is unavailable: {rule.base_directory} ({exc})"]
-    if not base.is_dir():
+    base, error = context.resolve(rule.base_directory)
+    if base is None:
+        return [], [f"{prefix}: base directory is unavailable: {rule.base_directory} ({error})"]
+    base_info = context.stat(base)
+    if base_info is None or not stat.S_ISDIR(base_info.st_mode):
         return [], [f"{prefix}: base directory is not a directory: {base}"]
 
     try:
@@ -117,32 +182,30 @@ def _scan_collection(
 
     matches: list[tuple[Path, str, Hashable]] = []
     diagnostics: list[str] = []
-    base_key = _directory_key(base)
-    stack: list[tuple[Path, frozenset[object]]] = [(base, frozenset({base_key}))]
+    base_key = context.directory_key(base)
+    stack: list[tuple[Path, Hashable, frozenset[object]]] = [
+        (base, base_key, frozenset({base_key}))
+    ]
     visited: set[object] = set()
     while stack:
-        current, ancestors = stack.pop()
-        current_key = _directory_key(current)
+        current, current_key, ancestors = stack.pop()
         if current_key in visited:
             continue
         visited.add(current_key)
-        try:
-            entries = sorted(os.scandir(current), key=lambda entry: entry.name, reverse=True)
-        except OSError as exc:
-            diagnostics.append(f"{prefix}: cannot inspect {current}: {exc}")
+        entries, error = context.inspect(current)
+        if error is not None:
+            diagnostics.append(f"{prefix}: cannot inspect {current}: {error}")
             continue
-        for entry in entries:
-            try:
-                if not entry.is_dir(follow_symlinks=True):
-                    continue
-            except OSError as exc:
-                diagnostics.append(f"{prefix}: cannot inspect {entry.name!r}: {exc}")
+        for name, is_directory, entry_error in reversed(entries):
+            if entry_error is not None:
+                diagnostics.append(f"{prefix}: cannot inspect {name!r}: {entry_error}")
                 continue
-            lexical = Path(entry.path)
-            try:
-                resolved = lexical.resolve(strict=True)
-            except (OSError, RuntimeError, ValueError) as exc:
-                diagnostics.append(f"{prefix}: cannot resolve {lexical}: {exc}")
+            if not is_directory:
+                continue
+            lexical = current / name
+            resolved, error = context.resolve(lexical)
+            if resolved is None:
+                diagnostics.append(f"{prefix}: cannot resolve {lexical}: {error}")
                 continue
             if lexical != resolved:
                 diagnostics.append(
@@ -156,15 +219,15 @@ def _scan_collection(
             depth = len(relative.split("/")) if relative else 0
             if depth == 0 or depth > rule.max_depth:
                 continue
-            child_key = _directory_key(resolved)
+            child_key = context.directory_key(resolved)
             if expression.fullmatch(relative):
-                valid, reason = _candidate_subtree_ok(resolved)
+                valid, reason = _candidate_subtree_ok(resolved, context)
                 if valid:
                     matches.append((resolved, relative, child_key))
                 else:
                     diagnostics.append(f"{prefix}: candidate {relative!r} ignored: {reason}")
             if depth < rule.max_depth and child_key not in ancestors:
-                stack.append((resolved, ancestors | {child_key}))
+                stack.append((resolved, child_key, ancestors | {child_key}))
     return matches, diagnostics
 
 
@@ -265,6 +328,7 @@ def _zone_from_candidate(
 
 def _static_directory_keys(
     static_zones: Mapping[str, ZoneConfig] | Iterable[ZoneConfig],
+    context: _DiscoveryPass,
 ) -> set[tuple[str, Hashable]]:
     zones = static_zones.values() if isinstance(static_zones, Mapping) else static_zones
     paths: set[tuple[str, Hashable]] = set()
@@ -273,7 +337,7 @@ def _static_directory_keys(
             path = zone.directory.resolve()
         except (OSError, RuntimeError, ValueError):
             continue
-        paths.add((os.path.normcase(os.path.normpath(str(path))), _directory_key(path)))
+        paths.add((os.path.normcase(os.path.normpath(str(path))), context.directory_key(path)))
     return paths
 
 
@@ -287,18 +351,31 @@ def discover_zone_collections(
         static_zones.values() if isinstance(static_zones, Mapping) else static_zones
     )
     static_zones = {zone.id: zone for zone in static_zone_values}
-    static = _static_directory_keys(static_zones)
+    context = _DiscoveryPass()
+    static = _static_directory_keys(static_zones, context)
+    static_paths = {path for path, _ in static}
+    static_identities = {identity for _, identity in static}
     static_ids = set(static_zones)
     diagnostics: list[str] = []
     records_by_identity: dict[
         Hashable, list[tuple[int, ZoneCollectionConfig, Path, str]]
     ] = {}
     for rule_index, rule in enumerate(rules):
-        matches, rule_diagnostics = _scan_collection(rule, rule_index)
+        started = time.perf_counter()
+        counts = (len(context.resolutions), len(context.stats), len(context.entries))
+        matches, rule_diagnostics = _scan_collection(rule, rule_index, context)
+        log.debug(
+            "zone collection #%d (%s): scan %.3fs, %d matches; "
+            "new cached paths: resolution=%d stat=%d enumeration=%d",
+            rule_index + 1, rule.id, time.perf_counter() - started, len(matches),
+            len(context.resolutions) - counts[0],
+            len(context.stats) - counts[1],
+            len(context.entries) - counts[2],
+        )
         diagnostics.extend(rule_diagnostics)
         for path, relative, identity in sorted(matches, key=lambda match: match[1]):
             normalized = os.path.normcase(os.path.normpath(str(path)))
-            if any(normalized == static_path or identity == static_identity for static_path, static_identity in static):
+            if normalized in static_paths or identity in static_identities:
                 diagnostics.append(
                     f"zone collection #{rule_index + 1}: candidate {relative!r} ignored: "
                     "static zone has precedence"

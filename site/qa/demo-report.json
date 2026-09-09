@@ -1,8 +1,8 @@
 {
   "scope": "Demo regressions: synthetic clipboard events, mocked rich writes and memory quota.",
-  "checked_at": "2026-09-08T23:28:50.908586+00:00",
+  "checked_at": "2026-09-09T18:19:35.212503+00:00",
   "browser": "145.0.7632.6",
-  "demo_sha256": "e676ef4439a130e9b107309b7784e26f9460a96f099eddb89d02cd7d69679450",
+  "demo_sha256": "bbdb53211ce01e7bbfef87fa801dcf09d31f7822ba4ac0495c75b9df0588894b",
   "summary": {
     "passed": 6,
     "failed": 0

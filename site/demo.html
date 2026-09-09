@@ -1495,15 +1495,19 @@ window.addEventListener('pagehide',()=>{for(const url of objectURLs)URL.revokeOb
     return n + " B";
   }
 
-  function fmtTime(iso) {
+  function fmtTime(iso, includeDate = false) {
     const d = new Date(iso);
-    return d.toLocaleTimeString("en", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+    if (!iso || Number.isNaN(d.getTime())) return "Unknown time";
+    const time = d.toLocaleTimeString("en", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+    if (includeDate || Date.now() - d.getTime() > 24 * 60 * 60 * 1000) {
+      return d.toLocaleDateString("en", { year: "numeric", month: "2-digit", day: "2-digit" })
+        + " " + time;
+    }
+    return time;
   }
 
   function fmtDateTime(iso) {
-    const d = new Date(iso);
-    return d.toLocaleDateString("en", { year: "numeric", month: "2-digit", day: "2-digit" })
-      + " " + fmtTime(iso);
+    return fmtTime(iso, true);
   }
 
   function toast(message, kind = "info") {

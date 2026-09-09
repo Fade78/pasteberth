@@ -5,6 +5,7 @@ LICENSE
 docs/concepts.md
 docs/contributing.md
 docs/deployment.md
+docs/discovery-performance.md
 docs/documentation-maintenance.md
 docs/integrations.md
 docs/operations.md

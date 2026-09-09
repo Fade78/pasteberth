@@ -1,8 +1,15 @@
 # Pasteberth Presentation Site
 
-Static presentation **site 2.1**, integrated with the repository's **2.1.21 runtime
-frontend**. English by default, French selectable; the actual product UI remains
-English. No framework, backend changes, telemetry, remote fonts or deployment.
+Static presentation **site 2.1**, integrated with the repository's **working-tree
+frontend, including Unreleased changes**. The declared runtime version and latest
+published release remain **2.1.21**; the demo is not the exact published frontend.
+English by default, French selectable; the actual product UI remains English.
+No framework, backend changes, release bump, telemetry, remote fonts or deployment.
+
+The Unreleased product frontend adds a date to card times when stored `created_at`
+is more than 24 hours old. Copies and moves preserve that timestamp; it is not
+arrival time in the current zone. Missing or invalid timestamps show `Unknown time`.
+The demo receives the fix through unchanged source copies, not a preview-only hack.
 
 ## Serve
 
@@ -141,7 +148,7 @@ and **simulated demo**, not a genuine daemon installation.
 
 ## Verification Scope
 
-The integration reran the following checks on 8 September 2026; machine-readable
+The site refresh reran the following checks on 9 September 2026; machine-readable
 reports include UTC timestamps and tested artifact hashes. No archive test count
 is evidence for this revision.
 
@@ -155,10 +162,11 @@ is evidence for this revision.
 | Browser-generated TOML and real temporary discovery | 18 passed, 0 failed | `qa/native-config-report.json` |
 | Actual static HTTP, Markdown, URL/Storage, root and mount | 34 passed, 0 failed | `qa/http-report.json` |
 
-The QA run also generated fresh EN/FR desktop/mobile **site** previews with
-`qa_site.py --screenshots`; they are ignored, not shipped historical artifacts.
-Desktop EN and full-page mobile EN / desktop FR were visually reviewed. These
-previews contain the labelled historical hero image and the current memory demo.
+The earlier integration generated EN/FR desktop/mobile **site** previews with
+`qa_site.py --screenshots` and visually reviewed desktop EN, full-page mobile EN
+and desktop FR. Those ignored previews are not current-refresh evidence or shipped
+historical artifacts. This refresh reran automated QA without new screenshots or
+a fresh visual review.
 
 Environment adjustments: system `python` and Chromium were absent, and
 `python3 -m venv` failed because ensurepip was unavailable. `uv` supplied the
@@ -197,7 +205,8 @@ preview images, old QA success reports or private screenshots were imported.
 **The screenshots remain historical 2.1.18 captures from the archive dated
 8 September 2026**, not screenshots of runtime 2.1.21. Their inherited capture
 method and exact hashes are documented separately. The interactive demo, by
-contrast, uses the current 2.1.21 frontend with a memory-only adapter.
+contrast, uses the working-tree frontend with Unreleased changes and a memory-only
+adapter. Its displayed runtime version remains 2.1.21, not a release claim.
 
 Demo uploads are limited to 8 MiB per file and 32 MiB of files in total; this is
 not a strict JavaScript memory ceiling or the server's configured upload limit
@@ -212,8 +221,16 @@ The TOML generator is a **site tool**, not a runtime feature. It generates a
 collection/group snippet, not a complete secure service configuration. Its
 `retain = 100` is an explicit example choice, not the default of 10. Verify
 collection-ID uniqueness and actual filesystem permissions with `pasteberth audit`.
-Discovery is request-triggered asynchronous scanning with visible-browser polling,
-not a standalone perpetual watcher. Groups are views, not ACLs. The optional
+Discovery is request-triggered asynchronous scanning with visible-browser polling
+every 10 seconds, not a standalone perpetual watcher. In the Unreleased working
+tree, background polls become eligible to start another scan only after completion
+plus `max(10 seconds, last full refresh duration)`, including scan and registry
+installation. Failed and foreground refreshes also establish the cooldown;
+foreground requests can refresh without waiting for it. Filesystem observations
+are reused within a discovery pass, not across refreshes. There is no hard
+filesystem-call timeout or guaranteed discovery deadline. These scanner and
+cooldown changes are not published 2.1.21 behavior and are not exercised by the
+memory-only discovery animation. Groups are views, not ACLs. The optional
 review-workflow example adds no process enforcement, messaging or notifications.
 
 The `cp + register` example deliberately uses a fresh name and GNU cp supporting

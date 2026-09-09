@@ -107,15 +107,19 @@ directory access or update process membership. See [operations](operations.md).
 
 1. Check that the daemon can traverse the parents and read the base and exchange directory. Read/execute access can be enough for discovery, but write access is also needed for publication, sidecars, locks, and retention.
 2. Run `pasteberth audit --config /absolute/path/config.toml` in the daemon's account/context and inspect collection candidate diagnostics. Account for service sandbox restrictions as well as Unix permissions.
-3. Open the Web UI's `Workspaces` group. A visible page polls every 10 seconds; overview requests start a background scan and return the last completed snapshot while it runs. Wait for a refresh after that scan completes.
+3. Open the Web UI's `Workspaces` group. A visible page polls every 10 seconds; overview requests use background discovery and return the last completed registry while it runs. Wait for a scan that observes the new directory and a later poll that reads its result. The Unreleased cooldown below can delay scan startup.
 4. Confirm the `alpha` label. The API zone ID for this example is `alpha-work-exchange`, not `alpha` or `@workspaces`.
 5. Upload a small allowed test artifact and confirm its history entry and downloadable bytes. A directory appearing in a group alone does not prove it is writable or that a separately registered file is readable by the daemon.
 
-No watcher continuously announces filesystem events. `/api/zones` and
-`/api/groups` overview reads refresh discovery in the background; operations
-such as directory resolution use the refresh path synchronously. A hidden
-browser tab refreshes when it becomes visible. There is no exact discovery
-deadline.
+No watcher continuously announces filesystem events. **Unreleased (runtime
+version still `2.1.21`):** `/api/zones` and `/api/groups` share a background
+cooldown of `max(10 seconds, last full refresh duration)` from completion,
+including startup, foreground, and failed refresh attempts. Duration includes
+registry installation. The next eligible poll can launch one job; not every
+overview request starts a scan. Explicit service actions such as directory
+resolution bypass the cooldown or wait for an in-flight refresh, synchronously.
+A hidden browser tab refreshes when it becomes visible. There is no exact
+discovery deadline, and overview history/free-space reads can still block.
 
 ## Eligibility and Lifecycle
 
@@ -123,7 +127,7 @@ deadline.
 - The resolved candidate must remain below the base, match the case-sensitive pattern, fit `max_depth`, and contain no subdirectory, including a directory link.
 - IDs join relative components with `-` and convert to lowercase. They must match `^[a-z0-9][a-z0-9_-]{0,63}$`; invalid, overlong, or colliding IDs are rejected rather than truncated or given suffixes. Prefer short project directory names using letters, digits, hyphens, and underscores.
 - A static zone takes precedence at its directory. Multiple collections may include the same candidate only when their zone settings agree. Groups may present that one zone in several views without copying its files.
-- A new eligible directory appears on refresh. A removed, inaccessible, nonmatching, or no-longer-leaf directory drops out of discovery. Losing eligibility is not an instruction to delete its files.
+- A new eligible directory appears after a discovery refresh observes it. A removed, inaccessible, nonmatching, or no-longer-leaf directory drops out after discovery observes the change. Losing eligibility is not an instruction to delete its files.
 - Renaming a project can change both its zone ID and references. Old references do not redirect, and previously known MCP zone IDs can stop working.
 - Discovery is not a recursive filesystem browser, an ACL system, or a queue. Provisioning an exchange point does not assign work or publish a tool's outputs automatically.
 

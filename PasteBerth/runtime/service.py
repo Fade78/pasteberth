@@ -12,6 +12,7 @@ import os
 import threading
 from contextlib import ExitStack, contextmanager
 from pathlib import Path
+from time import monotonic
 from urllib.parse import quote
 
 from .zone_collection import (
@@ -110,6 +111,8 @@ class PasteService:
         self._zone_collection_refresh_in_progress = False
         self._zone_collection_refresh_generation = 0
         self._zone_collection_refresh_closed = False
+        self._zone_collection_refresh_started = 0.0
+        self._zone_collection_refresh_after = 0.0
         self._zone_cfg: dict[str, ZoneConfig] = {}
         self._destinations: dict[str, LocalDestination] = {}
         self._locks: dict[str, threading.RLock] = {}
@@ -205,7 +208,8 @@ class PasteService:
                 destinations.pop(zid, None)
                 active_zones.pop(zid, None)
                 continue
-            self._space_locks.setdefault(device, _DeviceSpaceLock(device))
+            if device not in self._space_locks:
+                self._space_locks[device] = _DeviceSpaceLock(device)
         active_candidates = tuple(
             candidate for candidate in candidates if candidate.zone.id in active_zones
         )
@@ -235,12 +239,20 @@ class PasteService:
 
     def _perform_zone_collection_refresh(self) -> None:
         with self._zone_collection_refresh_lock:
+            started = monotonic()
             candidates, diagnostics = discover_zone_collections(
                 self.cfg.zone_collections,
                 self.cfg.zones,
             )
             candidate_tuple = tuple(candidates)
+            scanned = monotonic()
             self._install_registry(self.cfg.zones, candidate_tuple)
+            installed = monotonic()
+            log.debug(
+                "zone collection refresh scan=%.3fs install=%.3fs",
+                scanned - started,
+                installed - scanned,
+            )
             diagnostic_tuple = tuple(diagnostics)
             if diagnostic_tuple != self._zone_collection_diagnostics:
                 for message in diagnostic_tuple:
@@ -249,6 +261,10 @@ class PasteService:
 
     def _finish_zone_collection_refresh(self) -> None:
         with self._zone_collection_refresh_condition:
+            completed = monotonic()
+            duration = completed - self._zone_collection_refresh_started
+            # Cool down after completion, including failures and foreground scans.
+            self._zone_collection_refresh_after = completed + max(10.0, duration)
             self._zone_collection_refresh_in_progress = False
             self._zone_collection_refresh_generation += 1
             self._zone_collection_refresh_condition.notify_all()
@@ -271,6 +287,10 @@ class PasteService:
             if self._zone_collection_refresh_in_progress:
                 owner = False
             else:
+                now = monotonic()
+                if background and now < self._zone_collection_refresh_after:
+                    return
+                self._zone_collection_refresh_started = now
                 self._zone_collection_refresh_in_progress = True
                 owner = True
         if not owner:
@@ -373,7 +393,7 @@ class PasteService:
         blocking: bool = True,
         refresh: bool = True,
     ):
-        """Coordinate a zone operation in this process and on disk."""
+        """Coordinate an operation; skip refresh only after this request refreshed."""
         if refresh:
             self._refresh_zone_collections()
         with self._registry_lock:
@@ -763,7 +783,7 @@ class PasteService:
             data, declared_mime, filename_hint, preserve_filename
         )
         with self.zone_operation(
-            zid, kind="upload", exclusive=True, blocking=blocking
+            zid, kind="upload", exclusive=True, blocking=blocking, refresh=False
         ) as (zone, destination):
             stored, retention_deleted, duplicate = self._store_prepared_upload(
                 zid,
@@ -796,7 +816,7 @@ class PasteService:
         if not self.has_zone(zid):
             raise ServiceError("unknown_zone", f"unknown zone: {zid}")
         with self.zone_operation(
-            zid, kind="upload", exclusive=True, blocking=blocking
+            zid, kind="upload", exclusive=True, blocking=blocking, refresh=False
         ) as (zone, destination):
             try:
                 data, stage_identity = destination.read_direct_drop(
@@ -895,7 +915,7 @@ class PasteService:
             raise ServiceError("unknown_image", "invalid filename")
         try:
             with self.zone_operation(
-                zid, kind="delete", exclusive=True, blocking=blocking
+                zid, kind="delete", exclusive=True, blocking=blocking, refresh=False
             ) as (_zone, destination):
                 destination.delete(
                     filename,
@@ -930,7 +950,7 @@ class PasteService:
         failed: list[dict] = []
         try:
             with self.zone_operation(
-                zid, kind="delete_batch", exclusive=True, blocking=blocking
+                zid, kind="delete_batch", exclusive=True, blocking=blocking, refresh=False
             ) as (_zone, destination):
                 for filename in filenames:
                     try:
@@ -1184,7 +1204,7 @@ class PasteService:
             raise ServiceError("invalid_filename", "invalid source or target filename")
         try:
             with self.zone_operation(
-                zid, kind="rename", exclusive=True, blocking=blocking
+                zid, kind="rename", exclusive=True, blocking=blocking, refresh=False
             ) as (zone, destination):
                 stored = destination.rename(source, target)
         except UnknownImageError as exc:
@@ -1212,7 +1232,7 @@ class PasteService:
             raise ServiceError("invalid_comment", str(exc)) from exc
         try:
             with self.zone_operation(
-                zid, kind="comment", exclusive=True, blocking=True
+                zid, kind="comment", exclusive=True, blocking=True, refresh=False
             ) as (zone, destination):
                 stored = destination.update_comment(filename, comment)
         except UnknownImageError as exc:
@@ -1234,7 +1254,7 @@ class PasteService:
             raise ServiceError("unknown_image", "invalid filename")
         try:
             with self.zone_operation(
-                zid, kind="preview", exclusive=False, blocking=blocking
+                zid, kind="preview", exclusive=False, blocking=blocking, refresh=False
             ) as (_zone, destination):
                 known = {
                     item.filename: item
@@ -1276,7 +1296,7 @@ class PasteService:
             if not isinstance(filename, str) or not self._valid_filename(filename):
                 raise ServiceError("invalid_filename", "invalid filename")
         with self.zone_operation(
-            zid, kind="archive", exclusive=True, blocking=blocking
+            zid, kind="archive", exclusive=True, blocking=blocking, refresh=False
         ) as (zone, destination):
             if not zone.allow_zip_download:
                 raise ServiceError(

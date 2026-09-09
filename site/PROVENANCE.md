@@ -4,9 +4,26 @@
 
 This is the repository integration of the approved **presentation site 2.1**,
 not a new Pasteberth release. Its interactive demo uses the repository's
-**2.1.21** runtime frontend. Runtime `__version__` and `pyproject.toml` agree.
-The current changelog records transfers, asynchronous discovery and
-`first-directory` labels under 2.1.19, not Unreleased.
+**working-tree frontend, including Unreleased changes**, not the exact published
+2.1.21 frontend. Runtime `__version__` and `pyproject.toml` still agree on
+**2.1.21**, the latest published version; no release bump is part of this work.
+Transfers, asynchronous discovery and `first-directory` labels shipped in 2.1.19.
+
+The Unreleased frontend adds a date to card timestamps when stored `created_at`
+is more than 24 hours old, and handles missing or invalid timestamps as
+`Unknown time`. `created_at` is preserved across copies and moves between zones;
+it is not arrival time in the current zone. This is actual product frontend code,
+copied unchanged into the demo, not a preview-only date adjustment.
+
+The Unreleased scanner reuses filesystem observations within one discovery pass,
+not across refreshes. Background discovery remains request-triggered. Visible-tab
+polls still run every 10 seconds, but a poll becomes eligible to start a new scan
+only after completion plus `max(10 seconds, last full refresh duration)`, including
+scan and registry installation. Failed and foreground refreshes also establish
+that cooldown; foreground requests can refresh without waiting for it. No hard
+filesystem-call timeout or autonomous watcher is added. The memory demo does not
+run this scanner or certify its timing; these claims come from the current source,
+not published 2.1.21 behavior or daemon screenshots.
 
 `source-manifest.json` pins four byte-for-byte frontend copies and records the
 source commit as context. The hashes, rather than a clean-tree assertion, identify
@@ -23,7 +40,8 @@ assets are fixed in the builder rather than taken from the host registry.
 | Files, sidecars, registration and publication | `../GUIDE.md`, `../PasteBerth/runtime/storage.py`, `service.py`, `cli.py` |
 | Original English product UI | `../PasteBerth/runtime/static/{app.js,style.css,favicon.svg}`, `templates/index.html` |
 | Collections, eligibility, labels and IDs | `../PasteBerth/runtime/config.py`, `zone_collection.py`, `../docs/zone-collection-contract.md` |
-| Request-triggered background discovery | `../PasteBerth/runtime/service.py`; visible-tab polling in `static/app.js` |
+| Unreleased scanner reuse and completion-based cooldown | `../PasteBerth/runtime/zone_collection.py`, `service.py`; unchanged visible-tab poll interval in `static/app.js` |
+| Unreleased card date display | `../PasteBerth/runtime/static/app.js`: `fmtTime(item.created_at)` |
 | Upload and retention defaults | `../PasteBerth/runtime/config.py`: 20 MiB upload, collection retain 10 |
 | Product status | `../CHANGELOG.md`, runtime `__init__.py`, `../pyproject.toml` |
 

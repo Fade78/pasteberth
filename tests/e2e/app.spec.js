@@ -296,6 +296,85 @@ test.beforeEach(async ({ request }) => {
   await resetServer(request);
 });
 
+test.describe("timestamps", () => {
+  test.use({ timezoneId: "UTC" });
+
+  async function mockItems(page, items) {
+    const response = await page.request.get("/api/zones");
+    const overview = await response.json();
+    overview.zones.find(zone => zone.id === "default").images = items.map(item => ({
+      id: item.filename,
+      kind: "binary",
+      mime: "application/octet-stream",
+      size: 4,
+      reference: `@${item.filename}`,
+      preview_url: `data:image/png;base64,${ONE_PIXEL_PNG}`,
+      ...item,
+    }));
+    await page.route("**/api/zones", route => route.fulfill({ json: overview }));
+  }
+
+  test("compact dates use elapsed 24 hours and preserve full details", async ({ page }) => {
+    await page.clock.setFixedTime(new Date("2026-01-02T12:00:00Z"));
+    const cases = [
+      ["recent.bin", "2026-01-02T11:00:00Z", "11:00:00 AM", "01/02/2026 11:00:00 AM"],
+      ["yesterday.bin", "2026-01-01T13:00:00Z", "01:00:00 PM", "01/01/2026 01:00:00 PM"],
+      ["exactly24.bin", "2026-01-01T12:00:00Z", "12:00:00 PM", "01/01/2026 12:00:00 PM"],
+      ["over24.bin", "2026-01-01T11:59:59.999Z", "01/01/2026 11:59:59 AM", "01/01/2026 11:59:59 AM"],
+      ["older.png", "2025-12-30T09:15:30Z", "12/30/2025 09:15:30 AM", "12/30/2025 09:15:30 AM"],
+      ["future.bin", "2026-01-03T13:00:00Z", "01:00:00 PM", "01/03/2026 01:00:00 PM"],
+      ["invalid.bin", "not-a-date", "Unknown time", "Unknown time"],
+      ["missing.bin", null, "Unknown time", "Unknown time"],
+    ];
+    await mockItems(page, cases.map(([filename, created_at]) => ({
+      filename,
+      created_at,
+      ...(filename === "older.png" ? { kind: "image", width: 1, height: 1 } : {}),
+    })));
+    await openApp(page);
+    const zone = page.locator('.zone[data-zone="default"]');
+    for (const [filename, , compact, full] of cases) {
+      const thumbnail = zone.locator(`.thumb-wrap[data-item-id="${filename}"]`);
+      await thumbnail.click();
+      await expect(zone.locator(".fname")).toHaveText(filename);
+      await expect(zone.locator(".dims")).toHaveText(
+        `${filename === "older.png" ? "1×1" : "Bin"} · 4 B · ${compact}`,
+      );
+      for (const locator of [thumbnail, zone.locator(".thumb-big, .file-box")]) {
+        const title = await locator.getAttribute("title");
+        expect(title.split("\n").find(line => line.startsWith("Created:")))
+          .toBe(`Created: ${full}`);
+      }
+    }
+
+    await zone.locator('.thumb-wrap[data-item-id="recent.bin"]').click();
+    await zone.locator('.thumb-wrap[data-item-id="older.png"]').click({ modifiers: ["Control"] });
+    await expect(zone.locator(".selection-summary-meta")).toHaveText([
+      "4 B · 01/02/2026 11:00:00 AM",
+      "4 B · 12/30/2025 09:15:30 AM",
+    ]);
+  });
+
+  test("compact dates cross 24 hours on an unchanged poll without NEW", async ({ page }) => {
+    const now = new Date("2026-01-02T12:00:00Z");
+    await page.clock.install({ time: now });
+    await page.clock.setFixedTime(now);
+    await mockItems(page, [{ filename: "unchanged.bin", created_at: "2026-01-01T12:00:00Z" }]);
+    await openApp(page);
+    const zone = page.locator('.zone[data-zone="default"]');
+    await expect(zone.locator(".dims")).toHaveText("Bin · 4 B · 12:00:00 PM");
+    const tooltip = await zone.locator(".thumb-wrap").getAttribute("title");
+
+    await page.clock.setFixedTime(new Date(now.getTime() + 1));
+    const poll = page.waitForResponse(response => response.url().endsWith("/api/zones"));
+    await page.clock.fastForward(10_000);
+    await poll;
+    await expect(zone.locator(".dims")).toHaveText("Bin · 4 B · 01/01/2026 12:00:00 PM");
+    await expect(zone.locator(".thumb-wrap")).toHaveAttribute("title", tooltip);
+    await expect(zone.locator(".new-badge")).toHaveCount(0);
+  });
+});
+
 test("charge les zones et expose une sélection clavier accessible", async ({ page }) => {
   await openApp(page);
   const brandIcon = page.locator(".brand-icon");

@@ -29,6 +29,9 @@ content snapshot. A zone with `busy: true`, `count: null`, and `images: []` has
 unavailable history, not a confirmed empty directory. Refresh after the busy
 operation finishes before treating missing items as deleted.
 
+Background discovery does not make the entire overview asynchronous. History
+and free-space checks still run synchronously and can block on filesystem I/O.
+
 Monitor filesystem free space, service errors, unreadable sidecars, collection
 diagnostics, repeated login throttling, and `zone_busy` responses. Retention
 counts managed items, not bytes; foreign files still consume disk space.
@@ -48,6 +51,22 @@ collection, group, or authentication settings. Existing collection rules can
 discover new matching directories without restart or config edits. A visible
 browser polls every 10 seconds, with new candidates appearing after a scan
 completes; this is not a filesystem watcher or a fixed discovery deadline.
+
+**Unreleased (runtime version still `2.1.21`):** zone and group overviews share
+a background cooldown of `max(10 seconds, last full refresh duration)` from
+completion. The duration includes scanning and registry installation; startup,
+foreground, and failed refresh attempts also set the cooldown. Its expiry
+does not launch work: the next eligible poll can start one job. Explicit
+service actions bypass the cooldown or join an in-flight refresh, without a
+second refresh in the same action. Slow explicit actions can therefore still
+wait on discovery.
+
+**Unreleased diagnostics:** debug logs separate scan and registry-install
+durations and report per-rule scan timing, matches, and newly cached paths.
+The scanner shares observations across rules within one pass only; caches do
+not persist into the next scan. Use these measurements to distinguish scan
+cost from installation and overview storage I/O. See
+[troubleshooting](troubleshooting.md#discovery-or-overview-is-slow).
 
 Local filesystem commands read their own selected configuration on each
 invocation. Running them with a different file from the daemon can apply

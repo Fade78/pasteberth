@@ -78,12 +78,22 @@ unit alone does not refresh its supplementary groups. A successful `register`
 can otherwise create a sidecar that the daemon cannot read.
 
 A zone collection can cover a whole project tree, for example
-`/home/me/Depots/*/work/exchange`. When a new matching project directory is
-created, the next zone overview starts a background scan. A visible browser
-polls every 10 seconds and normally shows it on the first poll after the scan
-completes. No configuration edit or
-service restart is needed; the directory must still be readable, writable, and
+`/home/me/Depots/*/work/exchange`. A visible browser polls every 10 seconds and
+shows a new matching directory after a background scan observes it and a later
+poll reads the completed registry. No configuration edit or service restart
+is needed; the directory must still be readable, writable, and
 traversable and satisfy the rule's depth and subtree constraints.
+
+**Unreleased (runtime version still `2.1.21`):** zone and group overviews share
+a background cooldown of `max(10 seconds, last full refresh duration)` from
+completion, including registry installation. Startup, foreground, and failed
+refresh attempts also set it. The next eligible poll can launch one job;
+not every overview starts a scan. Explicit service actions bypass the cooldown
+or wait for an in-flight refresh, without a duplicate refresh in the same
+action. Scanner caches are shared across rules within one pass only. Overview
+history and free-space checks remain synchronous and can block; there is no
+hard discovery or response deadline. These changes are not in the `2.1.21`
+release.
 
 Shared Web authentication is not per-user authorization. Groups and collections
 organize zones but do not grant or restrict access. Filesystem group permissions

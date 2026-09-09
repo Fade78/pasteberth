@@ -44,6 +44,12 @@ appear in the managed history.
 
 Select an item in the history to inspect it and see its available actions.
 
+**Unreleased (runtime version still `2.1.21`):** the selected item's time gains
+a date once its stored `created_at` is more than 24 elapsed hours old, not just
+because midnight has passed. Dates and times use the browser's local timezone
+and the unchanged `en` locale. Tooltips and multiple-selection rows already
+show full dates. This changes the display, not the stored timestamp.
+
 | Need | Action and limit |
 |---|---|
 | Give a local tool a path | `Copy link` copies a formatted filesystem reference, not a public web link. The tool needs access to the same server-side path. |
@@ -85,7 +91,9 @@ record an approval process.
 
 Copy leaves the source items in place. A successful move publishes target pairs
 before removing their source pairs. Transfers preserve filenames and metadata,
-including comments, and reject occupied target names rather than replace them.
+including comments and `created_at`, and reject occupied target names rather
+than replace them. The displayed creation time is not arrival time in the
+destination zone; transfers do not add an arrival timestamp.
 The target's retention and free-space rules apply. A batch can partly succeed;
 read the result and inspect both zones before retrying. Selection does not make
 the files one atomic bundle.
@@ -101,10 +109,15 @@ visible. An item published by another client may therefore take a refresh to
 appear. `NEW` markers belong to the current browser tab, clear as items are
 selected, and reset on reload. They are not delivery receipts.
 
-Collection zones appear after a completed background scan and a subsequent
-refresh. This is polling, not instant filesystem notification. If an expected
-zone or registered file stays missing, use [troubleshooting](troubleshooting.md)
-rather than repeatedly writing the file.
+Collection zones appear after a scan observes them and a subsequent refresh
+reads the completed registry. **Unreleased:** overview polls reuse that registry
+during a cooldown of the greater of 10 seconds or the last full refresh
+duration, measured from completion. The next eligible poll can start one
+background job. Explicit service actions bypass that cooldown or wait for a
+running refresh. This is polling, not instant filesystem notification or a
+response-time guarantee; overview history and free-space reads can still block.
+If an expected zone or registered file stays missing, use
+[troubleshooting](troubleshooting.md) rather than repeatedly writing the file.
 
 Retention limits the managed history and can delete older items after service
 publication. A copied reference does not pin its file. See

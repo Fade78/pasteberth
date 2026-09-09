@@ -1,13 +1,17 @@
 # Pasteberth Zone Collection Contract
 
 Status: implemented contract. This document describes `[[zone_collection]]`
-and the sidecar storage used by the zones it discovers.
+and the sidecar storage used by the zones it discovers. Changes marked
+**Unreleased** describe the working tree, not the `2.1.21` release; the runtime
+version remains `2.1.21`.
 
 For a setup walkthrough, see [provisioning](provisioning.md) and the
 [project-zones recipe](recipes/project-zones.md). This page is the detailed
 discovery contract; shared zone settings are in the
 [configuration reference](reference/configuration.md), and managed-pair
-behavior is in the [storage reference](reference/storage.md).
+behavior is in the [storage reference](reference/storage.md). For scan costs,
+scheduling tradeoffs, and timeout limits, see
+[discovery performance](discovery-performance.md).
 
 ## 1. Purpose
 
@@ -33,13 +37,15 @@ configuration file. It does not create candidates, rewrite the configuration,
 or migrate an existing static zone.
 
 Discovery is refreshed when the service refreshes its zone registry. Web UI
-overview requests start that refresh in the background and serve the last
-complete registry while it runs. The Web UI polls the zone overview every 10
-seconds while visible, so a new matching directory normally appears on the
-first poll after discovery finishes, without a service restart. Directory
-resolution and other service operations use the same refresh path synchronously.
-The `/api/groups` endpoint uses the same background refresh and returns the last
-complete group snapshot while a scan is running.
+overview requests use background discovery and serve the last complete
+registry while it runs. The Web UI polls every 10 seconds while visible and
+refreshes when a hidden tab becomes visible. A new matching directory appears
+after a scan observes it and a later poll reads the completed registry, without
+a service restart. `/api/groups` uses the same background refresh path.
+**Unreleased:** not every overview request starts a scan; both endpoints share
+the cooldown described in [refresh and lifecycle](#7-refresh-and-lifecycle).
+Directory resolution and other explicit service operations use the refresh
+path synchronously.
 
 ## 2. Configuration
 
@@ -135,7 +141,7 @@ cannot be used as upload targets.
 
 ## 4. Candidate discovery
 
-Each collection is evaluated independently.
+Each collection's matching and traversal decisions are evaluated independently.
 
 1. Pasteberth resolves `base_directory` and verifies that it is an existing directory.
 2. The scanner walks existing directories below that base, following directory links.
@@ -144,6 +150,18 @@ Each collection is evaluated independently.
 5. `max_depth` counts components of that relative path.
 6. A candidate must be an existing, accessible directory. Discovery never creates it.
 7. A candidate is accepted only when its subtree contains no subdirectory.
+
+**Unreleased:** one discovery pass shares filesystem observations across all
+collection rules: strict full-path resolutions, stat results, directory
+enumerations and their errors, and leaf-check results. Directory observations
+are keyed by canonical resolved path, not just inode; each rule still has its
+own identity-based visited set for cycle and alias handling. Resolving a new
+path still checks the full path, not just a cached parent. A leaf check can
+reject at the first subdirectory or inspection error; that partial probe is
+not cached as a complete traversal listing. All these caches are discarded
+after the pass, so a later scan checks the filesystem again. There is no
+persistent filesystem cache or change to regex matching, depth, containment,
+eligibility, or overlapping-rule policy.
 
 Regular files at the candidate root are allowed, but files without a coherent
 sidecar are not managed automatically. Directory links are followed for
@@ -214,12 +232,28 @@ external writers; see [transaction scope](reference/storage.md#transaction-scope
 
 ## 7. Refresh and lifecycle
 
-On each normal zone-overview refresh, Pasteberth replaces the dynamic candidate
-snapshot:
+On each completed discovery refresh, Pasteberth replaces the dynamic candidate
+snapshot, not necessarily on each overview request:
 
 1. a new matching, accessible directory without user subdirectories becomes a zone;
 2. a directory that no longer matches, becomes inaccessible, or gains a subdirectory is removed;
 3. a static zone keeps precedence over a candidate at the same resolved path.
+
+**Unreleased scheduling:** background requests share a cooldown of
+`max(10 seconds, last full refresh duration)`, starting when the refresh
+finishes. Duration includes discovery and registry installation, not just the
+tree walk. Every refresh attempt sets this cooldown on completion, including
+startup, foreground, background, and failed attempts. Its expiry does not
+itself schedule work: the next eligible overview poll can launch one job, and
+requests arriving while a refresh runs do not launch another.
+
+**Unreleased:** explicit service actions bypass the background cooldown. They
+perform a synchronous refresh or wait for the in-flight refresh instead of
+starting a second one. Actions that already refreshed during zone validation do not
+refresh again when acquiring their operation lock: one refresh or join per
+service action, not one scan per helper call. A multi-request client workflow
+can still invoke several service actions. This is request coalescing and
+throttling, not a watcher, a hard timeout, or a discovery deadline.
 
 The service replaces the dynamic zone configuration, destinations, locks, and
 group memberships as one in-memory snapshot. A later request sees the current
@@ -227,8 +261,10 @@ snapshot; a request already holding a zone lock completes against its current
 operation state.
 
 This is a registry snapshot, not an atomic snapshot of all zone contents.
-Overview requests read each history separately; a busy or temporarily
-unavailable dynamic zone can have `busy: true`, `count: null`, and `images: []`.
+Overview requests still read each history and check free space synchronously;
+slow filesystem I/O can block the response even with background discovery.
+A busy or temporarily unavailable dynamic zone can have `busy: true`,
+`count: null`, and `images: []`.
 Do not interpret that placeholder history as file deletion. See the
 [API response contract](reference/api.md#routes).
 

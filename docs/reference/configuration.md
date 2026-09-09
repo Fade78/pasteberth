@@ -300,13 +300,25 @@ sidecars will not.
 Regular files copied or moved directly into a collection zone have no coherent
 sidecar, so they remain foreign and are ignored. Uploads through the browser,
 API, or CLI create the data/sidecar pair. A visible browser polls `/api/zones`
-every 10 seconds; the request starts a background collection scan and returns
-the last completed snapshot while a scan is running. A new matching project
-directory therefore appears on the first poll after the scan completes, without
-a daemon restart. The `/api/groups` endpoint uses the same background discovery
-behavior and returns the last completed group snapshot while scanning. A hidden
-tab refreshes when it becomes visible. The complete
-discovery contract, including aliases, diagnostics, permissions, group
+every 10 seconds; a hidden tab refreshes when it becomes visible. Overview
+requests use background discovery and return the last completed registry while
+it runs. A new matching directory appears after a scan observes it and a later
+poll reads that registry, without a daemon restart. `/api/groups` uses the same
+background discovery path.
+
+**Unreleased (runtime version still `2.1.21`):** both endpoints share a
+background cooldown of `max(10 seconds, last full refresh duration)`, measured
+from completion and including registry installation. Startup, foreground, and
+failed refresh attempts also set the cooldown. The next eligible poll can
+start one job; expiry alone starts nothing. Explicit service actions bypass
+the cooldown or wait for an in-flight refresh, without a second refresh within
+the same action. These are not configurable timing settings or hard deadlines.
+Overview history and free-space reads remain synchronous and can still block.
+
+**Unreleased:** scanner caches share filesystem observations across rules only
+within a discovery pass; later passes read the filesystem again. Collection
+and group regex semantics are unchanged. The complete discovery contract,
+including cache boundaries, aliases, diagnostics, permissions, group
 expansion, and lifecycle, is in
 [`docs/zone-collection-contract.md`](../zone-collection-contract.md).
 

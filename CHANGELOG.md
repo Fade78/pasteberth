@@ -4,6 +4,25 @@ This file records user-visible changes to Pasteberth.
 
 ## [Unreleased]
 
+### Dates And Discovery
+
+- show the stored `created_at` date and time for selected items older than 24
+  elapsed hours, using the browser's local timezone and unchanged `en` locale;
+  tooltips and multiple-selection rows already show full dates, transfers keep
+  `created_at`, and no arrival timestamp is added;
+- reuse full-path resolution, stat, directory/error, and leaf-check observations
+  across collection rules within one scan only, while preserving per-rule
+  identity tracking and regex semantics;
+- throttle background discovery after completion by the greater of 10 seconds
+  or the last full refresh duration, including registry installation, startup,
+  foreground, and failed attempts; the next eligible overview poll can launch
+  one job, while explicit service actions bypass cooldown or join a running
+  refresh without rescanning within that action;
+- add per-rule scan and registry-installation debug timings; overview history
+  and free-space reads remain synchronous, with no hard response deadline.
+
+These changes are not released; the runtime version remains `2.1.21`.
+
 ## [2.1.21] - 2026-09-09
 
 ### Documentation And Examples
