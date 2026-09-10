@@ -153,6 +153,8 @@ class SiteSources(unittest.TestCase):
             self.assertEqual(source.resolve(), source, path)
         self.assertTrue({'site/index.html', 'site/demo.html', 'GUIDE.md',
                          'docs/using-pasteberth.md', 'docs/provisioning.md',
+                         'docs/recipes/external-consumer.md',
+                         'contrib/fetch_pasteberth_item.py',
                          'site/DEPLOYMENT.md'}.issubset(paths))
 
     def test_current_frontend_and_reproducible_build(self):

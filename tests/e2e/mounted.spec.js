@@ -12,11 +12,11 @@ test.beforeEach(async ({ request }) => {
   await resetServer(request);
 });
 
-test("sert l'application entièrement sous le préfixe", async ({ page }) => {
+test("sert l'application entièrement sous le préfixe", async ({ page, baseURL }) => {
   const applicationRequests = [];
   page.on("request", (request) => {
     const url = new URL(request.url());
-    if (url.origin === "http://127.0.0.1:8876") {
+    if (url.origin === new URL(baseURL).origin) {
       applicationRequests.push(url.pathname);
     }
   });
@@ -46,6 +46,18 @@ test("sert l'application entièrement sous le préfixe", async ({ page }) => {
   const payload = await index.json();
   expect(payload.images[0].preview_url).toMatch(/^\/paste\/previews\//);
 
+  const itemsIndex = await page.request.get("./api/zones/default/items");
+  expect(itemsIndex.status()).toBe(200);
+  const { items } = await itemsIndex.json();
+  expect(items[0].content_url).toMatch(/^\/paste\/api\/zones\/default\/items\/[^/]+\/content$/);
+  await expect(page.locator('[data-zone="default"] .thumb-big')).toHaveAttribute(
+    "src", items[0].content_url,
+  );
+  const content = await page.request.get(items[0].content_url);
+  expect(content.status()).toBe(200);
+  expect(await content.body()).toEqual(Buffer.from(ONE_PIXEL_PNG, "base64"));
+
+  expect(applicationRequests.length).toBeGreaterThan(0);
   for (const pathname of applicationRequests) {
     expect(pathname === "/paste/" || pathname.startsWith("/paste/")).toBe(true);
   }

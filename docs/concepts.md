@@ -48,9 +48,10 @@ does not create the directory or register files inside it. Discovery is
 request-triggered, with background scans for Web overviews, rather than a
 filesystem watcher. **Unreleased (runtime version still `2.1.21`):** overview
 polls reuse the completed registry during a cooldown; the next eligible poll
-can start one scan. Mutations, directory resolution, and explicit history reads
-bypass the cooldown or wait for an in-flight refresh. Downloads instead use the
-published registry without starting or joining a scan; new zones stay unknown
+can start one scan. Mutations, directory resolution, and legacy `/images` history
+reads bypass the cooldown or wait for an in-flight refresh. Generic `/items`
+listings and downloads instead use the published registry without starting or
+joining a scan; new zones stay unknown
 until published and removals take effect through later registry publication.
 Scanner caches last only for one discovery pass, not across refreshes. See
 [provisioning](provisioning.md) for timing and eligibility.

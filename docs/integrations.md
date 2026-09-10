@@ -131,9 +131,25 @@ and [agent-output recipe](recipes/agent-output.md).
 
 Use the [API reference](reference/api.md) for session login, same-origin headers,
 multipart publication, overview reads, downloads, comments, archives, and
-transfers. Preserve the session cookie and send the required `Origin` or
-`Referer` on unsafe requests. There is no CORS interface for arbitrary
-cross-origin browser applications.
+transfers. Preserve the session cookie and send a matching `Origin` or
+`Referer` on unsafe requests; non-browser requests without either header are
+also accepted under the documented API checks. There is no CORS interface for
+arbitrary cross-origin browser applications.
+
+**Unreleased, after 2.1.21:** use `/api/zones/{id}/items`, multipart `file`, and
+the returned `content_url` for new HTTP integrations. Select `?schema=items` on
+`GET /api/zones` and `POST /api/transfers`; their defaults remain legacy for
+existing clients. Legacy routes, fields, and Python aliases remain supported
+throughout 2.x, with removal no earlier than 3.0 and announced in advance.
+See [compatibility](reference/api.md#compatibility-unreleased).
+
+For retrieval without filesystem access, follow
+[fetch a version-aware item](recipes/external-consumer.md). The standalone
+example logs in, lists a known zone, conditionally downloads a selected file,
+and verifies length and SHA-256 before replacing a local output. Unknown legacy
+identity cannot pin the listed version. A stdout-report failure after local
+publication is a distinct outcome, not rollback. This is not an SFTP deployer,
+build service, or whole-zone snapshot API.
 
 Zone responses and publication results carry server-side references. Per-zone
 `reference_prefix`, `reference_suffix`, and list-format settings adapt those

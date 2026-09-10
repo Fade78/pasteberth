@@ -4,6 +4,43 @@ This file records user-visible changes to Pasteberth.
 
 ## [Unreleased]
 
+### Generic Items And Content Identity
+
+- add canonical `/api/zones/{id}/items` routes for listing, upload, comments,
+  deletion, batch deletion, archive, and regularization, plus GET/HEAD
+  `/api/zones/{id}/items/{filename}/content`; generic responses use `content_url`
+  and `unknown_item` without `preview_url`;
+- keep legacy routes on shared handlers and support them throughout 2.x;
+  removal will be no earlier than 3.0 and announced in advance, with no date set;
+  default `/api/zones` and `/api/transfers` to legacy responses, with explicit
+  `schema=images` or generic `schema=items` and no duplicate history arrays;
+- migrate the bundled Web UI and HTTP upload/regularization client to the
+  generic contract; accept either `file` or `image` on both upload routes,
+  rejecting ambiguous or repeated payload fields without changing image validation;
+- expose stored lowercase SHA-256 and the exact quoted `"sha256-HEX"` ETag, or
+  null for legacy unknown identity; legacy payloads add these and `content_url`
+  while keeping `preview_url`. Comments do not change payload identity,
+  A-to-B-to-A restores A's ETag, and `changed_at` remains null;
+- evaluate strong `If-Match` tags/lists, combined repeated headers, and an
+  existence wildcard against the same acquired item used for GET/HEAD headers
+  and bytes on both content routes; malformed conditions return 400 and unmet
+  conditions return 412 before file streaming, releasing the acquired handle;
+- use published membership and nonblocking locks for generic listing and
+  content acquisition; preserve fresh legacy listing and blocking legacy
+  previews. Listing still reads selected-zone history, and filesystem I/O can block;
+- name Python entities `StoredItem` and `UnknownItemError`, retaining old aliases
+  for 2.x consumers without sidecar, journal, or zone migration;
+- add a standalone authenticated external-consumer example and recipe with
+  length/digest verification before local replacement, explicit legacy unknown
+  identity, and a distinct exit 3 when publication succeeds but stdout reporting
+  fails; no post-publication rollback is implied;
+- update public Caddy/nginx blocking examples for both `items/regularize` and
+  `images/regularize`, preserving the direct-drop loopback trust boundary.
+
+Identity is stored metadata for cooperating managed bytes, not a read-time hash
+or protection against arbitrary external in-place writers. No whole-zone
+snapshot, SFTP deployment, server-side build, or release-version bump is added.
+
 ### Dates And Discovery
 
 - show the stored `created_at` date and time for selected items older than 24
@@ -16,7 +53,7 @@ This file records user-visible changes to Pasteberth.
 - throttle background discovery after completion by the greater of 10 seconds
   or the last full refresh duration, including registry installation, startup,
   foreground, and failed attempts; the next eligible overview poll can launch
-  one job, while mutations, directory resolution, and explicit history reads
+  one job, while mutations, directory resolution, and legacy history reads
   bypass cooldown or join a running refresh without rescanning within that action;
 - add per-rule scan and registry-installation debug timings; overview history
   and free-space reads remain synchronous, with no hard response deadline.

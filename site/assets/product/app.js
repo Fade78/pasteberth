@@ -19,7 +19,7 @@
   }
 
   const state = {
-    zones: [],            // [{id,label,color,retain,count,upload_limit_bytes,images:[...]}]
+    zones: [],            // [{id,label,color,retain,count,upload_limit_bytes,items:[...]}]
     activeId: null,
     authEnabled: true,
     showFullPath: true,
@@ -263,7 +263,7 @@
         not_found: "Resource not found",
         internal: "Internal server error",
         unknown_zone: "Unknown zone",
-        unknown_image: "Unknown image",
+        unknown_item: "Unknown item",
         invalid_filename: "The dropped filename is invalid",
         empty_upload: "The upload is empty",
         invalid_image: "The image is invalid or corrupted",
@@ -272,10 +272,10 @@
         too_large: "The upload is too large",
         payload_too_large: "The upload is too large",
         storage_low: "Not enough disk space",
-        retention_error: "Image retention failed",
+        retention_error: "Item retention failed",
         storage_conflict: "Name taken by an unmanaged file",
         replacement_required: "This name already exists; confirm replacement",
-        destination_error: "The image destination is unavailable",
+        destination_error: "The item destination is unavailable",
         zone_busy: "This zone is busy; try again shortly",
         preview_busy: "Too many previews are currently being served",
         rate_limited: "Too many attempts; try again later",
@@ -740,6 +740,8 @@
       item.width,
       item.height,
       item.changed_at,
+      item.sha256,
+      item.etag,
     ]);
   }
 
@@ -784,7 +786,7 @@
     const currentZoneIds = new Set();
     for (const zone of zones) {
       currentZoneIds.add(zone.id);
-      const current = new Map(zone.images.map(item => [item.id, itemSignature(item)]));
+      const current = new Map(zone.items.map(item => [item.id, itemSignature(item)]));
       const known = state.knownItemSignaturesByZone[zone.id];
       const newIds = newItemIds(zone.id);
       if (detectNewItems) {
@@ -836,11 +838,11 @@
 
   function selectedItems(zone) {
     const selected = selectedItemIds(zone.id);
-    return zone.images.filter(item => selected.has(item.id));
+    return zone.items.filter(item => selected.has(item.id));
   }
 
   function selectHistoryItem(zone, itemId, event) {
-    const ids = zone.images.map(item => item.id);
+    const ids = zone.items.map(item => item.id);
     const itemIndex = ids.indexOf(itemId);
     if (itemIndex < 0) return;
     const toggle = event.ctrlKey || event.metaKey;
@@ -912,7 +914,7 @@
     frame.hidden = true;
     const form = document.createElement("form");
     form.method = "post";
-    form.action = appPath(`/api/zones/${encodeURIComponent(zone.id)}/images/archive`);
+    form.action = appPath(`/api/zones/${encodeURIComponent(zone.id)}/items/archive`);
     form.target = target;
     form.hidden = true;
     for (const item of items) {
@@ -942,7 +944,7 @@
     renderAll();
     try {
       const result = await apiWithZoneRetry(
-        `/api/zones/${encodeURIComponent(zone.id)}/images/batch-delete`,
+        `/api/zones/${encodeURIComponent(zone.id)}/items/batch-delete`,
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -980,7 +982,7 @@
     state.batchBusyZoneIds.add(targetZone.id);
     renderAll();
     try {
-      const result = await apiWithZoneRetry("/api/transfers", {
+      const result = await apiWithZoneRetry("/api/transfers?schema=items", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -1149,10 +1151,10 @@
     count.className = "zone-count";
     const limit = zone.retain;
     const retention = limit == null ? "" : ` / ${limit}`;
-    count.textContent = `${zone.images.length}${retention}`;
+    count.textContent = `${zone.items.length}${retention}`;
     count.setAttribute(
       "aria-label",
-      `${zone.images.length} files in ${zone.label}; show upload details`,
+      `${zone.items.length} files in ${zone.label}; show upload details`,
     );
     count.setAttribute("aria-expanded", "false");
 
@@ -1258,7 +1260,7 @@
       el.appendChild(busy);
     }
 
-    if (zone.images.length === 0) {
+    if (zone.items.length === 0) {
       const hint = document.createElement("div");
       hint.className = "drop-hint";
       hint.textContent = zone.id === state.activeId
@@ -1269,13 +1271,13 @@
       const selected = selectedItem(zone);
       const selectedItemsInZone = selectedItems(zone);
       el.appendChild(renderLatest(zone, selected, selectedItemsInZone));
-      el.appendChild(renderThumbs(zone.id, zone.images, selected.id, selectedItemIds(zone.id)));
+      el.appendChild(renderThumbs(zone.id, zone.items, selected.id, selectedItemIds(zone.id)));
     }
     return el;
   }
 
   function selectedItem(zone) {
-    return zone.images.find(item => item.id === state.selectedByZone[zone.id]) || zone.images[0];
+    return zone.items.find(item => item.id === state.selectedByZone[zone.id]) || zone.items[0];
   }
 
   function itemForControl(control) {
@@ -1284,7 +1286,7 @@
     const zone = state.zones.find(item => item.id === zoneEl.dataset.zone);
     if (!zone) return null;
     const itemId = control.closest("[data-item-id]")?.dataset.itemId;
-    return zone.images.find(item => item.id === itemId) || selectedItem(zone);
+    return zone.items.find(item => item.id === itemId) || selectedItem(zone);
   }
 
   function zoneForControl(control) {
@@ -1329,7 +1331,7 @@
     const submit = form.querySelector("button[type='submit']");
     if (submit) submit.disabled = true;
     return api(
-      `/api/zones/${encodeURIComponent(zoneId)}/images/${encodeURIComponent(itemId)}/comment`,
+      `/api/zones/${encodeURIComponent(zoneId)}/items/${encodeURIComponent(itemId)}/comment`,
       {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
@@ -1337,8 +1339,8 @@
       },
     ).then(updated => {
       const zone = state.zones.find(item => item.id === zoneId);
-      const index = zone ? zone.images.findIndex(item => item.id === itemId) : -1;
-      if (zone && index >= 0) zone.images[index] = Object.assign({}, zone.images[index], updated);
+      const index = zone ? zone.items.findIndex(item => item.id === itemId) : -1;
+      if (zone && index >= 0) zone.items[index] = Object.assign({}, zone.items[index], updated);
       rerenderZone(zoneId);
       toast("Comment saved");
     }).catch(err => {
@@ -1452,7 +1454,7 @@
       "aria-label",
       `${actionLabel} to the clipboard`,
     );
-    imageCopy.dataset.preview = item.preview_url;
+    imageCopy.dataset.preview = item.content_url;
     imageCopy.dataset.kind = item.kind;
     imageCopy.dataset.filename = item.filename;
     imageCopy.dataset.mime = item.mime || "";
@@ -1461,7 +1463,7 @@
     download.className = "download-btn";
     download.textContent = downloadLabel(item.filename);
     download.setAttribute("aria-label", downloadLabel(item.filename));
-    download.dataset.preview = item.preview_url;
+    download.dataset.preview = item.content_url;
     download.dataset.filename = item.filename;
     const clear = document.createElement("button");
     clear.type = "button";
@@ -1481,7 +1483,7 @@
           : `Preview ${item.filename}`,
       );
       zoom.dataset.ref = item.reference;
-      zoom.dataset.preview = item.preview_url;
+      zoom.dataset.preview = item.content_url;
       zoom.dataset.kind = item.kind;
       zoom.dataset.filename = item.filename;
     }
@@ -1507,7 +1509,7 @@
       const img = document.createElement("img");
       img.className = "thumb-big";
       img.dataset.itemId = item.id;
-      setPreviewSource(img, item.preview_url);
+      setPreviewSource(img, item.content_url);
       img.alt = `Latest image ${item.filename}`;
       img.title = itemDetails(zoneId, item);
       img.loading = "lazy";
@@ -1563,7 +1565,7 @@
       if (item.kind === "image") {
         const img = document.createElement("img");
         img.className = "thumb";
-        setPreviewSource(img, item.preview_url);
+        setPreviewSource(img, item.content_url);
         img.alt = item.filename;
         img.loading = "lazy";
         wrap.appendChild(img);
@@ -2181,30 +2183,30 @@
     const controller = new AbortController();
     activeRefreshController = controller;
     try {
-      const overview = await api("/api/zones", { signal: controller.signal });
+      const overview = await api("/api/zones?schema=items", { signal: controller.signal });
       const previousZones = new Map(state.zones.map(zone => [zone.id, zone]));
       const nextZones = [];
       for (const z of overview.zones) {
         const previous = previousZones.get(z.id);
         if (z.busy) {
           nextZones.push(Object.assign({}, z, {
-            images: previous ? previous.images : [],
+            items: previous ? previous.items : [],
             busy: true,
           }));
           continue;
         }
         try {
-          const images = Array.isArray(z.images)
-            ? z.images
+          const items = Array.isArray(z.items)
+            ? z.items
             : (await api(
-              `/api/zones/${encodeURIComponent(z.id)}/images`,
+              `/api/zones/${encodeURIComponent(z.id)}/items`,
               { signal: controller.signal },
-            )).images;
-          nextZones.push(Object.assign({}, z, { images, busy: false }));
+            )).items;
+          nextZones.push(Object.assign({}, z, { items, busy: false }));
         } catch (err) {
           if (err.code !== "zone_busy") throw err;
           nextZones.push(Object.assign({}, z, {
-            images: previous ? previous.images : [],
+            items: previous ? previous.items : [],
             busy: true,
           }));
         }
@@ -2220,7 +2222,7 @@
       state.groups = overview.groups || [];
       for (const zoneId of Object.keys(state.selectedByZone)) {
         const zone = state.zones.find(z => z.id === zoneId);
-        if (!zone || !zone.images.some(item => item.id === state.selectedByZone[zoneId])) {
+        if (!zone || !zone.items.some(item => item.id === state.selectedByZone[zoneId])) {
           delete state.selectedByZone[zoneId];
         }
       }
@@ -2231,7 +2233,7 @@
           delete state.selectionAnchorByZone[zoneId];
           continue;
         }
-        const validIds = new Set(zone.images.map(item => item.id));
+        const validIds = new Set(zone.items.map(item => item.id));
         const selected = selectedItemIds(zoneId);
         for (const itemId of selected) {
           if (!validIds.has(itemId)) selected.delete(itemId);
@@ -2357,17 +2359,17 @@
     const zone = state.zones.find(z => z.id === zoneId);
     if (!zone) return;
     // A named drop can replace an existing stored name. Keep one history entry.
-    zone.images = zone.images.filter(existing => existing.id !== item.id);
-    zone.images.unshift(item);
-    if (zone.images.length > zone.retain) {
-      zone.images.length = zone.retain;
+    zone.items = zone.items.filter(existing => existing.id !== item.id);
+    zone.items.unshift(item);
+    if (zone.items.length > zone.retain) {
+      zone.items.length = zone.retain;
     }
     rememberItem(zoneId, item);
   }
 
   function countNewUploads(zoneId, candidates) {
     const zone = state.zones.find(item => item.id === zoneId);
-    const knownNames = new Set(zone ? zone.images.map(item => item.filename) : []);
+    const knownNames = new Set(zone ? zone.items.map(item => item.filename) : []);
     let additions = 0;
     for (const candidate of candidates) {
       const file = candidate.file;
@@ -2382,7 +2384,7 @@
   function confirmRetention(zoneId, incomingCount) {
     const zone = state.zones.find(item => item.id === zoneId);
     if (!zone || incomingCount <= 0) return true;
-    const excess = zone.images.length + incomingCount - zone.retain;
+    const excess = zone.items.length + incomingCount - zone.retain;
     if (excess <= 0) return true;
     const itemLabel = excess === 1 ? "item" : "items";
     const uploadLabel = incomingCount === 1 ? "this upload" : `${incomingCount} uploads`;
@@ -2433,11 +2435,11 @@
       ) return null;
       const fd = new FormData();
       // Preserve the filename only for candidates that carry a named-file policy.
-      fd.append("image", file, file.name || "clipboard");
+      fd.append("file", file, file.name || "clipboard");
       if (preserveName) fd.append("preserve_name", "1");
       if (allowReplace) fd.append("replace", "1");
       fd.append("creation_method", creationMethod);
-      const item = await api(`/api/zones/${encodeURIComponent(zoneId)}/images`,
+      const item = await api(`/api/zones/${encodeURIComponent(zoneId)}/items`,
         { method: "POST", body: fd });
       refreshGeneration += 1;
       if (activeRefreshController) activeRefreshController.abort();
@@ -2590,7 +2592,7 @@
 
   function hasManagedName(zoneId, filename) {
     const zone = state.zones.find(z => z.id === zoneId);
-    return Boolean(zone && zone.images.some(item => item.filename === filename));
+    return Boolean(zone && zone.items.some(item => item.filename === filename));
   }
 
   function showNextReplacementPrompt() {
@@ -2672,16 +2674,16 @@
     return null;
   }
 
-  async function deleteImage(zoneId, filename) {
+  async function deleteItem(zoneId, filename) {
     if (!window.confirm(`Delete ${filename} from the disk?`)) return;
     refreshGeneration += 1;
     if (activeRefreshController) activeRefreshController.abort();
     try {
-      await api(`/api/zones/${encodeURIComponent(zoneId)}/images/${encodeURIComponent(filename)}`,
+      await api(`/api/zones/${encodeURIComponent(zoneId)}/items/${encodeURIComponent(filename)}`,
         { method: "DELETE" });
       const zone = state.zones.find(z => z.id === zoneId);
       if (zone) {
-        zone.images = zone.images.filter(item => item.id !== filename);
+        zone.items = zone.items.filter(item => item.id !== filename);
         clearNewItems(zoneId, [filename]);
         if (state.selectedByZone[zoneId] === filename) delete state.selectedByZone[zoneId];
         const selected = selectedItemIds(zoneId);
@@ -2873,13 +2875,13 @@
       const item = itemForControl(zoomBtn);
       const zoneId = zoneForControl(zoomBtn);
       if (item && item.kind === "image") {
-        openPreview(item.preview_url, item.reference, item.filename, zoneId, item.id);
+        openPreview(item.content_url, item.reference, item.filename, zoneId, item.id);
       } else if (item) openContentPreview(item, zoneId);
       return;
     }
     const deleteBtn = event.target.closest(".delete-btn");
     if (deleteBtn && deleteBtn.dataset.filename) {
-      deleteImage(deleteBtn.dataset.zone, deleteBtn.dataset.filename);
+      deleteItem(deleteBtn.dataset.zone, deleteBtn.dataset.filename);
       return;
     }
     const thumbWrap = event.target.closest(".thumb-wrap");
@@ -2894,7 +2896,7 @@
       const item = itemForControl(bigThumb);
       const zoneId = zoneForControl(bigThumb);
       if (item && item.kind === "image") {
-        openPreview(item.preview_url, item.reference, item.filename, zoneId, item.id);
+        openPreview(item.content_url, item.reference, item.filename, zoneId, item.id);
       } else if (item) openContentPreview(item, zoneId);
       return;
     }
@@ -2916,7 +2918,7 @@
       const item = itemForControl(bigThumb);
       const zoneId = zoneForControl(bigThumb);
       if (item && item.kind === "image") {
-        openPreview(item.preview_url, item.reference, item.filename, zoneId, item.id);
+        openPreview(item.content_url, item.reference, item.filename, zoneId, item.id);
       } else if (item) openContentPreview(item, zoneId);
       return;
     }
@@ -2959,7 +2961,7 @@
     const thumbWrap = event.target.closest(".thumb-wrap");
     if (!thumbWrap || !event.dataTransfer) return;
     const zone = state.zones.find(item => item.id === thumbWrap.closest(".zone")?.dataset.zone);
-    const item = zone?.images.find(candidate => candidate.id === thumbWrap.dataset.itemId);
+    const item = zone?.items.find(candidate => candidate.id === thumbWrap.dataset.itemId);
     if (!zone || !item) return;
     const selected = selectedItems(zone);
     const items = selected.some(candidate => candidate.id === item.id) ? selected : [item];
@@ -3090,7 +3092,7 @@
       if (zone) setActive(zone.id, { announce: true });
     } else if (event.key === "c" || event.key === "C") {
       const zone = getVisibleZones().find(z => z.id === state.activeId);
-      if (zone && zone.images.length) {
+      if (zone && zone.items.length) {
         const item = selectedItem(zone);
         copyLink(
           item.reference,
@@ -3199,11 +3201,11 @@
     pvRef.hidden = !state.showFullPath;
     pvDownload.textContent = downloadLabel(item.filename);
     pvDownload.setAttribute("aria-label", downloadLabel(item.filename));
-    pvDownload.dataset.preview = item.preview_url;
+    pvDownload.dataset.preview = item.content_url;
     pvDownload.dataset.filename = item.filename;
     pvDelete.dataset.zone = zoneId || "";
     pvDelete.dataset.filename = item.filename;
-    pvCopyImage.dataset.preview = item.preview_url;
+    pvCopyImage.dataset.preview = item.content_url;
     pvCopyImage.dataset.kind = item.kind;
     pvCopyImage.dataset.mime = item.mime || "";
     setPreviewItemLabels(item.filename);
@@ -3211,7 +3213,7 @@
       const controller = new AbortController();
       activePreviewController = controller;
       try {
-        const response = await fetchPreview(item.preview_url, {
+        const response = await fetchPreview(item.content_url, {
           credentials: "same-origin",
           headers: { Accept: "text/plain" },
           signal: controller.signal,
@@ -3225,7 +3227,7 @@
           text = htmlInspection.plain;
         }
         if (generation !== previewGeneration) return;
-        setRawHtmlButton(Boolean(htmlInspection && htmlInspection.changed), item.preview_url);
+        setRawHtmlButton(Boolean(htmlInspection && htmlInspection.changed), item.content_url);
         openTextPreview(text, item.filename, invoker);
       } catch (err) {
         if (err && err.name === "AbortError") return;
@@ -3237,7 +3239,7 @@
       return;
     }
     // Binary content: direct download (Content-Disposition: attachment).
-    downloadContent(item.preview_url, item.filename);
+    downloadContent(item.content_url, item.filename);
   }
   function closePreview() {
     invalidatePreviewLoad();
@@ -3269,11 +3271,11 @@
     const zoneId = pvDelete.dataset.zone;
     const filename = pvDelete.dataset.filename;
     const zone = state.zones.find(
-      z => z.id === zoneId && z.images.some(i => i.id === filename),
+      z => z.id === zoneId && z.items.some(i => i.id === filename),
     );
     if (zone) {
       closePreview();
-      deleteImage(zone.id, filename);
+      deleteItem(zone.id, filename);
     }
   });
   document.getElementById("pv-close").addEventListener("click", closePreview);

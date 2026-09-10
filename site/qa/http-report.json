@@ -17,7 +17,7 @@
       "detail": null
     },
     {
-      "name": " Markdown ../docs/using-pasteberth.md",
+      "name": " Documentation bytes ../docs/using-pasteberth.md",
       "passed": true,
       "detail": {
         "status": 200,
@@ -25,7 +25,7 @@
       }
     },
     {
-      "name": " Markdown ../docs/provisioning.md",
+      "name": " Documentation bytes ../docs/provisioning.md",
       "passed": true,
       "detail": {
         "status": 200,
@@ -33,7 +33,7 @@
       }
     },
     {
-      "name": " Markdown ../GUIDE.md",
+      "name": " Documentation bytes ../docs/recipes/external-consumer.md",
       "passed": true,
       "detail": {
         "status": 200,
@@ -41,7 +41,15 @@
       }
     },
     {
-      "name": " Markdown ../docs/zone-collection-contract.md",
+      "name": " Documentation bytes ../contrib/fetch_pasteberth_item.py",
+      "passed": true,
+      "detail": {
+        "status": 200,
+        "content_type": "text/x-python"
+      }
+    },
+    {
+      "name": " Documentation bytes ../GUIDE.md",
       "passed": true,
       "detail": {
         "status": 200,
@@ -49,7 +57,7 @@
       }
     },
     {
-      "name": " Markdown ../CHANGELOG.md",
+      "name": " Documentation bytes ../docs/zone-collection-contract.md",
       "passed": true,
       "detail": {
         "status": 200,
@@ -57,7 +65,7 @@
       }
     },
     {
-      "name": " Markdown README.md",
+      "name": " Documentation bytes ../CHANGELOG.md",
       "passed": true,
       "detail": {
         "status": 200,
@@ -65,7 +73,15 @@
       }
     },
     {
-      "name": " Markdown PROVENANCE.md",
+      "name": " Documentation bytes README.md",
+      "passed": true,
+      "detail": {
+        "status": 200,
+        "content_type": "text/markdown"
+      }
+    },
+    {
+      "name": " Documentation bytes PROVENANCE.md",
       "passed": true,
       "detail": {
         "status": 200,
@@ -118,7 +134,7 @@
       "detail": null
     },
     {
-      "name": "/mounted Markdown ../docs/using-pasteberth.md",
+      "name": "/mounted Documentation bytes ../docs/using-pasteberth.md",
       "passed": true,
       "detail": {
         "status": 200,
@@ -126,7 +142,7 @@
       }
     },
     {
-      "name": "/mounted Markdown ../docs/provisioning.md",
+      "name": "/mounted Documentation bytes ../docs/provisioning.md",
       "passed": true,
       "detail": {
         "status": 200,
@@ -134,7 +150,7 @@
       }
     },
     {
-      "name": "/mounted Markdown ../GUIDE.md",
+      "name": "/mounted Documentation bytes ../docs/recipes/external-consumer.md",
       "passed": true,
       "detail": {
         "status": 200,
@@ -142,7 +158,15 @@
       }
     },
     {
-      "name": "/mounted Markdown ../docs/zone-collection-contract.md",
+      "name": "/mounted Documentation bytes ../contrib/fetch_pasteberth_item.py",
+      "passed": true,
+      "detail": {
+        "status": 200,
+        "content_type": "text/x-python"
+      }
+    },
+    {
+      "name": "/mounted Documentation bytes ../GUIDE.md",
       "passed": true,
       "detail": {
         "status": 200,
@@ -150,7 +174,7 @@
       }
     },
     {
-      "name": "/mounted Markdown ../CHANGELOG.md",
+      "name": "/mounted Documentation bytes ../docs/zone-collection-contract.md",
       "passed": true,
       "detail": {
         "status": 200,
@@ -158,7 +182,7 @@
       }
     },
     {
-      "name": "/mounted Markdown README.md",
+      "name": "/mounted Documentation bytes ../CHANGELOG.md",
       "passed": true,
       "detail": {
         "status": 200,
@@ -166,7 +190,15 @@
       }
     },
     {
-      "name": "/mounted Markdown PROVENANCE.md",
+      "name": "/mounted Documentation bytes README.md",
+      "passed": true,
+      "detail": {
+        "status": 200,
+        "content_type": "text/markdown"
+      }
+    },
+    {
+      "name": "/mounted Documentation bytes PROVENANCE.md",
       "passed": true,
       "detail": {
         "status": 200,
@@ -216,65 +248,66 @@
   ],
   "errors": [],
   "requests": [
-    "http://127.0.0.1:43581/site/index.html",
-    "http://127.0.0.1:43581/site/assets/site.css",
-    "http://127.0.0.1:43581/site/assets/product/favicon.svg",
-    "http://127.0.0.1:43581/site/assets/interface-focus.png",
-    "http://127.0.0.1:43581/site/assets/examples/atlas.png",
-    "http://127.0.0.1:43581/site/assets/example-data.js",
-    "http://127.0.0.1:43581/site/assets/site.js",
-    "http://127.0.0.1:43581/site/assets/product/favicon.svg",
-    "http://127.0.0.1:43581/site/index.html",
-    "http://127.0.0.1:43581/site/assets/site.css",
-    "http://127.0.0.1:43581/site/assets/interface-focus.png",
-    "http://127.0.0.1:43581/site/assets/product/favicon.svg",
-    "http://127.0.0.1:43581/site/assets/examples/atlas.png",
-    "http://127.0.0.1:43581/site/assets/example-data.js",
-    "http://127.0.0.1:43581/site/assets/site.js",
-    "http://127.0.0.1:43581/site/assets/product/favicon.svg",
-    "http://127.0.0.1:43581/site/index.html?lang=en",
-    "http://127.0.0.1:43581/site/assets/site.css",
-    "http://127.0.0.1:43581/site/assets/interface-focus.png",
-    "http://127.0.0.1:43581/site/assets/examples/atlas.png",
-    "http://127.0.0.1:43581/site/assets/product/favicon.svg",
-    "http://127.0.0.1:43581/site/assets/example-data.js",
-    "http://127.0.0.1:43581/site/assets/site.js",
-    "http://127.0.0.1:43581/site/assets/product/favicon.svg",
-    "http://127.0.0.1:43581/site/demo.html",
-    "blob:http://127.0.0.1:43581/e035a530-9d96-49eb-9d88-bbdd04f10436",
-    "http://127.0.0.1:43581/site/assets/product/favicon.svg",
-    "http://127.0.0.1:43581/mounted/site/index.html",
-    "http://127.0.0.1:43581/mounted/site/assets/site.css",
-    "http://127.0.0.1:43581/mounted/site/assets/product/favicon.svg",
-    "http://127.0.0.1:43581/mounted/site/assets/interface-focus.png",
-    "http://127.0.0.1:43581/mounted/site/assets/examples/atlas.png",
-    "http://127.0.0.1:43581/mounted/site/assets/example-data.js",
-    "http://127.0.0.1:43581/mounted/site/assets/site.js",
-    "http://127.0.0.1:43581/mounted/site/assets/product/favicon.svg",
-    "http://127.0.0.1:43581/mounted/site/index.html",
-    "http://127.0.0.1:43581/mounted/site/assets/site.css",
-    "http://127.0.0.1:43581/mounted/site/assets/interface-focus.png",
-    "http://127.0.0.1:43581/mounted/site/assets/product/favicon.svg",
-    "http://127.0.0.1:43581/mounted/site/assets/examples/atlas.png",
-    "http://127.0.0.1:43581/mounted/site/assets/example-data.js",
-    "http://127.0.0.1:43581/mounted/site/assets/site.js",
-    "http://127.0.0.1:43581/mounted/site/assets/product/favicon.svg",
-    "http://127.0.0.1:43581/mounted/site/index.html?lang=en",
-    "http://127.0.0.1:43581/mounted/site/assets/site.css",
-    "http://127.0.0.1:43581/mounted/site/assets/interface-focus.png",
-    "http://127.0.0.1:43581/mounted/site/assets/examples/atlas.png",
-    "http://127.0.0.1:43581/mounted/site/assets/product/favicon.svg",
-    "http://127.0.0.1:43581/mounted/site/assets/example-data.js",
-    "http://127.0.0.1:43581/mounted/site/assets/site.js",
-    "http://127.0.0.1:43581/mounted/site/assets/product/favicon.svg",
-    "http://127.0.0.1:43581/mounted/site/demo.html",
-    "blob:http://127.0.0.1:43581/c97f4ea8-e5e4-4551-a9a2-9c2cbd09209e"
+    "http://127.0.0.1:38947/site/index.html",
+    "http://127.0.0.1:38947/site/assets/site.css",
+    "http://127.0.0.1:38947/site/assets/product/favicon.svg",
+    "http://127.0.0.1:38947/site/assets/interface-focus.png",
+    "http://127.0.0.1:38947/site/assets/examples/atlas.png",
+    "http://127.0.0.1:38947/site/assets/example-data.js",
+    "http://127.0.0.1:38947/site/assets/site.js",
+    "http://127.0.0.1:38947/site/assets/product/favicon.svg",
+    "http://127.0.0.1:38947/site/index.html",
+    "http://127.0.0.1:38947/site/assets/site.css",
+    "http://127.0.0.1:38947/site/assets/interface-focus.png",
+    "http://127.0.0.1:38947/site/assets/product/favicon.svg",
+    "http://127.0.0.1:38947/site/assets/examples/atlas.png",
+    "http://127.0.0.1:38947/site/assets/example-data.js",
+    "http://127.0.0.1:38947/site/assets/site.js",
+    "http://127.0.0.1:38947/site/assets/product/favicon.svg",
+    "http://127.0.0.1:38947/site/index.html?lang=en",
+    "http://127.0.0.1:38947/site/assets/site.css",
+    "http://127.0.0.1:38947/site/assets/interface-focus.png",
+    "http://127.0.0.1:38947/site/assets/examples/atlas.png",
+    "http://127.0.0.1:38947/site/assets/product/favicon.svg",
+    "http://127.0.0.1:38947/site/assets/example-data.js",
+    "http://127.0.0.1:38947/site/assets/site.js",
+    "http://127.0.0.1:38947/site/assets/product/favicon.svg",
+    "http://127.0.0.1:38947/site/demo.html",
+    "blob:http://127.0.0.1:38947/9718f797-2c43-46f9-9688-8b95808267fd",
+    "http://127.0.0.1:38947/site/assets/product/favicon.svg",
+    "http://127.0.0.1:38947/mounted/site/index.html",
+    "http://127.0.0.1:38947/mounted/site/assets/site.css",
+    "http://127.0.0.1:38947/mounted/site/assets/product/favicon.svg",
+    "http://127.0.0.1:38947/mounted/site/assets/interface-focus.png",
+    "http://127.0.0.1:38947/mounted/site/assets/examples/atlas.png",
+    "http://127.0.0.1:38947/mounted/site/assets/example-data.js",
+    "http://127.0.0.1:38947/mounted/site/assets/site.js",
+    "http://127.0.0.1:38947/mounted/site/assets/product/favicon.svg",
+    "http://127.0.0.1:38947/mounted/site/index.html",
+    "http://127.0.0.1:38947/mounted/site/assets/site.css",
+    "http://127.0.0.1:38947/mounted/site/assets/interface-focus.png",
+    "http://127.0.0.1:38947/mounted/site/assets/product/favicon.svg",
+    "http://127.0.0.1:38947/mounted/site/assets/examples/atlas.png",
+    "http://127.0.0.1:38947/mounted/site/assets/example-data.js",
+    "http://127.0.0.1:38947/mounted/site/assets/site.js",
+    "http://127.0.0.1:38947/mounted/site/assets/product/favicon.svg",
+    "http://127.0.0.1:38947/mounted/site/index.html?lang=en",
+    "http://127.0.0.1:38947/mounted/site/assets/site.css",
+    "http://127.0.0.1:38947/mounted/site/assets/interface-focus.png",
+    "http://127.0.0.1:38947/mounted/site/assets/examples/atlas.png",
+    "http://127.0.0.1:38947/mounted/site/assets/product/favicon.svg",
+    "http://127.0.0.1:38947/mounted/site/assets/example-data.js",
+    "http://127.0.0.1:38947/mounted/site/assets/site.js",
+    "http://127.0.0.1:38947/mounted/site/assets/product/favicon.svg",
+    "http://127.0.0.1:38947/mounted/site/demo.html",
+    "blob:http://127.0.0.1:38947/8b7e80d4-d79d-469e-85b1-2ea29c584d2f",
+    "http://127.0.0.1:38947/mounted/site/assets/product/favicon.svg"
   ],
   "browser": "145.0.7632.6",
-  "checked_at": "2026-09-09T21:10:12.427596+00:00",
-  "index_sha256": "fc515b569fc19c540d21df8824ea3db8941fec1be22049c26bd7af31073890dd",
+  "checked_at": "2026-09-10T21:06:11.375379+00:00",
+  "index_sha256": "e621cfb8cafe4b37e3c88c7913c7657586c583e4ce8d75e2768ec88430d1b5cf",
   "summary": {
-    "passed": 34,
+    "passed": 38,
     "failed": 0
   }
 }

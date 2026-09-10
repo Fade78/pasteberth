@@ -43,7 +43,8 @@ vocabulary; it is not proof of who produced the file and must not be used as an
 authorization, trust, or security decision. `duplicate` remains a response flag
 for unnamed-content deduplication and does not rewrite the existing sidecar.
 Older valid sidecar schemas without the digest remain readable; when needed, legacy
-content is hashed on demand for duplicate detection. Pasteberth recognizes an
+content is hashed on demand for duplicate detection, not to populate API
+listing or download identities. Pasteberth recognizes an
 item only when the data file and sidecar are coherent. For a direct local
 `drop`, the source bytes pass through a private staging file; the daemon
 validates them and creates a new managed pair before removing the staging file.
@@ -149,10 +150,33 @@ handles are not a filesystem snapshot against arbitrary writers.
 
 There are no new persistent per-file locks or sidecar format changes. The
 existing lock protocol remains compatible with older cooperating CLI writers.
-Mutations and history still use their existing zone coordination. Preview
-acquisition defaults to `blocking=True`, so it can wait for an exclusive
-writer; the HTTP ZIP route requests nonblocking acquisition and reports `423`
-on writer contention. No hard acquisition or filesystem deadline is promised.
+Mutations and history still use their existing zone coordination. Generic
+content GET/HEAD and HTTP ZIP request `blocking=False` acquisition and report
+`423` on writer contention. Legacy `/previews` retains `blocking=True`, so it
+can wait for an exclusive writer. Generic `/items` listing uses published
+membership and nonblocking history acquisition without global discovery;
+legacy `/images` listing still refreshes or joins discovery. No hard acquisition
+or filesystem deadline is promised.
+
+The generic Python entity is `StoredItem`, with `UnknownItemError` for an unknown
+managed item. `StoredImage` and `UnknownImageError` remain aliases in storage and
+service for 2.x Python consumers, not separate implementations. Existing
+image-named service entry points such as `open_preview` remain callable; genuine
+image validation concepts keep their names. The HTTP terminology change needs
+no stored-zone migration.
+
+`StoredItem.sha256` comes from validated sidecar metadata: 64 lowercase hex
+digits, or `None` for valid legacy metadata without a digest. Its `etag` property
+is the exact quoted `"sha256-HEX"` value, or `None`. API JSON uses `null` for
+unknown values. No listing/download read hashes the payload or backfills a
+zone's legacy digests. The validator identifies managed bytes, not a signature,
+read-time integrity check, or metadata revision. Comments do not change it;
+replacing A with B and then the original A restores A's ETag. `changed_at` stays
+null. Both HTTP content paths evaluate `If-Match` against the acquired metadata
+and retained handle before sending file bytes, and close the handle on a failed
+condition. An external same-length in-place edit can evade server-side coherence
+checks; consumers must verify length and digest locally. A missing digest cannot
+pin listing identity. See [API identity](api.md#item-metadata-unreleased).
 
 ZIP keeps selected handles and one per-process archive slot, not zone locks,
 through compression and network output. New default limits are 64 source files

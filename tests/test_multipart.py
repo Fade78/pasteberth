@@ -72,6 +72,27 @@ class TestParsing(unittest.TestCase):
         with self.assertRaises(MultipartError):
             parse_multipart(b"", "B")
 
+    def test_duplicate_payloads_and_controls_are_rejected_before_collapse(self):
+        for name in ("image", "file", "replace", "preserve_name", "creation_method", "password"):
+            with self.subTest(name=name):
+                part = f'--B\r\nContent-Disposition: form-data; name="{name}"\r\n\r\nsame\r\n'.encode()
+                with self.assertRaisesRegex(MultipartError, "duplicate"):
+                    parse_multipart(part + part + b"--B--\r\n", "B")
+
+    def test_nameless_parts_are_not_silently_discarded(self):
+        for disposition in ('filename="file.txt"', 'filename="field-name=other.txt"', 'name=""', 'x-name="file"'):
+            with self.subTest(disposition=disposition):
+                body = f'--B\r\nContent-Disposition: form-data; {disposition}\r\n\r\nx\r\n--B--\r\n'.encode()
+                with self.assertRaises(MultipartError):
+                    parse_multipart(body, "B")
+
+    def test_new_and_legacy_fields_are_both_visible_to_upload_validation(self):
+        body = (
+            b'--B\r\nContent-Disposition: form-data; name="image"\r\n\r\nsame\r\n'
+            b'--B\r\nContent-Disposition: form-data; name="file"\r\n\r\nsame\r\n--B--\r\n'
+        )
+        self.assertEqual(set(parse_multipart(body, "B")), {"image", "file"})
+
 
 if __name__ == "__main__":
     unittest.main()

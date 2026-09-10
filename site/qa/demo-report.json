@@ -1,10 +1,10 @@
 {
-  "scope": "Demo regressions: synthetic clipboard, mocked rich writes, memory quota and ZIP count limits.",
-  "checked_at": "2026-09-09T21:09:57.430951+00:00",
+  "scope": "Memory demo: generic item transport, absent validators, synthetic clipboard, quota and ZIP limits; not backend conditional-read verification.",
+  "checked_at": "2026-09-10T21:05:56.565429+00:00",
   "browser": "145.0.7632.6",
-  "demo_sha256": "dd18018d27ce6598c3d2ecbca8f9fb08d80efd019e2caef0628862a0ad379988",
+  "demo_sha256": "5ac0fcb39e0eef5529b6e692611e7e930055444848024019bcf544611a304264",
   "summary": {
-    "passed": 8,
+    "passed": 10,
     "failed": 0
   },
   "failures": []

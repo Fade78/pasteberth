@@ -150,7 +150,7 @@ class PasteberthClient:
         )
         chunks = [
             (
-                f'--{boundary}\r\nContent-Disposition: form-data; name="image"; '
+                f'--{boundary}\r\nContent-Disposition: form-data; name="file"; '
                 f'filename="{safe_filename}"\r\nContent-Type: {declared_mime}\r\n\r\n'
             ).encode("utf-8"),
             data,
@@ -166,7 +166,7 @@ class PasteberthClient:
         )
         chunks.append(f"\r\n--{boundary}--\r\n".encode())
         body = b"".join(chunks)
-        path = "/api/zones/" + urllib.parse.quote(zone_id, safe="") + "/images"
+        path = "/api/zones/" + urllib.parse.quote(zone_id, safe="") + "/items"
         return self.request(
             "POST",
             path,
@@ -194,7 +194,7 @@ class PasteberthClient:
             },
             separators=(",", ":"),
         ).encode("utf-8")
-        path = "/api/zones/" + urllib.parse.quote(zone_id, safe="") + "/images/regularize"
+        path = "/api/zones/" + urllib.parse.quote(zone_id, safe="") + "/items/regularize"
         return self.request(
             "POST",
             path,

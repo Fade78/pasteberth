@@ -122,9 +122,10 @@ Collection zones appear after a scan observes them and a subsequent refresh
 reads the completed registry. **Unreleased:** overview polls reuse that registry
 during a cooldown of the greater of 10 seconds or the last full refresh
 duration, measured from completion. The next eligible poll can start one
-background job. Mutations, directory resolution, and explicit history reads
-bypass that cooldown or wait for a running refresh. Downloads instead use the
-published registry without starting or joining a scan: a new zone stays unknown
+background job. Mutations, directory resolution, and legacy `/images` history
+reads bypass that cooldown or wait for a running refresh. Generic `/items`
+listings and downloads instead use the published registry without starting or
+joining a scan: a new zone stays unknown
 until published, and removal takes effect through a later publication.
 This is polling, not instant filesystem notification or a
 response-time guarantee; overview history and free-space reads can still block.

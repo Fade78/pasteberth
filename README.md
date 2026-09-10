@@ -36,6 +36,11 @@ retention can remove older items: this is a working area, not a backup service.
 discovery. Once files are acquired, even long ZIP transfers release zone locks
 so managed writes can continue. Acquisition can still wait on storage or a writer;
 see the [download contract](docs/reference/api.md#downloads-unreleased).
+New external consumers can use the generic `items` API, stored SHA-256, and
+`If-Match` to request a listed payload and verify its bytes before local
+publication. Legacy routes remain supported throughout 2.x; see the
+[external-consumer recipe](docs/recipes/external-consumer.md) and
+[compatibility policy](docs/reference/api.md#compatibility-unreleased).
 
 ## Make It Yours
 
@@ -75,7 +80,7 @@ the data and sidecar stay together.
 | Web paste, drop, or file picker | You want to deposit content from a browser. |
 | `pasteberth drop` | You want the daemon to publish source files under its policies. It always contacts the daemon, even with direct local staging. |
 | `pasteberth register FILE` | A completed file is already in place. It creates or refreshes only the sidecar, without contacting the daemon or rewriting data. |
-| HTTP API | A client needs publication or other documented Web operations. |
+| HTTP API | A client needs publication, authenticated retrieval, or other documented Web operations. |
 | MCP `drop` | A trusted MCP host publishes local paths, UTF-8 content, or base64 content to a known zone. |
 
 For example, with a running service, an existing zone, and an unused target
@@ -115,8 +120,9 @@ completes; this is not an instantaneous filesystem watcher. **Unreleased:**
 overview polls reuse the completed registry during a cooldown of the greater
 of 10 seconds or the last full refresh duration, measured from completion.
 The next eligible poll can start one background job; mutations and explicit
-history reads still refresh or wait for an in-flight scan. Downloads neither
-start nor join scans, so new zones stay unknown until published. Candidates must
+legacy `/images` history reads still refresh or wait for an in-flight scan.
+Downloads and generic `/items` listings neither start nor join scans, so new
+zones stay unknown until published. Candidates must
 meet the collection's path, ID, permission, and leaf-directory rules.
 Discovery neither creates projects nor registers the files inside them.
 
@@ -130,7 +136,8 @@ The documented runtime is **2.1.21**, officially supported on **Linux** with
 runtime dependency.
 
 Changes labelled **Unreleased** describe the working tree, not the `2.1.21`
-release. They include streamed downloads, archive budgets, discovery
+release. They include generic item routes and conditional downloads, streamed
+downloads, archive budgets, discovery
 optimizations, and a date alongside the time for items older than 24 elapsed
 hours in the selected-item panel; see the
 [changelog](CHANGELOG.md#unreleased).

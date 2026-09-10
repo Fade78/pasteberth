@@ -64,7 +64,15 @@ class TestContratsFrontend(unittest.TestCase):
 
     def test_pas_de_blob_urls_accumulees(self):
         self.assertNotIn("createObjectURL", self.app_js)
-        self.assertIn("preview_url", self.app_js)  # miniatures servies par le serveur
+        self.assertIn("content_url", self.app_js)  # miniatures servies par le serveur
+        self.assertNotIn("preview_url", self.app_js)
+
+    def test_generic_item_api(self):
+        self.assertIn('api("/api/zones?schema=items"', self.app_js)
+        self.assertIn('fd.append("file", file,', self.app_js)
+        self.assertNotIn('/images', self.app_js)
+        self.assertNotIn('.images', self.app_js)
+        self.assertIn('unknown_item: "Unknown item"', self.app_js)
 
     def test_etat_actif_non_chromatique(self):
         # bordure + halo + marqueur en plus de la couleur de fond
@@ -116,7 +124,8 @@ class TestContratsFrontend(unittest.TestCase):
         self.assertIn('application/x-pasteberth-transfer', self.app_js)
         self.assertIn("function transferSelected", self.app_js)
         self.assertIn("function renderTransferControls", self.app_js)
-        self.assertIn('"/api/transfers"', self.app_js)
+        self.assertIn('"/api/transfers?schema=items"', self.app_js)
+        self.assertNotIn('"/api/transfers"', self.app_js)
         self.assertIn("event.ctrlKey || event.metaKey ? \"copy\" : \"move\"", self.app_js)
         self.assertIn("wrap.draggable = true", self.app_js)
         self.assertIn("dragging-item", self.style_css)
@@ -185,8 +194,8 @@ class TestContratsFrontend(unittest.TestCase):
         self.assertIn('id="pv-copy-image"', self.index_html)
         self.assertIn('id="pv-toast"', self.index_html)
 
-    def test_suppression_image_disponible(self):
-        self.assertIn("function deleteImage", self.app_js)
+    def test_suppression_item_disponible(self):
+        self.assertIn("function deleteItem", self.app_js)
         self.assertIn('className = "delete-btn"', self.app_js)
         self.assertIn('id="pv-delete"', self.index_html)
         self.assertIn('method: "DELETE"', self.app_js)
@@ -320,7 +329,7 @@ class TestContratsFrontend(unittest.TestCase):
 
     def test_zone_sidecar_applique_la_retention(self):
         self.assertIn("const limit = zone.retain", self.app_js)
-        self.assertIn("zone.images.length > zone.retain", self.app_js)
+        self.assertIn("zone.items.length > zone.retain", self.app_js)
         self.assertNotIn('zone.storage_mode === "directory"', self.app_js)
         self.assertNotIn("zone.max_items", self.app_js)
         self.assertNotIn('err.code === "storage_limit"', self.app_js)

@@ -56,13 +56,13 @@ async def run(port):
                 record(mount + ' real Storage persists FR', await page.locator('html').get_attribute('lang') == 'fr')
                 await page.goto(url + '?lang=en')
                 record(mount + ' real query overrides Storage', await page.locator('html').get_attribute('lang') == 'en')
-                links = await page.locator('#documentation a[href$=".md"]').evaluate_all(
+                links = await page.locator('#documentation a[href$=".md"], #documentation a[href$=".py"]').evaluate_all(
                     '(links) => links.map(a => ({href:a.getAttribute("href"), url:a.href}))')
                 for link in links:
                     if link['url'].startswith(origin):
                         response = await context.request.get(link['url'])
                         expected = (ROOT / link['href']).read_bytes()
-                        record(mount + ' Markdown ' + link['href'],
+                        record(mount + ' Documentation bytes ' + link['href'],
                                response.status == 200 and await response.body() == expected,
                                {'status': response.status, 'content_type': response.headers.get('content-type')})
                 await page.locator('#launch-demo').click()

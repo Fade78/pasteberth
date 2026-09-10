@@ -38,14 +38,17 @@ from .storage import (
     RetentionError,
     StorageConflictError,
     StorageLowError,
-    StoredImage,
-    UnknownImageError,
+    StoredItem,
+    UnknownItemError,
     validate_comment,
     portable_filename,
     valid_filename,
 )
 
 log = logging.getLogger("pasteberth.service")
+
+StoredImage = StoredItem
+UnknownImageError = UnknownItemError
 
 
 class _DeviceSpaceLock:
@@ -80,6 +83,8 @@ class ServiceError(Exception):
     STATUS = {
         "unknown_zone": 404,
         "unknown_image": 404,
+        "unknown_item": 404,
+        "precondition_failed": 412,
         "empty_upload": 400,
         "invalid_filename": 400,
         "invalid_image": 400,
@@ -574,7 +579,7 @@ class PasteService:
         target_filename: str | None,
         allow_replace: bool,
         creation_method: str,
-    ) -> tuple[StoredImage, list[str], bool]:
+    ) -> tuple[StoredItem, list[str], bool]:
         content_sha256 = hashlib.sha256(data).hexdigest()
         try:
             device = destination.device_id
@@ -915,7 +920,7 @@ class PasteService:
         allow_stale_sidecar: bool = False,
         blocking: bool = True,
     ) -> None:
-        """Delete a known image (file + sidecar) from a zone."""
+        """Delete a known item (file + sidecar) from a zone."""
         if not self.has_zone(zid):
             raise ServiceError("unknown_zone", f"unknown zone: {zid}")
         if not self._valid_filename(filename):
@@ -928,7 +933,7 @@ class PasteService:
                     filename,
                     allow_stale_sidecar=allow_stale_sidecar,
                 )
-        except UnknownImageError as exc:
+        except UnknownItemError as exc:
             raise ServiceError("unknown_image", str(exc)) from exc
         except StorageConflictError as exc:
             raise ServiceError("storage_conflict", str(exc)) from exc
@@ -962,7 +967,7 @@ class PasteService:
                 for filename in filenames:
                     try:
                         destination.delete(filename)
-                    except UnknownImageError as exc:
+                    except UnknownItemError as exc:
                         failed.append(
                             {"filename": filename, "code": "unknown_image", "message": str(exc)}
                         )
@@ -1055,7 +1060,7 @@ class PasteService:
             failed: list[dict] = []
             items: list[dict] = []
             retention_deleted: list[str] = []
-            published_items: list[tuple[StoredImage, StoredImage]] = []
+            published_items: list[tuple[StoredItem, StoredItem]] = []
             try:
                 target_device = target_destination.device_id
             except (DestinationError, OSError) as exc:
@@ -1124,7 +1129,7 @@ class PasteService:
                                 "target_published": target_published,
                             }
                         )
-                    except UnknownImageError as exc:
+                    except UnknownItemError as exc:
                         failed.append(
                             {
                                 "filename": item.filename,
@@ -1164,7 +1169,7 @@ class PasteService:
                         if mode == "move":
                             try:
                                 source_destination.delete(source_item.filename)
-                            except UnknownImageError as exc:
+                            except UnknownItemError as exc:
                                 failed.append(
                                     {
                                         "filename": source_item.filename,
@@ -1214,7 +1219,7 @@ class PasteService:
                 zid, kind="rename", exclusive=True, blocking=blocking, refresh=False
             ) as (zone, destination):
                 stored = destination.rename(source, target)
-        except UnknownImageError as exc:
+        except UnknownItemError as exc:
             raise ServiceError("unknown_image", str(exc)) from exc
         except StorageConflictError as exc:
             raise ServiceError("storage_conflict", str(exc)) from exc
@@ -1242,7 +1247,7 @@ class PasteService:
                 zid, kind="comment", exclusive=True, blocking=True, refresh=False
             ) as (zone, destination):
                 stored = destination.update_comment(filename, comment)
-        except UnknownImageError as exc:
+        except UnknownItemError as exc:
             raise ServiceError("unknown_image", str(exc)) from exc
         except StorageConflictError as exc:
             raise ServiceError("storage_conflict", str(exc)) from exc
@@ -1254,7 +1259,7 @@ class PasteService:
     @contextmanager
     def open_preview(
         self, zid: str, filename: str, *, blocking: bool = True
-    ) -> Iterator[tuple[StoredImage, FileHandle]]:
+    ) -> Iterator[tuple[StoredItem, FileHandle]]:
         """Acquire a published zone's file; no locks survive into the consumer."""
         with self._registry_lock:
             destination = self._destinations.get(zid)
@@ -1275,7 +1280,7 @@ class PasteService:
                     raise ServiceError("too_large", "preview is too large to serve")
             except DestinationBusyError as exc:
                 raise ServiceError("zone_busy", str(exc)) from exc
-            except UnknownImageError as exc:
+            except UnknownItemError as exc:
                 raise ServiceError("unknown_image", str(exc)) from exc
             except (DestinationError, OSError) as exc:
                 raise ServiceError("destination_error", str(exc)) from exc
@@ -1309,7 +1314,7 @@ class PasteService:
         filenames: list[str],
         *,
         blocking: bool = True,
-    ) -> Iterator[list[tuple[StoredImage, FileHandle]]]:
+    ) -> Iterator[list[tuple[StoredItem, FileHandle]]]:
         """Retain selected handles and a global permit, but no zone locks."""
         with self._registry_lock:
             zone = self._zone_cfg.get(zid)
@@ -1344,7 +1349,7 @@ class PasteService:
                     )
             except DestinationBusyError as exc:
                 raise ServiceError("zone_busy", str(exc)) from exc
-            except UnknownImageError as exc:
+            except UnknownItemError as exc:
                 raise ServiceError("unknown_image", str(exc)) from exc
             except (DestinationError, OSError) as exc:
                 raise ServiceError("destination_error", str(exc)) from exc
@@ -1363,7 +1368,7 @@ class PasteService:
     def item_payload(
         self,
         zid: str,
-        item: StoredImage,
+        item: StoredItem,
         *,
         zone: ZoneConfig | None = None,
         destination: LocalDestination | None = None,
@@ -1387,12 +1392,18 @@ class PasteService:
             "width": item.width,
             "height": item.height,
             "size": item.size,
+            "sha256": item.sha256,
+            "etag": item.etag,
             "format": item.fmt,
             "kind": item.kind,
             "mime": item.mime,
             "creation_method": item.creation_method,
             "replaced": item.replaced,
             "comment": item.comment,
+            "content_url": public_path(
+                self.cfg.url_prefix,
+                f"/api/zones/{quote(zid, safe='')}/items/{quote(item.filename, safe='')}/content",
+            ),
             "preview_url": public_path(
                 self.cfg.url_prefix,
                 f"/previews/{quote(zid, safe='')}/{quote(item.filename, safe='')}",

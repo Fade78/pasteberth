@@ -25,9 +25,11 @@ deposit/download when validating the full handoff path. Do not use a production
 zone for a write probe unless its retention effects are acceptable.
 
 The overview reads zone histories separately, not as one atomic cross-zone
-content snapshot. A zone with `busy: true`, `count: null`, and `images: []` has
-unavailable history, not a confirmed empty directory. Refresh after the busy
-operation finishes before treating missing items as deleted.
+content snapshot. A zone with `busy: true`, `count: null`, and an empty history
+has unavailable history, not a confirmed empty directory. **Unreleased:** that
+array is `items: []` with `schema=items`, or `images: []` in the default legacy
+schema. Refresh after the busy operation finishes before treating missing items
+as deleted.
 
 Background discovery does not make the entire overview asynchronous. History
 and free-space checks still run synchronously and can block on filesystem I/O.
@@ -66,13 +68,16 @@ a background cooldown of `max(10 seconds, last full refresh duration)` from
 completion. The duration includes scanning and registry installation; startup,
 foreground, and failed refresh attempts also set the cooldown. Its expiry
 does not launch work: the next eligible poll can start one job. Mutations,
-directory resolution, and explicit history reads bypass the cooldown or join
+directory resolution, and legacy `/images` history reads bypass the cooldown or join
 an in-flight refresh, without a second refresh in the same action. Those actions
-can therefore still wait on discovery. Preview/download GET and HEAD and ZIP
-neither trigger nor join scans: they use the published registry. New zones
+can therefore still wait on discovery. Generic `/items` listing, content
+GET/HEAD on both routes, and ZIP neither trigger nor join scans: they use the
+published registry. New zones
 return `404` until published, and removals take effect through later publication.
-Acquisition still checks the destination and can block on filesystem I/O or an
-exclusive writer; this change does not add a hard response-time guarantee.
+Acquisition still checks the destination and can block on filesystem I/O.
+Generic listing/content and HTTP ZIP request nonblocking locks and can return
+`423`; legacy previews can wait for an exclusive writer. This change does not add
+a hard response-time guarantee.
 
 **Unreleased diagnostics:** debug logs separate scan and registry-install
 durations and report per-rule scan timing, matches, and newly cached paths.

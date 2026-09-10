@@ -1,5 +1,5 @@
 /* Local website demo adapter. The original Pasteberth UI follows unchanged.
- * This is NOT the Pasteberth backend or a security/transaction simulator.
+ * This is NOT the Pasteberth backend or a security/transaction/validator simulator.
  * No network requests. All files live in this document's memory.
  */
 (() => {
@@ -18,23 +18,31 @@ const key = (z,f) => z + '/' + f;
 function attach(zone,item,blob) {
   const url=URL.createObjectURL(blob);objectURLs.add(url);
   files.set(key(zone.id,item.filename),{blob,url});
-  item.preview_url=url;
+  item.content_url=url;
+  // No content digest is computed here; filenames are not content validators.
+  item.sha256=null;item.etag=null;
   item.reference=`@/repo/${zone.label}/ignoredbygit/exchange/${item.filename}`;
   return item;
 }
-for(const zone of state.zones) for(const item of zone.images) {
+for(const zone of state.zones) for(const item of zone.items) {
  const source=original.files[item.filename];
  attach(zone,item,new Blob([toBytes(source.base64)],{type:source.mime}));
 }
 function json(data,status=200){return new Response(JSON.stringify(data),{status,headers:{'Content-Type':'application/json'}});}
 function error(code,message,status=400){return json({error:{code,message}},status);}
 function remove(zone,filename){
- const index=zone.images.findIndex(i=>i.filename===filename);if(index<0)return false;
- zone.images.splice(index,1);const f=files.get(key(zone.id,filename));if(f){URL.revokeObjectURL(f.url);objectURLs.delete(f.url);}files.delete(key(zone.id,filename));zone.count=zone.images.length;return true;
+ const index=zone.items.findIndex(i=>i.filename===filename);if(index<0)return false;
+ zone.items.splice(index,1);const f=files.get(key(zone.id,filename));if(f){URL.revokeObjectURL(f.url);objectURLs.delete(f.url);}files.delete(key(zone.id,filename));zone.count=zone.items.length;return true;
 }
-function refreshCounts(){for(const z of state.zones)z.count=z.images.length;}
+function refreshCounts(){for(const z of state.zones)z.count=z.items.length;}
 function totalSize(){return [...files.values()].reduce((s,f)=>s+f.blob.size,0);}
 function safeName(name){return !!name && !/[\/\\\x00-\x1f\x7f]/.test(name) && !['.','..'].includes(name) && name.length<=200;}
+function content(file,options){
+ if(!file)return error('unknown_item','Not in this local demo',404);
+ const headers=new Headers(options.headers);
+ if(headers.has('If-Match')||headers.has('If-None-Match'))return error('not_implemented','This demo does not simulate conditional content reads',501);
+ return new Response(options.method==='HEAD'?null:file.blob,{headers:{'Content-Type':file.blob.type,'Content-Length':String(file.blob.size)}});
+}
 // A small ZIP writer using stored entries (no compression, UTF-8 filenames).
 function archive(entries){
  const enc=new TextEncoder();let offset=0;const local=[],central=[];
@@ -58,7 +66,7 @@ window.fetch=async function(url,options={}) {
  // Preview/download bytes are read directly from memory; never via native fetch.
  if(str.startsWith('blob:')){
   const f=[...files.values()].find(x=>x.url===str.split('?')[0]);
-  return f?new Response(f.blob,{headers:{'Content-Type':f.blob.type}}):error('unknown_image','Not in this local demo',404);
+  return content(f,options);
  }
  const path=new URL(str,'https://demo.invalid').pathname,method=options.method||'GET';
  if(path==='/api/zones' && method==='GET'){refreshCounts();return json(state);}
@@ -67,21 +75,22 @@ window.fetch=async function(url,options={}) {
  if(path==='/api/transfers' && method==='POST'){
   const b=JSON.parse(options.body),s=state.zones.find(z=>z.id===b.source_zone),t=state.zones.find(z=>z.id===b.target_zone);
   if(!s||!t||s===t||!['move','copy'].includes(b.mode))return error('invalid_request','Invalid demo transfer');
-   if(!Array.isArray(b.filenames)||b.filenames.some(n=>!s.images.some(i=>i.filename===n)))return error('unknown_image','Unknown file',404);
+   if(!Array.isArray(b.filenames)||b.filenames.some(n=>!s.items.some(i=>i.filename===n)))return error('unknown_item','Unknown file',404);
    if(new Set(b.filenames).size!==b.filenames.length)return error('invalid_request','Duplicate demo transfer filenames');
-  if(b.filenames.some(n=>t.images.some(i=>i.filename===n)))return error('storage_conflict','A filename already exists in the destination',409);
+  if(b.filenames.some(n=>t.items.some(i=>i.filename===n)))return error('storage_conflict','A filename already exists in the destination',409);
   if(b.mode==='copy' && totalSize()+b.filenames.reduce((sum,n)=>sum+files.get(key(s.id,n)).blob.size,0)>totalLimit)return error('too_large','Local demo limit: 32 MiB of files in total',413);
   const transferred=[];
-  for(const name of b.filenames){const source=s.images.find(i=>i.filename===name),copy=attach(t,structuredClone(source),files.get(key(s.id,name)).blob);t.images.unshift(copy);transferred.push(copy);if(b.mode==='move')remove(s,name);}
+  for(const name of b.filenames){const source=s.items.find(i=>i.filename===name),copy=attach(t,structuredClone(source),files.get(key(s.id,name)).blob);t.items.unshift(copy);transferred.push(copy);if(b.mode==='move')remove(s,name);}
   refreshCounts();return json({transferred,failed:[],retention_deleted:[]});
  }
- const match=path.match(/^\/api\/zones\/([^/]+)\/images(?:\/(.*))?$/);
+ const match=path.match(/^\/api\/zones\/([^/]+)\/items(?:\/(.*))?$/);
  if(!match)return error('not_found','This action is outside the local demo',404);
  const z=state.zones.find(i=>i.id===decodeURIComponent(match[1]));if(!z)return error('unknown_zone','Unknown zone',404);
  const tail=match[2]?decodeURIComponent(match[2]):'';
- if(method==='GET'&&!tail)return json({images:z.images});
+ if((method==='GET'||method==='HEAD')&&tail.endsWith('/content'))return content(files.get(key(z.id,tail.slice(0,-8))),options);
+ if(method==='GET'&&!tail)return json({items:z.items});
  if(method==='POST'&&!tail){
-  const form=options.body,file=form.get('image');
+  const form=options.body,file=form.get('file');
   if(!(file instanceof Blob)||!file.size)return error('empty_upload','The file is empty');
    if(file.size>limit)return error('too_large','Local demo limit: 8 MiB per file',413);
    const named=form.get('preserve_name')==='1';
@@ -93,35 +102,35 @@ window.fetch=async function(url,options={}) {
    const filename=named?file.name:`demo-${Date.now()}-${++anonymousId}${extension}`;
    // Reads/decoding yield. Re-read conflicts and count net bytes here; nothing
    // between this check and commit awaits, including the transfer branch above.
-   const old=z.images.find(i=>i.filename===filename);
+   const old=z.items.find(i=>i.filename===filename);
    if(old&&form.get('replace')!=='1')return error('replacement_required','Existing demo file',428);
    if(totalSize()-(old?files.get(key(z.id,filename)).blob.size:0)+file.size>totalLimit)return error('too_large','Local demo limit: 32 MiB of files in total',413);
   if(old)remove(z,filename);
   const item=attach(z,{id:filename,filename,created_at:new Date().toISOString(),changed_at:null,size:file.size,kind,mime,format,width,height,comment:'',creation_method:form.get('creation_method')||'web_mouse_drop',replaced:!!old},new Blob([bytes],{type:mime}));
-  z.images.unshift(item);const deleted=[];while(z.images.length>z.retain){const n=z.images.at(-1).filename;remove(z,n);deleted.push(n);}refreshCounts();
+  z.items.unshift(item);const deleted=[];while(z.items.length>z.retain){const n=z.items.at(-1).filename;remove(z,n);deleted.push(n);}refreshCounts();
   return json({...item,retention_deleted:deleted},201);
  }
  if(method==='POST' && tail==='archive'){
   const names=JSON.parse(options.body).filenames||[],entries=[];
   if(state.max_archive_files!==null && names.length>state.max_archive_files)return error('too_large',`Local demo limit: ${state.max_archive_files} files per ZIP`,413);
-  for(const name of names){const f=files.get(key(z.id,name));if(!f)return error('unknown_image','Unknown file',404);entries.push({name,bytes:new Uint8Array(await f.blob.arrayBuffer())});}
+  for(const name of names){const f=files.get(key(z.id,name));if(!f)return error('unknown_item','Unknown file',404);entries.push({name,bytes:new Uint8Array(await f.blob.arrayBuffer())});}
   return new Response(archive(entries),{headers:{'Content-Type':'application/zip','Content-Disposition':'attachment; filename="pasteberth-demo.zip"'}});
  }
  if(method==='POST' && tail==='batch-delete'){
   const names=JSON.parse(options.body).filenames||[];return json({deleted:names.filter(n=>remove(z,n)),failed:[]});
  }
  if(method==='PATCH' && tail.endsWith('/comment')){
-  const name=tail.slice(0,-8),item=z.images.find(i=>i.filename===name);if(!item)return error('unknown_image','Unknown file',404);
+  const name=tail.slice(0,-8),item=z.items.find(i=>i.filename===name);if(!item)return error('unknown_item','Unknown file',404);
   item.comment=String(JSON.parse(options.body).comment||'').slice(0,1000);return json(item);
  }
- if(method==='DELETE'){return remove(z,tail)?json({deleted:tail}):error('unknown_image','Unknown file',404);}
+ if(method==='DELETE'){return remove(z,tail)?json({deleted:tail}):error('unknown_item','Unknown file',404);}
  return error('invalid_request','Unsupported operation in this local demo',400);
 };
 // The real UI submits ZIP requests through a hidden form. Redirect that
 // transport into the same memory adapter, without allowing any form network IO.
 HTMLFormElement.prototype.submit=function(){
  const path=this.getAttribute('action')||'';
- if(!/^\/api\/zones\/[^/]+\/images\/archive$/.test(path))return;
+ if(!/^\/api\/zones\/[^/]+\/items\/archive$/.test(path))return;
  const names=new FormData(this).getAll('filename');
  window.fetch(path,{method:'POST',body:JSON.stringify({filenames:names})}).then(async response=>{
   if(!response.ok)throw new Error('Unable to create demo ZIP');

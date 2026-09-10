@@ -88,18 +88,20 @@ traversable and satisfy the rule's depth and subtree constraints.
 a background cooldown of `max(10 seconds, last full refresh duration)` from
 completion, including registry installation. Startup, foreground, and failed
 refresh attempts also set it. The next eligible poll can launch one job;
-not every overview starts a scan. Mutations, directory resolution, and explicit
-history reads bypass the cooldown or wait for an in-flight refresh, without a
-duplicate refresh in the same action. Scanner caches are shared across rules
+not every overview starts a scan. Mutations, directory resolution, and legacy
+`/images` history reads bypass the cooldown or wait for an in-flight refresh,
+without a duplicate refresh in the same action. Scanner caches are shared across rules
 within one pass only. Overview
 history and free-space checks remain synchronous and can block; there is no
 hard discovery or response deadline. These changes are not in the `2.1.21`
 release.
 
-**Unreleased downloads:** GET/HEAD previews and ZIP use the published registry
-without starting discovery or waiting for a scan. New zone IDs return `404`
+**Unreleased reads:** generic `/items` listings, GET/HEAD content on either
+route, and ZIP use the published registry without starting discovery or waiting
+for a scan. New zone IDs return `404`
 until published; removals take effect through later registry publication.
-Selected metadata and file handles are acquired under shared filesystem locks,
+Listing still reads the selected zone's history. For downloads, selected
+metadata and file handles are acquired under shared filesystem locks,
 then streamed without zone locks, so managed replacement/deletion can continue
 even on those filenames. Acquisition still checks directory identity, enumerates
 names, and reads journals; it can wait on storage or an exclusive writer.
@@ -111,11 +113,41 @@ New `[limits]` defaults are `max_archive_files = 64` and
 `max_active_archives = 4` across all zones per process. Both accept positive
 integers or `"unlimited"`. ZIP slot exhaustion returns `503 server_busy` with
 `Retry-After: 1`; nonblocking ZIP acquisition can instead return `423 zone_busy`
-for an exclusive writer. Preview acquisition remains blocking by default.
+for an exclusive writer. Generic content GET/HEAD and listing also use
+nonblocking acquisition; legacy preview acquisition remains blocking.
 The 256 MiB source-byte and 300-second ZIP streaming defaults remain; the
 request deadline covers initial acquisition and becomes inactivity-based during
 emission. Handles and slots are released on completion, timeout, disconnect,
 or failure as the handler unwinds, not by forcibly interrupting filesystem I/O.
+
+**Unreleased generic API:** use `/api/zones/{id}/items` for listing and upload,
+its comment/delete/batch-delete/archive/regularize children, and
+`/api/zones/{id}/items/{filename}/content` for GET/HEAD downloads. Upload uses
+`file`; both routes accept either `file` or `image`, exactly one payload.
+The bundled UI selects `schema=items` on `/api/zones` and `/api/transfers`;
+omitting the selector or using `schema=images` preserves the legacy representation
+without duplicate histories. Generic payloads use `content_url`, not
+`preview_url`; legacy payloads keep `preview_url` and add identity fields and
+`content_url`. Old routes share handlers and remain supported throughout 2.x;
+removal will be no earlier than 3.0, announced in advance, with no date set.
+Stored zones need no migration; Python `StoredImage`/`UnknownImageError` remain
+aliases for `StoredItem`/`UnknownItemError`.
+
+Known identity is stored lowercase SHA-256 and an exact quoted `"sha256-HEX"`
+ETag; legacy unknown values are null. GET/HEAD on both content routes support
+strong `If-Match` against the acquired version, returning 412 without file bytes
+on mismatch and 400 for malformed conditions. Comments do not change the ETag,
+and `changed_at` remains null. This is not hashing on read or protection against
+external in-place writes: consumers must verify downloaded length and digest.
+Unknown legacy identity cannot pin the version in a listing. The repository's
+external-consumer example verifies before local replacement; exit 3 means the
+file was published but stdout reporting failed, not rollback.
+
+At a public loopback reverse proxy, block `/api/drop/resolve` and **both**
+`/api/zones/{id}/images/regularize` and `/api/zones/{id}/items/regularize`, including
+the configured mount prefix. Otherwise the immediate-loopback-peer exception
+remains reachable through the unblocked alias. Ordinary uploads and remote
+`drop --zone ID` need neither route. Keep cookie, Host/Origin, and TLS checks.
 
 Shared Web authentication is not per-user authorization. Groups and collections
 organize zones but do not grant or restrict access. Filesystem group permissions
@@ -133,6 +165,8 @@ In a checkout, start at `GUIDE.md`; otherwise use these repository links:
 
 - [Documentation map](https://github.com/Fade78/pasteberth/blob/main/GUIDE.md)
 - [CLI reference](https://github.com/Fade78/pasteberth/blob/main/docs/reference/cli.md)
+- [HTTP API](https://github.com/Fade78/pasteberth/blob/main/docs/reference/api.md)
+- [External consumer (Unreleased)](https://github.com/Fade78/pasteberth/blob/main/docs/recipes/external-consumer.md)
 - [Configuration](https://github.com/Fade78/pasteberth/blob/main/docs/reference/configuration.md)
 - [Deployment](https://github.com/Fade78/pasteberth/blob/main/docs/deployment.md)
 - [Operations and recovery](https://github.com/Fade78/pasteberth/blob/main/docs/operations.md)

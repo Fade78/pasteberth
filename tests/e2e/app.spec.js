@@ -31,7 +31,7 @@ async function deferClipboard(page) {
 }
 
 async function addTertiaryTabZone(page) {
-  await page.route("**/api/zones/tertiary/images", async (route) => {
+  await page.route("**/api/zones/tertiary/items", async (route) => {
     if (route.request().method() !== "GET") {
       await route.continue();
       return;
@@ -39,10 +39,10 @@ async function addTertiaryTabZone(page) {
     await route.fulfill({
       status: 200,
       contentType: "application/json",
-      body: JSON.stringify({ images: [] }),
+      body: JSON.stringify({ items: [] }),
     });
   });
-  await page.route("**/api/zones", async (route) => {
+  await page.route("**/api/zones?schema=items", async (route) => {
     if (route.request().method() !== "GET") {
       await route.continue();
       return;
@@ -300,18 +300,18 @@ test.describe("timestamps", () => {
   test.use({ timezoneId: "UTC" });
 
   async function mockItems(page, items) {
-    const response = await page.request.get("/api/zones");
+    const response = await page.request.get("/api/zones?schema=items");
     const overview = await response.json();
-    overview.zones.find(zone => zone.id === "default").images = items.map(item => ({
+    overview.zones.find(zone => zone.id === "default").items = items.map(item => ({
       id: item.filename,
       kind: "binary",
       mime: "application/octet-stream",
       size: 4,
       reference: `@${item.filename}`,
-      preview_url: `data:image/png;base64,${ONE_PIXEL_PNG}`,
+      content_url: `data:image/png;base64,${ONE_PIXEL_PNG}`,
       ...item,
     }));
-    await page.route("**/api/zones", route => route.fulfill({ json: overview }));
+    await page.route("**/api/zones?schema=items", route => route.fulfill({ json: overview }));
   }
 
   test("compact dates use elapsed 24 hours and preserve full details", async ({ page }) => {
@@ -366,13 +366,66 @@ test.describe("timestamps", () => {
     const tooltip = await zone.locator(".thumb-wrap").getAttribute("title");
 
     await page.clock.setFixedTime(new Date(now.getTime() + 1));
-    const poll = page.waitForResponse(response => response.url().endsWith("/api/zones"));
+    const poll = page.waitForResponse(response => response.url().endsWith("/api/zones?schema=items"));
     await page.clock.fastForward(10_000);
     await poll;
     await expect(zone.locator(".dims")).toHaveText("Bin · 4 B · 01/01/2026 12:00:00 PM");
     await expect(zone.locator(".thumb-wrap")).toHaveAttribute("title", tooltip);
     await expect(zone.locator(".new-badge")).toHaveCount(0);
   });
+
+  test("content identity detects same-size replacements but not comments", async ({ page }) => {
+    const item = {
+      filename: "stable.bin", created_at: "2026-01-01T12:00:00Z",
+      sha256: "a".repeat(64), etag: '"version-a"', comment: "original",
+    };
+    await mockItems(page, [item]);
+    await openApp(page);
+    const zone = page.locator('.zone[data-zone="default"]');
+    await expect(zone.locator(".new-badge")).toHaveCount(0);
+
+    await mockItems(page, [{ ...item, comment: "edited" }]);
+    await page.evaluate(() => document.dispatchEvent(new Event("visibilitychange")));
+    await expect(zone.locator(".thumb-wrap")).toHaveAttribute("title", /Comment: edited/);
+    await expect(zone.locator(".new-badge")).toHaveCount(0);
+
+    await mockItems(page, [{ ...item, sha256: "b".repeat(64), etag: '"version-b"' }]);
+    await page.evaluate(() => document.dispatchEvent(new Event("visibilitychange")));
+    await expect(zone.locator(".thumb-wrap .new-badge")).toHaveCount(1);
+  });
+});
+
+test("uses generic uploads and per-zone items with content-only metadata", async ({ page }) => {
+  const requests = [];
+  page.on("request", request => requests.push(new URL(request.url()).pathname));
+  await page.route("**/api/zones?schema=items", async route => {
+    const response = await route.fetch();
+    const overview = await response.json();
+    for (const zone of overview.zones) delete zone.items;
+    await route.fulfill({ response, json: overview });
+  });
+  await page.route("**/api/zones/*/items", async route => {
+    const response = await route.fetch();
+    const payload = await response.json();
+    for (const item of payload.items || [payload]) delete item.preview_url;
+    await route.fulfill({ response, json: payload });
+  });
+  await openApp(page);
+  await page.getByRole("button", { name: "Select zone Default" }).click();
+  const uploadRequest = page.waitForRequest(request => (
+    request.method() === "POST" && request.url().endsWith("/api/zones/default/items")
+  ));
+  await dispatchPaste(page);
+  const upload = await uploadRequest;
+  expect(upload.postDataBuffer().includes(Buffer.from('name="file";'))).toBe(true);
+  expect(upload.postDataBuffer().includes(Buffer.from('name="image";'))).toBe(false);
+  const image = page.locator('[data-zone="default"] .thumb-big');
+  await expect.poll(() => image.evaluate(img => img.naturalWidth)).toBe(1);
+  await page.reload();
+  await expect.poll(() => image.evaluate(img => img.naturalWidth)).toBe(1);
+  expect(requests).toContain("/api/zones/default/items");
+  expect(requests).toContain("/api/zones/secondary/items");
+  expect(requests.some(path => /\/images(?:\/|$)|\/previews\//.test(path))).toBe(false);
 });
 
 test("charge les zones et expose une sélection clavier accessible", async ({ page }) => {
@@ -430,7 +483,7 @@ test("les contrôles d'action ne changent pas la cible de collage", async ({ pag
   await expect(secondary.locator(".zone-select")).toHaveAttribute("aria-current", "true");
 
   const pasteRequest = page.waitForRequest(request => (
-    request.method() === "POST" && request.url().includes("/api/zones/secondary/images")
+    request.method() === "POST" && request.url().includes("/api/zones/secondary/items")
   ));
   await dispatchPaste(page);
   await pasteRequest;
@@ -484,7 +537,7 @@ test("la confirmation de remplacement commence par Cancel et restaure le focus",
   const originalZoneSelect = await defaultZone.locator(".zone-select").elementHandle();
   const refreshDone = page.waitForResponse((response) => (
     response.request().method() === "GET"
-      && response.url().endsWith("/api/zones")
+      && response.url().endsWith("/api/zones?schema=items")
   ));
   await Promise.all([
     refreshDone,
@@ -590,7 +643,7 @@ test("le layout tab ouvre une zone et permet une sélection multiple au Shift-cl
   await expect(defaultLink).toHaveAttribute("aria-current", "true");
   await expect(secondaryLink).toHaveAttribute("aria-current", "false");
   const pasteRequest = page.waitForRequest(request => (
-    request.method() === "POST" && request.url().includes("/api/zones/default/images")
+    request.method() === "POST" && request.url().includes("/api/zones/default/items")
   ));
   await dispatchPaste(page);
   await pasteRequest;
@@ -601,7 +654,7 @@ test("le layout tab ouvre une zone et permet une sélection multiple au Shift-cl
   await secondaryLink.click({ modifiers: ["Control"] });
   await expect(page.locator('.tab-zone-main .zone[data-zone="secondary"]')).toHaveCount(1);
   const dropRequest = page.waitForRequest(request => (
-    request.method() === "POST" && request.url().includes("/api/zones/secondary/images")
+    request.method() === "POST" && request.url().includes("/api/zones/secondary/items")
   ));
   await dispatchDrop(page, '.tab-zone-link[data-zone="secondary"]');
   await dropRequest;
@@ -759,7 +812,7 @@ test("les options filtrent les groupes vides et les compteurs", async ({ page })
 });
 
 test("sélectionne automatiquement l'unique zone visible", async ({ page }) => {
-  await page.route("**/api/zones", async (route) => {
+  await page.route("**/api/zones?schema=items", async (route) => {
     const response = await route.fetch();
     const overview = await response.json();
     overview.zones = overview.zones.filter((zone) => zone.id === "default");
@@ -773,7 +826,7 @@ test("sélectionne automatiquement l'unique zone visible", async ({ page }) => {
 });
 
 test("sans groupes configurés, conserve toutes les zones sans barre de groupes", async ({ page }) => {
-  await page.route("**/api/zones", async (route) => {
+  await page.route("**/api/zones?schema=items", async (route) => {
     const response = await route.fetch();
     const overview = await response.json();
     overview.groups = [];
@@ -784,7 +837,7 @@ test("sans groupes configurés, conserve toutes les zones sans barre de groupes"
 });
 
 test("ne réaffiche pas les zones quand tous les groupes sont masqués", async ({ page }) => {
-  await page.route("**/api/zones", async (route) => {
+  await page.route("**/api/zones?schema=items", async (route) => {
     const response = await route.fetch();
     const overview = await response.json();
     overview.groups = [{
@@ -817,7 +870,7 @@ test("colle une image et ouvre son aperçu au clavier", async ({ page }) => {
   expect(reference).toMatch(/^@.*\.png$/);
   await expect(defaultZone.locator(".thumb-big")).toHaveAttribute(
     "src",
-    /\/previews\/default\//,
+    /\/api\/zones\/default\/items\/[^/]+\/content/,
   );
   await expect(defaultZone.locator(".history-index")).toBeVisible();
   await expect(defaultZone.locator(".thumb-wrap")).toHaveCount(1);
@@ -988,7 +1041,7 @@ test("les entrees web partagent le contrat de provenance", async ({ page }) => {
   await defaultZone.getByRole("button", { name: "Select zone Default" }).click();
   const uploadResponse = () => page.waitForResponse(response => (
     response.request().method() === "POST"
-      && response.url().includes("/api/zones/default/images")
+      && response.url().includes("/api/zones/default/items")
       && [200, 201].includes(response.status())
   ));
   const assertUpload = async (responsePromise, method, filename) => {
@@ -1107,7 +1160,7 @@ test("copie, télécharge et supprime la sélection d'une zone", async ({ page }
 
   page.once("dialog", (dialog) => dialog.accept());
   const deleteResponse = page.waitForResponse((response) => (
-    response.url().includes("/api/zones/default/images/batch-delete")
+    response.url().includes("/api/zones/default/items/batch-delete")
       && response.status() === 200
   ));
   await defaultZone.getByRole("button", { name: "Delete 2 selected files" }).click();
@@ -1123,27 +1176,27 @@ for (const { name, limit, count, blocked } of [
 ]) {
   test(`ZIP preflight ${name}`, async ({ page }) => {
     const filenames = Array.from({ length: count }, (_, index) => `file-${index}.bin`);
-    await page.route("**/api/zones", async (route) => {
+    await page.route("**/api/zones?schema=items", async (route) => {
       const response = await route.fetch();
       const overview = await response.json();
       if (limit === undefined) delete overview.max_archive_files;
       else overview.max_archive_files = limit;
-      overview.zones.find(zone => zone.id === "default").images = filenames.map(filename => ({
+      overview.zones.find(zone => zone.id === "default").items = filenames.map(filename => ({
         id: filename,
         filename,
         kind: "binary",
         size: 4,
         created_at: "2026-01-01T12:00:00Z",
         reference: `@${filename}`,
-        preview_url: `data:image/png;base64,${ONE_PIXEL_PNG}`,
+        content_url: `data:image/png;base64,${ONE_PIXEL_PNG}`,
       }));
       await route.fulfill({ response, json: overview });
     });
     const archiveRequests = [];
     page.on("request", request => {
-      if (request.url().endsWith("/images/archive")) archiveRequests.push(request);
+      if (request.url().endsWith("/items/archive")) archiveRequests.push(request);
     });
-    await page.route("**/images/archive", route => route.fulfill({ status: 204 }));
+    await page.route("**/items/archive", route => route.fulfill({ status: 204 }));
     await page.addInitScript(() => {
       window.__archiveFormSubmits = 0;
       const submit = HTMLFormElement.prototype.submit;
@@ -1165,10 +1218,10 @@ for (const { name, limit, count, blocked } of [
         "ZIP downloads allow a maximum of 2 files; 3 selected",
       );
       expect(await page.evaluate(() => window.__archiveFormSubmits)).toBe(0);
-      await expect(page.locator('form[action$="/images/archive"]')).toHaveCount(0);
+      await expect(page.locator('form[action$="/items/archive"]')).toHaveCount(0);
       expect(archiveRequests).toHaveLength(0);
     } else {
-      const requestPromise = page.waitForRequest("**/images/archive");
+      const requestPromise = page.waitForRequest("**/items/archive");
       await button.click();
       const request = await requestPromise;
       expect(request.method()).toBe("POST");
@@ -1191,7 +1244,7 @@ test("copie une sélection vers une autre zone depuis les actions accessibles", 
 
   await defaultZone.locator(".transfer-target").selectOption({ label: "Secondary" });
   const transferResponse = page.waitForResponse(response => (
-    response.url().includes("/api/transfers") && response.status() === 200
+    response.url().endsWith("/api/transfers?schema=items") && response.status() === 200
   ));
   await defaultZone.getByRole("button", { name: "Copy 2 selected files" }).click();
   await transferResponse;
@@ -1211,7 +1264,7 @@ test("déplace une sélection par glisser-déposer interne", async ({ page }) =>
   await defaultZone.locator(".thumb-wrap").first().click();
 
   const transferResponse = page.waitForResponse(response => (
-    response.url().includes("/api/transfers") && response.status() === 200
+    response.url().endsWith("/api/transfers?schema=items") && response.status() === 200
   ));
   await dispatchInternalDrag(
     page,
@@ -1235,7 +1288,7 @@ test("copie par glisser-déposer interne avec Ctrl", async ({ page }) => {
   await defaultZone.locator(".thumb-wrap").first().click();
 
   const transferResponse = page.waitForResponse(response => (
-    response.url().includes("/api/transfers") && response.status() === 200
+    response.url().endsWith("/api/transfers?schema=items") && response.status() === 200
   ));
   await dispatchInternalDrag(
     page,
@@ -1251,7 +1304,7 @@ test("copie par glisser-déposer interne avec Ctrl", async ({ page }) => {
 
 test("réessaie une preview temporairement indisponible", async ({ page }) => {
   let previewAttempts = 0;
-  await page.route("**/previews/**", async (route) => {
+  await page.route("**/api/zones/*/items/*/content*", async (route) => {
     previewAttempts += 1;
     if (previewAttempts === 1) {
       await route.fulfill({
@@ -1277,7 +1330,7 @@ test("réessaie une preview temporairement indisponible", async ({ page }) => {
 test("réessaie la copie d'une preview temporaire", async ({ page, browserName }) => {
   test.skip(browserName !== "chromium", "ClipboardItem image support is validated in Chromium");
   let copyAttempts = 0;
-  await page.route("**/previews/**", async (route) => {
+  await page.route("**/api/zones/*/items/*/content*", async (route) => {
     if (route.request().headers().accept === "image/*") {
       copyAttempts += 1;
       if (copyAttempts === 1) {
@@ -1352,7 +1405,7 @@ test("accepte un glisser-déposer exposé uniquement par les items", async ({ pa
   await openApp(page);
   const defaultZone = page.locator('[data-zone="default"]');
   const uploadRequest = page.waitForRequest(request => (
-    request.method() === "POST" && request.url().includes("/api/zones/default/images")
+    request.method() === "POST" && request.url().includes("/api/zones/default/items")
   ));
 
   await dispatchItemsOnlyDrop(page, '[data-zone="default"]');
@@ -1450,7 +1503,7 @@ test("utilise le fallback du dialogue de remplacement sans API native", async ({
   await dispatchBinaryDrop(page, '.zone[data-zone="default"]');
   const confirmedUpload = page.waitForResponse((response) => (
     response.request().method() === "POST"
-      && response.url().endsWith("/api/zones/default/images")
+      && response.url().endsWith("/api/zones/default/items")
   ));
   await page.locator("#replace-confirm").click();
   await expect(page.locator("#replace")).toBeVisible();
@@ -1520,7 +1573,7 @@ test("affiche un fichier cache depose dans l'index apres rechargement", async ({
   const downloadPromise = page.waitForEvent("download");
   await defaultZone.locator(".download-btn").click();
   const download = await downloadPromise;
-  expect(new URL(download.url()).pathname).toBe("/previews/default/.env");
+  expect(new URL(download.url()).pathname).toBe("/api/zones/default/items/.env/content");
 
   await page.reload({ waitUntil: "domcontentloaded" });
   await expect(page.locator('[data-zone="default"] .fname')).toHaveText(".env");
@@ -1576,7 +1629,7 @@ test("ne réaffiche pas une image supprimée après un refresh périmé", async 
   let releaseRefresh;
   let refreshCaptured;
   const refreshReady = new Promise((resolve) => { refreshCaptured = resolve; });
-  await page.route("**/api/zones", async (route) => {
+  await page.route("**/api/zones?schema=items", async (route) => {
     if (route.request().method() !== "GET" || releaseRefresh) {
       await route.continue();
       return;
@@ -1669,7 +1722,7 @@ test("un Ctrl-V maintenu ne depose le meme buffer qu'une fois", async ({ page })
   await defaultZone.getByRole("button", { name: "Select zone Default" }).click();
   const uploads = [];
   page.on("request", request => {
-    if (request.method() === "POST" && request.url().includes("/api/zones/default/images")) {
+    if (request.method() === "POST" && request.url().includes("/api/zones/default/items")) {
       uploads.push(request);
     }
   });
@@ -1712,7 +1765,7 @@ test("le serveur deduplique deux collages successifs identiques", async ({ page 
   await defaultZone.getByRole("button", { name: "Select zone Default" }).click();
   const statuses = [];
   page.on("response", response => {
-    if (response.request().method() === "POST" && response.url().includes("/api/zones/default/images")) {
+    if (response.request().method() === "POST" && response.url().includes("/api/zones/default/items")) {
       statuses.push(response.status());
     }
   });

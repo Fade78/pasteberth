@@ -18,6 +18,29 @@ It also consumes `overview.max_archive_files`, refusing an oversized ZIP selecti
 with an error toast before form submission. The separate demo seed advertises 64
 files per ZIP, and the adapter rejects a larger request before reading file blobs.
 
+The generic API migration is also **Unreleased after 2.1.21**. The unchanged UI
+uses `/api/zones?schema=items`, `/api/transfers?schema=items`, and
+`/api/zones/{id}/items` plus child routes, with `items`, `content_url` and multipart
+`file`. The seed, transport adapter and QA fixtures now follow that schema.
+Image MIME detection, dimensions and rich image clipboard paths retain their
+image-specific meaning. Legacy demo routes and upload-field aliases are not provided.
+
+Current backend serialization exposes nullable `sha256` and `etag`; content GET/HEAD
+supports `If-Match`, returning `412 precondition_failed` when the condition fails.
+Those validators describe managed payload identity, not read-time hashing or
+protection against arbitrary external in-place writes. The memory demo computes
+no item digest: `sha256` and `etag` are `null`, and content responses have no ETag.
+It uses blob `content_url` values and also handles generic content GET/HEAD from
+memory. Conditional reads are explicitly outside the simulation and return a
+demo-only `501 not_implemented`, not a simulated backend precondition result.
+No filename-derived hashes are used. Site QA verifies this lack of authority;
+report and source-manifest SHA-256 values identify site artifacts only.
+
+The [external-consumer recipe](../docs/recipes/external-consumer.md) and
+[Python download example](../contrib/fetch_pasteberth_item.py) are linked as current
+repository documentation/source and added by exact path to the export allowlist.
+The site does not execute that consumer or certify its backend behavior.
+
 The Unreleased scanner reuses filesystem observations within one discovery pass,
 not across refreshes. Background discovery remains request-triggered. Visible-tab
 polls still run every 10 seconds, but a poll becomes eligible to start a new scan
@@ -40,8 +63,9 @@ protection or new native Windows support guarantee.
 
 New archive defaults are 64 files and four active archives per process. HTTP ZIP
 acquisition may return `423 zone_busy` on writer contention, whereas a full archive
-slot pool returns `503 server_busy` with `Retry-After: 1`. Preview acquisition still
-waits for a writer by default. The demo enforces only its advertised file-count
+slot pool returns `503 server_busy` with `Retry-After: 1`. Legacy preview acquisition
+still waits for a writer by default; generic item content acquisition is nonblocking
+and can return `423 zone_busy`. The demo enforces only its advertised file-count
 limit, not this slot pool, locking or streaming lifecycle. These are current-source
 Unreleased backend changes, not published 2.1.21 behavior or site QA certifications.
 
@@ -64,6 +88,7 @@ assets are fixed in the builder rather than taken from the host registry.
 | Unreleased card date display | `../PasteBerth/runtime/static/app.js`: `fmtTime(item.created_at)` |
 | Unreleased published-registry reads and unlocked streaming | `../PasteBerth/runtime/service.py`, `storage.py`, `webapp.py`, `platformfs/` |
 | Unreleased archive budgets and UI count preflight | `../PasteBerth/runtime/config.py`, `service.py`, `static/app.js`; demo limit in `tools/demo-seed.json`, `assets/demo-adapter.js` |
+| Unreleased generic item schema, client routes and conditional reads | `../PasteBerth/runtime/webapp.py`: `_item_api_payload`, `_h_preview`; `service.py`: `item_payload`; `storage.py`: `StoredItem.etag`; `client.py`, `static/app.js` |
 | Upload and retention defaults | `../PasteBerth/runtime/config.py`: 20 MiB upload, collection retain 10 |
 | Product status | `../CHANGELOG.md`, runtime `__init__.py`, `../pyproject.toml` |
 
@@ -130,12 +155,16 @@ remain unchanged.
 
 The earlier independent-review regression cases were run against the unfixed site
 first and exposed the reported problems. Current evidence includes nine
-source/build/allowlist/scratch tests, eight demo regression tests, 70 interaction
-checks, 72 language/palette/source checks, 18 parser/discovery checks and 34
-static-HTTP checks. See `README.md` for
+source/build/allowlist/scratch tests, ten demo regression tests, 70 interaction
+checks, 72 language/palette/source checks, 18 parser/discovery checks and 38
+static-HTTP checks including the recipe and Python source at root and mounted
+paths. See `README.md` for
 commands, test-harness corrections and limits; reports pin the tested artifacts.
-This refresh adds two scratch-path and two ZIP-count regressions to the prior
-207 checks, for 211 passing checks. Historical capture hashes remain unchanged.
+The 10 September 2026 generic-item refresh adds two demo schema/validator-boundary
+regressions and four HTTP source-link checks to the prior 211 checks, for 217
+passing checks, run sequentially. Initial source checks failed only while the
+independently authored recipe was absent; the full source suite passed once it
+appeared. Historical capture hashes remain unchanged.
 
 Current results belong in `qa/`, with the actual commands and scope in `README.md`.
 Explicit QA scratch now defaults to repository `work/tmp/site`, with symlink and

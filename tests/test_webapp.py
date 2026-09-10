@@ -809,14 +809,14 @@ class TestPreviewsConcurrence(Base):
         results = []
         original_preview = self.server.service.open_preview
 
-        def blocked_preview(*args):
+        def blocked_preview(*args, **kwargs):
             nonlocal active
             with active_lock:
                 active += 1
                 if active == 2:
                     both_active.set()
             self.assertTrue(release.wait(2))
-            return original_preview(*args)
+            return original_preview(*args, **kwargs)
 
         def fetch_preview():
             results.append(self.req("GET", preview_url))

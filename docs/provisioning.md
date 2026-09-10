@@ -116,10 +116,11 @@ version still `2.1.21`):** `/api/zones` and `/api/groups` share a background
 cooldown of `max(10 seconds, last full refresh duration)` from completion,
 including startup, foreground, and failed refresh attempts. Duration includes
 registry installation. The next eligible poll can launch one job; not every
-overview request starts a scan. Mutations, directory resolution, and explicit
-history reads bypass the cooldown or wait for an in-flight refresh, synchronously.
-Downloads use the published registry without starting discovery or waiting for
-a scan. A newly eligible zone therefore returns `404` on download until
+overview request starts a scan. Mutations, directory resolution, and legacy
+`/images` history reads bypass the cooldown or wait for an in-flight refresh,
+synchronously. Generic `/items` listings and downloads use the published
+registry without starting discovery or waiting for a scan. A newly eligible
+zone therefore returns `404` on download until
 published; removals take effect through later registry publication.
 A hidden browser tab refreshes when it becomes visible. There is no exact
 discovery deadline, and overview history/free-space reads can still block.

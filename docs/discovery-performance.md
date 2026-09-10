@@ -18,6 +18,7 @@ Separate these costs before changing the discovery contract:
 | Collection discovery | Directory resolution, enumeration, eligibility, identities, and labels. `pasteberth audit` reports this duration, not the entire audit. |
 | Registry installation | Opening/rechecking destinations, recovery for new destinations, filesystem identities, and group installation. |
 | Zone overview | Per-zone histories and free-space information, in addition to requesting background discovery when eligible. |
+| Generic item listing | Published-registry lookup and selected-zone history read with nonblocking lock acquisition. No discovery refresh/join; not a history cache. |
 | Download acquisition | Published-registry lookup, shared filesystem locks, directory names and journals, selected metadata validation and payload opens. No discovery refresh or join. |
 | Download streaming | Reads from retained source handles, ZIP compression when requested, and network writes; no zone locks. |
 | Browser | Request latency, response processing, and rendering. Normal visible-tab polling is every 10 seconds. |
@@ -35,7 +36,7 @@ measurement. Logs include each rule's `scan=...s` and new pass-cache observation
 resolution may perform several metadata reads. Timings are emitted after the
 operation completes, so they do not guarantee a report from a hung call.
 
-Compare the browser network timings of `/api/groups` and `/api/zones`, using the
+Compare the browser network timings of `/api/groups` and `/api/zones?schema=items`, using the
 correct authentication and deployment prefix. Groups use the last registry;
 zones also read file histories and capacity. A fast groups response alongside
 a slow zones response points to work outside directory discovery. The public
@@ -53,9 +54,9 @@ they may touch the same unavailable mounts.
 - **Keep path context:** enumeration caches use canonical paths, not just device/inode pairs. Bind aliases can expose different child mounts and must not borrow entry paths from another base.
 - **Reject leaves early:** a matching candidate containing a subdirectory is rejected without inspecting the remaining entries' types. A partial leaf probe is not a complete traversal result; if deeper traversal is needed, it still happens.
 - **Avoid retaining irrelevant files:** entry caches retain directories and errors, not successful regular-file records from every visited directory. The current directory is still materialized and sorted.
-- **Avoid duplicate foreground scans:** mutations, directory resolution, and explicit history reads that already checked the live zone registry do not immediately scan it again. Destination identity and operation-time storage checks remain in force.
+- **Avoid duplicate foreground scans:** mutations, directory resolution, and legacy `/images` history reads that already checked the live zone registry do not immediately scan it again. Destination identity and operation-time storage checks remain in force.
 - **Reuse device locks:** registry installation creates a device-space lock only when one does not already exist.
-- **Use the published registry for downloads:** preview/download GET and HEAD and ZIP requests neither start discovery nor wait for any scan. Unlike mutations and explicit history, they accept eventual collection membership rather than rechecking global eligibility on every request.
+- **Use the published registry for reads:** generic `/items` listings, content GET/HEAD on either route, and ZIP requests neither start discovery nor wait for any scan. Unlike mutations and legacy history, they accept eventual collection membership rather than rechecking global eligibility on every request.
 - **Acquire only selected managed files:** retain metadata and safely opened payload handles under shared stable/directory filesystem locks, bypassing the Python zone `RLock`. Shared history reads can coexist. Directory names and transaction journals are still read, but unrelated payloads and ordinary sidecars are not.
 - **Release zone locks before streaming:** HTTP serves the captured lengths in source reads of at most 64 KiB. Managed writes can replace or delete even selected names while the retained versions stream. No new per-file persistent locks, sidecar schema, or thread pool are introduced.
 
@@ -82,10 +83,11 @@ independent periodic watcher.
 For example, a refresh taking 13 seconds is followed by at least 13 seconds
 without a poll-triggered scan. The browser still polls, so actual starts depend
 on request timing. This saves background work but can delay a new zone's
-appearance. Mutations, directory resolution, and explicit per-zone history reads
+appearance. Mutations, directory resolution, and legacy `/images` history reads
 ignore the cooldown and either refresh or join the in-flight scan. Continuous
-traffic on those paths can therefore still cause frequent scans. Downloads use
-the published registry even outside the cooldown or during a running scan;
+traffic on those paths can therefore still cause frequent scans. Generic `/items`
+listings and downloads use the published registry even outside the cooldown or
+during a running scan;
 they do not request background discovery either.
 
 The cooldown does **not** cache zone histories or free-space reads. An overview,
@@ -99,13 +101,15 @@ A new zone returns `404 unknown_zone` until a refresh publishes it. A zone that
 loses eligibility leaves the download registry when a later publication records
 that removal; a download does not freshly test collection membership. The
 captured destination still verifies directory identity and selected managed-file
-coherence. Mutations and explicit history reads still refresh or join global
+coherence. Mutations and legacy `/images` history reads still refresh or join global
 discovery before accessing the selected zone.
 
 Acquisition is not constant-time: names enumeration remains O(n), journals still
 require reads, and selected files require metadata and handle validation. It
-can also wait on an exclusive writer. Preview uses `blocking=True` by default;
-HTTP ZIP uses `blocking=False` and reports `423 zone_busy` on writer contention.
+can also wait on an exclusive writer on legacy `/previews`, which preserves
+`blocking=True`. Generic content GET/HEAD and HTTP ZIP use `blocking=False` and
+report `423 zone_busy` on writer contention. Generic listing likewise requests
+nonblocking history acquisition and still reads the selected zone's history.
 Nonblocking locking does not make directory or file I/O nonblocking.
 
 Long ZIPs retain all selected handles without zone locks. New defaults cap this
@@ -158,7 +162,7 @@ These strategies are **not implemented** by the current optimization:
 | Independent jobs per collection root | One slow root need not delay delivery of completed healthy roots | Fixed worker limit, at most one outstanding job per key, bounded backlog, fair retries, and generation checks. All workers can still become blocked. |
 | Per-root last-good results and asynchronous history/capacity results | Extend the existing published registry to isolate slow roots and overview storage reads | Distinguish incomplete scans from confirmed removal; never interpret a timed-out empty result as deletion. Preserve overlap/conflict rules. |
 | Adaptive retry delay for slow roots | Avoid repeatedly waking or probing unavailable storage | Retry only after the previous job actually ends, and periodically test recovery. Avoid permanent exclusion after one slow sample. |
-| Target-local mutations and explicit history reads | Extend reduced discovery coupling beyond the now-implemented download path | Decide whether to retain fresh eligibility or adopt snapshot membership; preserve ownership and overlapping-rule conflict checks. |
+| Target-local mutations and legacy history reads | Extend reduced discovery coupling beyond downloads and generic listing | Decide whether to retain fresh eligibility or adopt published membership; preserve ownership and overlapping-rule conflict checks. |
 | Incremental history/capacity refresh | Reduce work even when directory discovery is fast | Account for external writers, transfers, and retention; write admission must still check real current space and ownership. |
 
 The most useful next measurement is whether time is spent in `scan`, `install`,

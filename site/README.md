@@ -14,6 +14,27 @@ The Unreleased frontend also reads `overview.max_archive_files` and shows an err
 toast before submitting an oversized ZIP selection. The demo advertises and
 enforces 64 files per ZIP; this is not a simulation of backend concurrency budgets.
 
+The generic item API is **Unreleased after 2.1.21**, not a version bump. The copied
+UI requests `/api/zones?schema=items`, `/api/transfers?schema=items` and
+`/api/zones/{id}/items` with its child routes, reads `items` and `content_url`, and
+uploads multipart `file`. The demo seed and adapter use those names for every file
+kind; actual image decoding, dimensions and clipboard behavior remain image-specific.
+The demo does not provide the legacy `images` routes or multipart `image` alias.
+
+The backend exposes nullable `sha256` and `etag` metadata and supports `If-Match`
+on content GET/HEAD. This identifies managed payload versions, not a read-time
+integrity check against arbitrary external edits. Consumers can verify downloaded
+bytes against the advertised digest. These are backend source claims, **not demo
+test results**. The demo computes no item digest, sets both fields to `null`, emits
+no ETag, and rejects conditional content reads with a demo-only `501 not_implemented`.
+Its `content_url` values are memory-only blob URLs; generic `/items/{filename}/content`
+GET/HEAD also read that memory, without implementing the conditional-read contract.
+No filename-derived digest or new authentication/storage promise is implied.
+
+See the [external-consumer recipe](../docs/recipes/external-consumer.md) and
+[Python download example](../contrib/fetch_pasteberth_item.py). Both exact paths are
+included in `publish-files.txt`; the script is downloadable source, not run by the site.
+
 ## Workspace Setup
 
 Run these commands from the repository root before the commands below:
@@ -160,6 +181,10 @@ ZIP regressions verify the advertised 64-file limit, adapter rejection of 65 fil
 before reading blobs, and the unchanged UI's error toast without form submission.
 A 64-file selection still downloads an exact, valid ZIP. These are browser-memory
 tests, not daemon storage or native clipboard tests.
+Generic-transport regressions check seed and mutation response names, exact content
+bytes, empty HEAD bodies, nullable validators and explicit refusal of conditional
+reads. QA report hashes pin built site artifacts; they are not demo item digests
+or evidence that backend SHA-256/ETag preconditions were tested.
 
 Current JSON reports go in `qa/`; old archive reports were not imported. Large
 rendered previews are opt-in and ignored:
@@ -174,7 +199,7 @@ and **simulated demo**, not a genuine daemon installation.
 
 ## Verification Scope
 
-The site refresh reran the following checks on 9 September 2026; machine-readable
+The site refresh reran the following checks sequentially on 10 September 2026; machine-readable
 reports include UTC timestamps and tested artifact hashes. No archive test count
 is evidence for this revision.
 
@@ -184,13 +209,20 @@ is evidence for this revision.
 | Sources, scratch/write confinement, MIME, captures, links, export allowlist and copy guard | 9 passed, 0 failed | `qa/source-report.json` |
 | In-memory interaction QA, EN/FR at nine widths (320-1920px) | 70 passed, 0 failed | `qa/report.json` |
 | Locale, palette and current frontend equality | 72 passed, 0 failed | `qa/brand-language-report.json` |
-| Demo clipboard, MIME, anonymous names, concurrent quota and ZIP count | 8 passed, 0 failed | `qa/demo-report.json` |
+| Demo generic items, absent validators, clipboard, MIME, quota and ZIP count | 10 passed, 0 failed | `qa/demo-report.json` |
 | Browser-generated TOML and real temporary discovery | 18 passed, 0 failed | `qa/native-config-report.json` |
-| Actual static HTTP, Markdown, URL/Storage, root and mount | 34 passed, 0 failed | `qa/http-report.json` |
+| Actual static HTTP, Markdown/Python source bytes, URL/Storage, root and mount | 38 passed, 0 failed | `qa/http-report.json` |
 
-Total: **211 passed, 0 failed**, comprising the existing 207 checks plus two
-scratch-path and two archive-count regressions. JavaScript syntax checks also
-include the synced product `assets/product/app.js`.
+Total: **217 passed, 0 failed**: the previous 211 checks plus two generic-item
+demo regressions and four HTTP checks for the recipe and Python source at root
+and mounted paths. JavaScript syntax checks also include the synced product
+`assets/product/app.js`. All commands used repository `work/tmp` as `TMPDIR`
+and `PYTHONDONTWRITEBYTECODE=1`; explicit QA fixtures used `work/tmp/site`.
+
+The first source run had two failures because the independently authored
+`docs/recipes/external-consumer.md` had not yet appeared. After it was created,
+the complete source suite passed without weakening link or allowlist checks.
+No runtime or root documentation was edited by this site task.
 
 The earlier integration generated EN/FR desktop/mobile **site** previews with
 `qa_site.py --screenshots` and visually reviewed desktop EN, full-page mobile EN
@@ -198,13 +230,13 @@ and desktop FR. Those ignored previews are not current-refresh evidence or shipp
 historical artifacts. This refresh reran automated QA without new screenshots or
 a fresh visual review.
 
-Environment adjustments: system `python` and Chromium were absent, and
+Earlier integration environment adjustments: system `python` and Chromium were absent, and
 `python3 -m venv` failed because ensurepip was unavailable. `uv` supplied the
 isolated Python 3.13 environment with Playwright 1.62.0; the existing cached
 Chromium executable was selected through `CHROMIUM`. A first native-config run
 failed on an indentation error in the adapted test script; it was corrected and
 the complete native check rerun successfully. No runtime fix was involved.
-During this refresh, a scratch-path edit introduced an indentation error in
+During the earlier scratch/ZIP refresh, a scratch-path edit introduced an indentation error in
 `qa_site.py`, and the new selection test reused detached thumbnails after a UI
 rerender. The indentation was corrected and the test now uses normal click plus
 Shift-click range selection. Both complete affected suites and native checks were
@@ -287,7 +319,8 @@ external in-place writes, or a new native-platform guarantee.
 Unreleased archive defaults add 64 files per ZIP and four active archives per
 process. Writer contention can return `423 zone_busy` for HTTP ZIP acquisition;
 an exhausted archive slot pool returns `503 server_busy` with `Retry-After: 1`.
-Preview acquisition still waits for a writer by default. These backend behaviors
+Legacy preview acquisition still waits for a writer by default; generic item
+content acquisition is nonblocking and can return `423 zone_busy`. These backend behaviors
 are documented from current source, not exercised or certified by this memory demo.
 
 The `cp + register` example deliberately uses a fresh name and GNU cp supporting

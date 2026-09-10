@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Demo regressions: synthetic clipboard, mocked rich writes, memory quota and ZIP count limits."""
+"""Memory demo: generic item transport, absent validators, synthetic clipboard, quota and ZIP limits; not backend conditional-read verification."""
+import base64
 import hashlib
 import io
 import json
@@ -26,22 +27,22 @@ class DemoTests(unittest.IsolatedAsyncioTestCase):
         await self.page.locator('.zone').first.wait_for()
         await self.page.evaluate('''() => {
           window.demoTest = {
-            async zones() { return (await (await fetch('/api/zones')).json()).zones; },
+            async zones() { return (await (await fetch('/api/zones?schema=items')).json()).zones; },
             async clear() {
-              for (const z of await this.zones()) for (const i of z.images)
-                await fetch(`/api/zones/${z.id}/images/${i.filename}`, {method:'DELETE'});
+              for (const z of await this.zones()) for (const i of z.items)
+                await fetch(`/api/zones/${z.id}/items/${i.filename}`, {method:'DELETE'});
             },
             async upload(size, name, zone, replace=false) {
               const form = new FormData();
-              form.append('image', new File([new Uint8Array(size)], name, {type:'application/octet-stream'}));
+              form.append('file', new File([new Uint8Array(size)], name, {type:'application/octet-stream'}));
               form.append('preserve_name','1');
               if (replace) form.append('replace','1');
-              return (await fetch(`/api/zones/${zone}/images`, {method:'POST', body:form})).status;
+              return (await fetch(`/api/zones/${zone}/items`, {method:'POST', body:form})).status;
             },
             async transfer(source_zone, target_zone, filenames, mode='copy') {
-              return (await fetch('/api/transfers', {method:'POST',body:JSON.stringify({source_zone,target_zone,filenames,mode})})).status;
+              return (await fetch('/api/transfers?schema=items', {method:'POST',body:JSON.stringify({source_zone,target_zone,filenames,mode})})).status;
             },
-            async used() { return (await this.zones()).flatMap(z=>z.images).reduce((n,i)=>n+i.size,0); }
+            async used() { return (await this.zones()).flatMap(z=>z.items).reduce((n,i)=>n+i.size,0); }
           };
         }''')
 
@@ -75,8 +76,8 @@ class DemoTests(unittest.IsolatedAsyncioTestCase):
         }''', mixed)
         await self.page.locator('.zone').first.locator('.download-btn[data-filename^="demo-"]').wait_for()
         item = await self.page.evaluate('''async () => {
-          const item=(await demoTest.zones())[0].images.find(i=>i.filename.startsWith('demo-'));
-          const response=await fetch(item.preview_url);
+          const item=(await demoTest.zones())[0].items.find(i=>i.filename.startsWith('demo-'));
+          const response=await fetch(item.content_url);
           return {...item, previewMime:response.headers.get('content-type'), original:await response.text()};
         }''')
         self.assertEqual(item['mime'], 'text/html')
@@ -103,6 +104,86 @@ class DemoTests(unittest.IsolatedAsyncioTestCase):
     async def test_mixed_clipboard_uses_rich_copy(self):
         await self.clipboard(True)
 
+    async def test_generic_seed_content_has_no_digest_authority(self):
+        result = await self.page.evaluate('''async () => {
+          const zones=await demoTest.zones(), reads=[];
+          for (const zone of zones) {
+            const listing=await (await fetch(`/api/zones/${zone.id}/items`)).json();
+            for (const item of listing.items) {
+              const route=`/api/zones/${zone.id}/items/${encodeURIComponent(item.filename)}/content`;
+              for (const url of [item.content_url,route]) {
+                const get=await fetch(url), head=await fetch(url,{method:'HEAD'});
+                const bytes=new Uint8Array(await get.arrayBuffer());
+                const refused=[];
+                for (const method of ['GET','HEAD']) {
+                  const response=await fetch(url,{method,headers:{'If-Match':'"unverified"'}});
+                  refused.push([response.status,(await response.json()).error.code]);
+                }
+                reads.push({filename:item.filename,status:get.status,etag:get.headers.get('etag'),
+                  base64:btoa(String.fromCharCode(...bytes)),head:head.status,
+                  headSize:head.headers.get('content-length'),headBody:await head.text(),refused});
+              }
+            }
+          }
+          const missing=await fetch(`/api/zones/${zones[0].id}/items/missing/content`);
+          return {zones,reads,missing:[missing.status,(await missing.json()).error.code]};
+        }''')
+        self.assertEqual(result['missing'], [404, 'unknown_item'])
+        for zone in result['zones']:
+            self.assertNotIn('images', zone)
+            for item in zone['items']:
+                self.assertNotIn('preview_url', item)
+                self.assertIsNone(item['sha256'])
+                self.assertIsNone(item['etag'])
+                self.assertTrue(item['content_url'].startswith('blob:'))
+        for read in result['reads']:
+            expected = (ROOT / 'assets/examples' / read['filename']).read_bytes()
+            self.assertEqual(base64.b64decode(read['base64']), expected)
+            self.assertEqual(read['status'], 200)
+            self.assertEqual(read['head'], 200)
+            self.assertEqual(read['headSize'], str(len(expected)))
+            self.assertEqual(read['headBody'], '')
+            self.assertIsNone(read['etag'])
+            self.assertEqual(read['refused'], [[501, 'not_implemented']] * 2)
+
+    async def test_generic_mutations_keep_validators_null(self):
+        result = await self.page.evaluate('''async () => {
+          const [a,b]=await demoTest.zones(), filename='consumer note.txt';
+          const path=`/api/zones/${a.id}/items`, child=`${path}/${encodeURIComponent(filename)}`;
+          async function upload(text,replace=false) {
+            const form=new FormData();form.append('file',new Blob([text],{type:'text/plain'}),filename);
+            form.append('preserve_name','1');if(replace)form.append('replace','1');
+            const response=await fetch(path,{method:'POST',body:form});
+            return {status:response.status,...await response.json()};
+          }
+          const uploaded=await upload('First synthetic content');
+          const commented=await (await fetch(child+'/comment',{method:'PATCH',body:JSON.stringify({comment:'Synthetic note'})})).json();
+          const replaced=await upload('Different synthetic bytes',true);
+          const bytes=await (await fetch(child+'/content')).text();
+          const transfer=await (await fetch('/api/transfers?schema=items',{method:'POST',body:JSON.stringify({
+            source_zone:a.id,target_zone:b.id,filenames:[filename],mode:'copy'})})).json();
+          const copied=transfer.transferred[0];
+          const copyBytes=await (await fetch(copied.content_url)).text();
+          const deleted=await (await fetch(child,{method:'DELETE'})).json();
+          const batch=await (await fetch(`/api/zones/${b.id}/items/batch-delete`,{method:'POST',body:JSON.stringify({filenames:[filename]})})).json();
+          return {uploaded,commented,replaced,copied,bytes,copyBytes,deleted,batch};
+        }''')
+        for name in ('uploaded', 'commented', 'replaced', 'copied'):
+            item = result[name]
+            self.assertIsNone(item['sha256'])
+            self.assertIsNone(item['etag'])
+            self.assertNotIn('preview_url', item)
+            self.assertTrue(item['content_url'].startswith('blob:'))
+        self.assertEqual(result['uploaded']['status'], 201)
+        self.assertEqual(result['replaced']['status'], 201)
+        self.assertTrue(result['replaced']['replaced'])
+        self.assertEqual(result['commented']['comment'], 'Synthetic note')
+        self.assertEqual(result['copied']['created_at'], result['replaced']['created_at'])
+        self.assertEqual(result['bytes'], 'Different synthetic bytes')
+        self.assertEqual(result['copyBytes'], result['bytes'])
+        self.assertEqual(result['deleted'], {'deleted': 'consumer note.txt'})
+        self.assertEqual(result['batch'], {'deleted': ['consumer note.txt'], 'failed': []})
+
     async def test_declared_text_mime_and_unique_anonymous_names(self):
         types = [('text/html; charset=utf-8', 'text/html', '.html'),
                  ('text/markdown', 'text/markdown', '.md'), ('text/csv', 'text/csv', '.csv'),
@@ -116,8 +197,8 @@ class DemoTests(unittest.IsolatedAsyncioTestCase):
           const now=Date.now; Date.now=()=>123456789;
           try {
             return await Promise.all(types.map(async ([mime])=>{
-              const form=new FormData(); form.append('image',new Blob(['Synthetic text'],{type:mime}),'clipboard');
-              const response=await fetch(`/api/zones/${zone}/images`,{method:'POST',body:form});
+              const form=new FormData(); form.append('file',new Blob(['Synthetic text'],{type:mime}),'clipboard');
+              const response=await fetch(`/api/zones/${zone}/items`,{method:'POST',body:form});
               return {status:response.status,...await response.json()};
             }));
           } finally { Date.now=now; }
@@ -146,7 +227,7 @@ class DemoTests(unittest.IsolatedAsyncioTestCase):
           const full=await demoTest.used();
           const winner=statuses[0]===201?'left':'right';
           const same=await Promise.all([demoTest.upload(8*M,winner,z,true),demoTest.upload(8*M,winner,z,true)]);
-          return {statuses,full,same,used:await demoTest.used(),count:(await demoTest.zones())[0].images.length};
+          return {statuses,full,same,used:await demoTest.used(),count:(await demoTest.zones())[0].items.length};
         }''')
         self.assertEqual(sorted(result['statuses']), [201, 413])
         self.assertEqual(result['full'], 32 * 1024**2)
@@ -172,11 +253,11 @@ class DemoTests(unittest.IsolatedAsyncioTestCase):
           await demoTest.clear(); const z=(await demoTest.zones())[0].id;
           const names=Array.from({length:65},(_,i)=>`zip-${i}.bin`);
           for (const name of names) await demoTest.upload(1,name,z);
-          const overview=await (await fetch('/api/zones')).json();
+          const overview=await (await fetch('/api/zones?schema=items')).json();
           const read=Blob.prototype.arrayBuffer; let reads=0;
           Blob.prototype.arrayBuffer=function(){reads++;return read.call(this);};
           try {
-            const request=filenames=>fetch(`/api/zones/${z}/images/archive`,{method:'POST',body:JSON.stringify({filenames})});
+            const request=filenames=>fetch(`/api/zones/${z}/items/archive`,{method:'POST',body:JSON.stringify({filenames})});
             const refused=await request(names), error=await refused.json(), rejectedReads=reads;
             const accepted=await request(names.slice(0,64));
             return {limit:overview.max_archive_files,refused:refused.status,error:error.error.code,
@@ -190,13 +271,13 @@ class DemoTests(unittest.IsolatedAsyncioTestCase):
         # Expand only the synthetic seed; the adapter and product UI remain unchanged.
         adapter = '<script>' + (ROOT / 'assets/demo-adapter.js').read_text()
         fixture = '''<script>
-          const seed=window.PB_DEMO_SEED, zone=seed.overview.zones[0], item=zone.images[0];
-          zone.images=Array.from({length:65},(_,i)=>{
+          const seed=window.PB_DEMO_SEED, zone=seed.overview.zones[0], item=zone.items[0];
+          zone.items=Array.from({length:65},(_,i)=>{
             const filename=`selection-${i}.png`;
             seed.files[filename]=seed.files[item.filename];
             return {...item,id:filename,filename};
           });
-          zone.count=zone.images.length;
+          zone.count=zone.items.length;
         </script>'''
         await self.page.set_content((ROOT / 'demo.html').read_text().replace(adapter, fixture + adapter, 1), wait_until='load')
         thumbs = self.page.locator('.zone').first.locator('.thumb-wrap')

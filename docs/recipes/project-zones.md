@@ -32,9 +32,10 @@ call a Pasteberth API or add a dependency to the project.
 **Unreleased (runtime version still `2.1.21`):** overview requests reuse the
 completed registry during a cooldown of the greater of 10 seconds or the last
 full refresh duration, measured from completion. The next eligible poll can
-start one background job; mutations, directory resolution, and explicit history
-reads bypass the cooldown or wait for a running refresh. Downloads use only the
-published registry, without starting or joining a scan: a new zone returns `404`
+start one background job; mutations, directory resolution, and legacy `/images`
+history reads bypass the cooldown or wait for a running refresh. Generic `/items`
+listings and downloads use only the published registry, without starting or
+joining a scan: a new zone returns `404`
 until published. This is not a fixed discovery or response deadline.
 
 ## Pitfalls

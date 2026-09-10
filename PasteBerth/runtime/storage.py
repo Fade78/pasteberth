@@ -312,7 +312,7 @@ def _rename_noreplace(
 
 
 @dataclass(frozen=True)
-class StoredImage:
+class StoredItem:
     filename: str
     created_at: datetime  # timezone-aware UTC
     width: int | None
@@ -326,6 +326,18 @@ class StoredImage:
     sha256: str | None = None
     creation_method: str | None = None
     replaced: bool = False
+
+    @property
+    def etag(self) -> str | None:
+        """Payload identity under managed writers, not a read-time integrity check.
+
+        External in-place writers are unsupported. Consumers can verify bytes
+        against sha256; legacy metadata without a digest has no validator.
+        """
+        return f'"sha256-{self.sha256}"' if self.sha256 is not None else None
+
+
+StoredImage = StoredItem  # Compatibility for 2.x Python consumers.
 
 
 @dataclass(frozen=True)
@@ -344,8 +356,11 @@ class DestinationError(Exception):
     """Destination I/O error (missing directory, permissions, etc.)."""
 
 
-class UnknownImageError(DestinationError):
+class UnknownItemError(DestinationError):
     """The file is no longer a known Pasteberth object."""
+
+
+UnknownImageError = UnknownItemError  # Compatibility for 2.x Python consumers.
 
 
 class _InvalidEntryError(DestinationError):
@@ -401,15 +416,15 @@ class Destination(ABC):
         comment: str = "",
         created_at: datetime | None = None,
         replaced: bool | None = None,
-    ) -> StoredImage: ...
+    ) -> StoredItem: ...
 
     @abstractmethod
-    def find_duplicate(self, sha256: str, size: int) -> StoredImage | None:
+    def find_duplicate(self, sha256: str, size: int) -> StoredItem | None:
         """Return an existing item with the same content digest, if any."""
         ...
 
     @abstractmethod
-    def list(self) -> list[StoredImage]:
+    def list(self) -> list[StoredItem]:
         """History, newest first."""
 
     @abstractmethod
@@ -420,10 +435,10 @@ class Destination(ABC):
         self,
         source: str,
         target: str,
-    ) -> StoredImage: ...
+    ) -> StoredItem: ...
 
     @abstractmethod
-    def update_comment(self, filename: str, comment: str) -> StoredImage: ...
+    def update_comment(self, filename: str, comment: str) -> StoredItem: ...
 
     @abstractmethod
     def read(self, filename: str) -> bytes: ...
@@ -2771,7 +2786,7 @@ class LocalDestination(Destination):
         raw: dict,
         filename: str,
         actual_size: int | None = None,
-    ) -> StoredImage:
+    ) -> StoredItem:
         """Validate a sidecar before any read, deletion, or replacement."""
         if not _meta_keys_ok(raw) or raw.get("filename") != filename:
             raise ValueError("inconsistent sidecar")
@@ -2853,7 +2868,7 @@ class LocalDestination(Destination):
         replaced = raw.get("replaced", False)
         if not isinstance(replaced, bool):
             raise ValueError("invalid replacement flag")
-        return StoredImage(
+        return StoredItem(
             filename,
             created_at,
             width,
@@ -2884,7 +2899,7 @@ class LocalDestination(Destination):
             )
             return file_handle, meta_identity
         except FileNotFoundError as exc:
-            raise UnknownImageError(f"unknown Pasteberth file: {filename!r}") from exc
+            raise UnknownItemError(f"unknown Pasteberth file: {filename!r}") from exc
         except (DestinationError, OSError, TypeError, ValueError, KeyError) as exc:
             raise DestinationError(f"sidecar is unreadable for {filename!r}") from exc
 
@@ -2894,7 +2909,7 @@ class LocalDestination(Destination):
         filename: str,
         *,
         allow_stale_sidecar: bool = False,
-    ) -> tuple[StoredImage, FileHandle, tuple[int, int]]:
+    ) -> tuple[StoredItem, FileHandle, tuple[int, int]]:
         """Validate metadata against one retained, safely opened payload."""
         meta_name = self._meta_name(filename)
         file_handle = None
@@ -2911,7 +2926,7 @@ class LocalDestination(Destination):
                 raise ValueError("inconsistent size")
             file_handle.seek(0)
             if meta_identity is None:
-                raise UnknownImageError(f"unknown Pasteberth file: {filename!r}")
+                raise UnknownItemError(f"unknown Pasteberth file: {filename!r}")
             return item, file_handle, meta_identity
         except BaseException:
             if file_handle is not None and not file_handle.closed:
@@ -3205,7 +3220,7 @@ class LocalDestination(Destination):
         creation_method: str | None = None,
         replaced: bool = False,
         created_at: datetime | None = None,
-    ) -> tuple[StoredImage, dict]:
+    ) -> tuple[StoredItem, dict]:
         created_at = created_at or datetime.now(timezone.utc)
         if sha256 is None:
             sha256 = hashlib.sha256(data).hexdigest()
@@ -3213,7 +3228,7 @@ class LocalDestination(Destination):
             raise ValueError("invalid creation method")
         if creation_method is None:
             replaced = False
-        stored = StoredImage(
+        stored = StoredItem(
             filename=filename,
             created_at=created_at,
             width=info.width,
@@ -3252,7 +3267,7 @@ class LocalDestination(Destination):
         filename: str,
         sha256: str | None = None,
         creation_method: str | None = None,
-    ) -> StoredImage:
+    ) -> StoredItem:
         """Create or refresh a sidecar without rewriting its data."""
         meta_name = self._meta_name(filename)
         file_handle = None
@@ -3357,7 +3372,7 @@ class LocalDestination(Destination):
         comment: str = "",
         created_at: datetime | None = None,
         replaced: bool | None = None,
-    ) -> StoredImage:
+    ) -> StoredItem:
         meta_name = self._meta_name(filename)
         if filename in self._active_transaction_names(directory_fd):
             raise StorageConflictError(
@@ -3683,7 +3698,7 @@ class LocalDestination(Destination):
 
     # -- API Destination ---------------------------------------------------
 
-    def find_duplicate(self, sha256: str, size: int) -> StoredImage | None:
+    def find_duplicate(self, sha256: str, size: int) -> StoredItem | None:
         """Find matching content while the caller holds the destination lock."""
         for item in self.list():
             if item.size != size:
@@ -3719,7 +3734,7 @@ class LocalDestination(Destination):
         comment: str = "",
         created_at: datetime | None = None,
         replaced: bool | None = None,
-    ) -> StoredImage:
+    ) -> StoredItem:
         self._ensure_dir()
         if filename is not None:
             if not self._new_filename(filename):
@@ -3778,7 +3793,7 @@ class LocalDestination(Destination):
             ):
                 raise StorageConflictError(f"target already exists: {filename!r}")
 
-    def save_managed(self, data: bytes, item: StoredImage) -> StoredImage:
+    def save_managed(self, data: bytes, item: StoredItem) -> StoredItem:
         """Publish a validated managed item without reclassifying its content."""
         info = ContentInfo(
             kind=item.kind,
@@ -3868,7 +3883,7 @@ class LocalDestination(Destination):
         blocked_targets.difference_update(committed_targets)
         return blocked_targets
 
-    def acquire_reads(self, filenames: list[str]) -> list[tuple[StoredImage, FileHandle]]:
+    def acquire_reads(self, filenames: list[str]) -> list[tuple[StoredItem, FileHandle]]:
         """Acquire visible managed files under the caller's operation_lock.
 
         The caller MUST hold a shared or exclusive operation_lock. Results are
@@ -3876,28 +3891,28 @@ class LocalDestination(Destination):
         zero. Ownership transfers to the caller, who must close every handle;
         they remain usable after the lock and bound directory close. On any
         failure all handles opened here are closed. Missing, invalid or blocked
-        files raise UnknownImageError; filesystem failures raise DestinationError.
+        files raise UnknownItemError; filesystem failures raise DestinationError.
         """
         directory_fd = self._operation_directory.get()
         if directory_fd is None or directory_fd.closed:
             raise DestinationError("acquire_reads requires destination.operation_lock")
         for filename in filenames:
             if not self._valid_filename(filename):
-                raise UnknownImageError(f"unknown Pasteberth file: {filename!r}")
-        acquired: list[tuple[StoredImage, FileHandle]] = []
+                raise UnknownItemError(f"unknown Pasteberth file: {filename!r}")
+        acquired: list[tuple[StoredItem, FileHandle]] = []
         try:
             names = self._fs.entry_names(directory_fd)
             blocked = self._blocked_read_targets(directory_fd, names, set(filenames))
             for filename in filenames:
                 if filename in blocked:
-                    raise UnknownImageError(f"unknown Pasteberth file: {filename!r}")
+                    raise UnknownItemError(f"unknown Pasteberth file: {filename!r}")
                 try:
                     item, handle, _meta_identity = self._owned_item(directory_fd, filename)
                 except (
                     FileNotFoundError, UnsafeLinkError, _InvalidEntryError,
                     StorageConflictError, TypeError, ValueError, KeyError,
                 ) as exc:
-                    raise UnknownImageError(f"unknown Pasteberth file: {filename!r}") from exc
+                    raise UnknownItemError(f"unknown Pasteberth file: {filename!r}") from exc
                 acquired.append((item, handle))
             return acquired
         except BaseException as exc:
@@ -3910,9 +3925,9 @@ class LocalDestination(Destination):
                 raise DestinationError(f"cannot acquire reads from {self.directory}: {exc}") from exc
             raise
 
-    def list(self) -> list[StoredImage]:
+    def list(self) -> list[StoredItem]:
         self._ensure_dir()
-        items: list[StoredImage] = []
+        items: list[StoredItem] = []
         with self._directory_fd() as directory_fd:
             try:
                 entries = sorted(self._fs.entries(directory_fd), key=lambda e: e.name)
@@ -3972,7 +3987,7 @@ class LocalDestination(Destination):
         items.sort(key=lambda i: (i.created_at, i.filename), reverse=True)
         return items
 
-    def rename(self, source: str, target: str) -> StoredImage:
+    def rename(self, source: str, target: str) -> StoredItem:
         """Rename a managed pair without ever replacing a target."""
         if not self._valid_filename(source) or not self._new_filename(target):
             raise DestinationError("invalid filename")
@@ -4104,7 +4119,7 @@ class LocalDestination(Destination):
                         raise DestinationError(
                             "rename published but cleanup deferred"
                         ) from exc
-                return StoredImage(
+                return StoredItem(
                     target,
                     item.created_at,
                     item.width,
@@ -4134,7 +4149,7 @@ class LocalDestination(Destination):
                     pass
                 raise
 
-    def update_comment(self, filename: str, comment: str) -> StoredImage:
+    def update_comment(self, filename: str, comment: str) -> StoredItem:
         """Replace only a managed item's sidecar comment atomically."""
         if not self._valid_filename(filename):
             raise DestinationError(f"invalid filename: {filename!r}")
@@ -4192,7 +4207,7 @@ class LocalDestination(Destination):
                         self._remove_expected(directory_fd, temp_name, temp_identity)
                     except (DestinationError, OSError):
                         pass
-            return StoredImage(
+            return StoredItem(
                 filename,
                 item.created_at,
                 item.width,
@@ -4265,7 +4280,7 @@ class LocalDestination(Destination):
                 with file_handle as fh:
                     return fh.read()
             except FileNotFoundError as exc:
-                raise UnknownImageError(f"unknown Pasteberth file: {filename!r}") from exc
+                raise UnknownItemError(f"unknown Pasteberth file: {filename!r}") from exc
             except (OSError, DestinationError) as exc:
                 if isinstance(exc, DestinationError):
                     raise
@@ -4281,7 +4296,7 @@ class LocalDestination(Destination):
                 with file_handle as fh:
                     yield fh
             except FileNotFoundError as exc:
-                raise UnknownImageError(
+                raise UnknownItemError(
                     f"unknown Pasteberth file: {filename!r}"
                 ) from exc
             except (OSError, DestinationError) as exc:

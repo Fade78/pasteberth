@@ -51,6 +51,15 @@ _ROUTES: tuple[tuple[str, re.Pattern, str], ...] = tuple(
     for method, pattern, name in (
         ("GET", r"^/api/health$", "h_health"),
         ("GET", r"^/api/zones$", "h_zones"),
+        ("GET", rf"^/api/zones/{_ZONE_RE}/items$", "h_zone_images"),
+        ("POST", rf"^/api/zones/{_ZONE_RE}/items$", "h_zone_upload"),
+        ("GET", rf"^/api/zones/{_ZONE_RE}/items/{_FILENAME_RE}/content$", "h_preview"),
+        ("HEAD", rf"^/api/zones/{_ZONE_RE}/items/{_FILENAME_RE}/content$", "h_preview"),
+        ("PATCH", rf"^/api/zones/{_ZONE_RE}/items/{_FILENAME_RE}/comment$", "h_zone_comment"),
+        ("DELETE", rf"^/api/zones/{_ZONE_RE}/items/{_FILENAME_RE}$", "h_zone_delete"),
+        ("POST", rf"^/api/zones/{_ZONE_RE}/items/batch-delete$", "h_zone_delete_batch"),
+        ("POST", rf"^/api/zones/{_ZONE_RE}/items/archive$", "h_zone_archive"),
+        ("POST", rf"^/api/zones/{_ZONE_RE}/items/regularize$", "h_zone_regularize"),
         ("GET", r"^/api/groups$", "h_groups"),
         ("POST", r"^/api/drop/resolve$", "h_drop_resolve"),
         ("GET", rf"^/api/zones/{_ZONE_RE}/images$", "h_zone_images"),
@@ -219,6 +228,44 @@ def _json_object_without_duplicates(pairs):
             raise ValueError(f"duplicate JSON key: {key!r}")
         result[key] = value
     return result
+
+
+def _item_api_payload(payload: dict) -> dict:
+    """Adapt only API-owned objects and collections, never user metadata."""
+    result = dict(payload)
+    if "content_url" in result:
+        result.pop("preview_url", None)
+    if "images" in result:
+        result["items"] = result.pop("images")
+    for key in ("zones", "items"):
+        if key in result:
+            result[key] = [_item_api_payload(item) for item in result[key]]
+    if "failed" in result:
+        result["failed"] = [
+            {**failure, "code": "unknown_item"}
+            if failure.get("code") == "unknown_image" else dict(failure)
+            for failure in result["failed"]
+        ]
+    if "error" in result and result["error"].get("code") == "unknown_image":
+        result["error"] = {**result["error"], "code": "unknown_item"}
+    return result
+
+
+def _if_match_satisfied(values: list[str], etag: str | None) -> bool:
+    """Strong comparison for an acquired item; repeated lines form one list.
+
+    A wildcard tests existence even without a stored digest. Empty list members
+    and malformed conditions are rejected rather than silently ignored.
+    """
+    if not values:
+        return True
+    value = ",".join(values).strip(" \t")
+    if value == "*":
+        return True
+    tag_pattern = r'(?:W/)?"[\x21\x23-\x7e\x80-\xff]*"'
+    if not re.fullmatch(rf'{tag_pattern}(?:[ \t]*,[ \t]*{tag_pattern})*', value):
+        raise ServiceError("invalid_request", "invalid If-Match entity-tag list")
+    return etag is not None and etag in re.findall(tag_pattern, value)
 
 
 def _safe_log_text(value: object, *, limit: int | None = None) -> str:
@@ -595,6 +642,8 @@ def make_handler(cfg: Config, service: PasteService, sessions: SessionStore,
             return tuple(headers)
 
         def _json(self, status: int, payload: dict, **kwargs) -> None:
+            if getattr(self, "_item_schema", False):
+                payload = _item_api_payload(payload)
             body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
             self._finish(status, "application/json; charset=utf-8", body, **kwargs)
 
@@ -684,6 +733,7 @@ def make_handler(cfg: Config, service: PasteService, sessions: SessionStore,
 
         def _dispatch(self) -> None:
             self._t_start = time.monotonic()
+            self._item_schema = False
             self._route_path = self.path.split("?")[0]
             if not self._validate_request_framing():
                 return
@@ -719,6 +769,9 @@ def make_handler(cfg: Config, service: PasteService, sessions: SessionStore,
                     return
                 path = path[len(cfg.url_prefix):]
                 self._route_path = path
+            self._item_schema = bool(
+                re.fullmatch(rf"/api/zones/{_ZONE_RE}/items(?:/.*)?", path)
+            )
             if not self._host_allowed():
                 self._error(403, "forbidden_host", "host is not allowed")
                 return
@@ -1027,8 +1080,19 @@ def make_handler(cfg: Config, service: PasteService, sessions: SessionStore,
             )
             return False
 
+        def _select_item_schema(self) -> bool:
+            query = urllib.parse.parse_qs(
+                urllib.parse.urlsplit(self.path).query, keep_blank_values=True,
+            )
+            schemas = query.get("schema", ["images"])
+            if len(schemas) != 1 or schemas[0] not in {"images", "items"}:
+                self._error(400, "invalid_request", "schema must be 'images' or 'items' exactly once")
+                return False
+            self._item_schema = schemas[0] == "items"
+            return True
+
         def _h_zones(self) -> None:
-            if not self._require_auth_api():
+            if not self._require_auth_api() or not self._select_item_schema():
                 return
             try:
                 overview = service.overview(blocking=False)
@@ -1083,7 +1147,10 @@ def make_handler(cfg: Config, service: PasteService, sessions: SessionStore,
             if not self._require_auth_api():
                 return
             try:
-                items = service.history(zid)
+                items = (
+                    service.history(zid, blocking=False, _refresh=False)
+                    if self._item_schema else service.history(zid)
+                )
             except ServiceError as exc:
                 self._service_error(exc)
                 return
@@ -1176,14 +1243,22 @@ def make_handler(cfg: Config, service: PasteService, sessions: SessionStore,
                     except MultipartError as exc:
                         self._error(400, "invalid_request", f"invalid multipart body: {exc}")
                         return
-                    if "image" in fields:
-                        filename_client, part_ctype, data = fields["image"]
-                    elif len(fields) == 1:
-                        filename_client, part_ctype, data = next(iter(fields.values()))
-                    else:
-                        self._error(400, "invalid_request",
-                                    "'image' field expected (multipart)")
+                    controls = {"preserve_name", "replace", "creation_method"}
+                    payload_fields = set(fields) - controls
+                    recognized = payload_fields & {"image", "file"}
+                    # Legacy clients may use a sole unknown field, but never
+                    # alongside controls or another potential payload.
+                    legacy_fallback = (
+                        not self._item_schema and len(fields) == 1 and len(payload_fields) == 1
+                    )
+                    if (
+                        len(payload_fields) != 1
+                        or (not recognized and not legacy_fallback)
+                        or any(fields[name][0] is not None for name in controls & fields.keys())
+                    ):
+                        self._error(400, "invalid_request", "exactly one 'file' or 'image' payload field is required")
                         return
+                    filename_client, part_ctype, data = fields[next(iter(payload_fields))]
                     declared = part_ctype or "application/octet-stream"
                     preserve_name = (
                         fields.get("preserve_name", (None, None, b""))[2].strip() == b"1"
@@ -1261,7 +1336,7 @@ def make_handler(cfg: Config, service: PasteService, sessions: SessionStore,
             self._json(200, result)
 
         def _h_transfer(self) -> None:
-            if not self._require_auth_api():
+            if not self._require_auth_api() or not self._select_item_schema():
                 return
             ctype = (self.headers.get("Content-Type") or "").split(";", 1)[0].strip().lower()
             if ctype != "application/json":
@@ -1481,13 +1556,23 @@ def make_handler(cfg: Config, service: PasteService, sessions: SessionStore,
             if not self._require_auth_api():
                 return
             try:
-                with service.open_preview(zid, filename) as (item, source):
+                with service.open_preview(
+                    zid, filename, blocking=not getattr(self, "_item_schema", False),
+                ) as (item, source):
+                    headers = getattr(self, "headers", None)
+                    conditions = headers.get_all("If-Match", []) if headers is not None else []
+                    if not _if_match_satisfied(conditions, item.etag):
+                        raise ServiceError(
+                            "precondition_failed", "content does not match If-Match",
+                        )
                     self._start_download_stream()
                     try:
                         self.send_response(200)
                         self.send_header("Content-Type", item.mime)
                         self.send_header("Content-Length", str(item.size))
                         self.send_header("Cache-Control", "no-store")
+                        if item.etag is not None:
+                            self.send_header("ETag", item.etag)
                         if self.close_connection:
                             self.send_header("Connection", "close")
                         for key, value in self._security_headers():

@@ -16,7 +16,7 @@ test("smoke natif: le sélecteur de fichiers publie un fichier nommé", async ({
 
   const responsePromise = page.waitForResponse(response => (
     response.request().method() === "POST"
-      && response.url().includes("/api/zones/default/images")
+      && response.url().includes("/api/zones/default/items")
       && [200, 201].includes(response.status())
   ));
   const chooserPromise = page.waitForEvent("filechooser");

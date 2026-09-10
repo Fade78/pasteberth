@@ -77,15 +77,32 @@ Another operation is holding a conflicting zone lock. Wait for the
 file manually.
 
 The overview can still return `200` with `busy: true`, `count: null`, and
-`images: []` for that zone. This means its history is unavailable, not that
-the files were deleted. The per-zone history request returns `423` while
-the conflicting lock remains held.
+an empty history for that zone. **Unreleased:** this is `items: []` with
+`schema=items`, or `images: []` in the default legacy schema. It means history
+is unavailable, not that files were deleted. Generic per-zone listing returns
+`423` while a conflicting lock remains held; legacy listing can wait.
 
 **Unreleased (after `2.1.21`):** ZIP holds shared filesystem locks only during
 acquisition, then streams retained handles without zone locks. It returns `423`
 if an exclusive writer prevents nonblocking acquisition, not because another
-ZIP is streaming. Preview acquisition remains blocking by default and can wait
-for that writer; shared history reads can coexist with download acquisition.
+ZIP is streaming. Generic content GET/HEAD also requests nonblocking acquisition;
+legacy `/previews` remains blocking and can wait for that writer. Shared history
+reads can coexist with download acquisition.
+
+### A conditional download returns `400` or `412`
+
+**Unreleased:** send the exact quoted `etag` from the item listing as
+`If-Match`. A malformed condition returns `400 invalid_request`; weak tags are
+valid grammar but cannot satisfy strong comparison. An unmet condition returns
+`412 precondition_failed` without file bytes, commonly because another managed
+publication replaced the listed version. Refresh the listing and decide whether
+the new content is wanted; do not silently remove the condition and publish it
+as the old version. Legacy null identity cannot pin the listed version.
+
+Verify completed length and digest before publishing a local output. In the
+[external-consumer example](recipes/external-consumer.md), exit 3 means the
+output was already published but stdout reporting failed. It is not evidence
+that publication failed or that the old output was restored.
 
 ### A ZIP returns `413` or `503`, or a download stops
 
@@ -157,8 +174,10 @@ forward it unchanged; `/paste` belongs in routes, not in the Origin header.
 
 Check the browser's failing URL: login, assets, API, and previews all need the
 same prefix. Follow the [Caddy/nginx examples](deployment.md#caddy). Those
-examples deliberately block direct-drop resolve/regularize at the public
-proxy; use ordinary uploads or remote `drop --zone ID` instead.
+examples deliberately block direct-drop resolve and both `images/regularize`
+and `items/regularize` at the public proxy; use ordinary uploads or remote
+`drop --zone ID` instead. Blocking only the old regularize path leaves the new
+alias exposed to the same loopback-peer exception.
 
 ### A collection zone does not appear or disappears
 
@@ -178,8 +197,9 @@ startup, foreground, and failed refresh attempts. The duration includes
 registry installation. The next eligible poll can start one background job;
 polls during a refresh do not start another. A removed, inaccessible, or newly
 nonmatching directory leaves the active registry when a later refresh publishes
-its removal, without deleting its contents. Downloads neither trigger discovery
-nor wait for a scan, even for an unknown ID; a new zone returns `404` until
+its removal, without deleting its contents. Generic `/items` listings and
+downloads neither trigger discovery nor wait for a scan, even for an unknown
+ID; a new zone returns `404` until
 published. Do not use repeated download requests to force discovery. See the
 [collection contract](zone-collection-contract.md).
 
@@ -193,12 +213,14 @@ shared across rules only within that pass; later scans read the filesystem
 again. Narrow bases and appropriate `max_depth` values can reduce traversal;
 the optimization does not change regex semantics.
 
-**Unreleased:** mutations, directory resolution, and explicit history reads
+**Unreleased:** mutations, directory resolution, and legacy `/images` history reads
 bypass the background cooldown or wait for the in-flight refresh, with one
 refresh or join per service action.
 This avoids duplicate scans within an action, not waits on slow filesystem
-calls. Downloads now use the published registry without any discovery wait or
-trigger, but still enumerate directory names, read journals, and acquire selected
+calls. Generic `/items` listing uses published membership without discovery but
+still reads the selected zone's history. Downloads use that registry without
+any discovery wait or trigger, but still enumerate directory names, read
+journals, and acquire selected
 metadata and handles under shared filesystem locks. Zone-overview history and
 free-space checks also remain synchronous and can block independently of
 discovery. Neither the 10-second browser poll nor

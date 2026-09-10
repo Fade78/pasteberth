@@ -139,8 +139,11 @@ The browser `Origin` is still `scheme://Host[:port]`, without `/paste`.
 
 The direct-drop endpoints use the immediate peer for their loopback exception.
 A public request forwarded by a loopback proxy therefore qualifies even without
-a session. The examples below block `/api/drop/resolve` and
-`/api/zones/{id}/images/regularize` at the public proxy. Local CLI clients can
+a session. The examples below block `/api/drop/resolve` and both
+`/api/zones/{id}/images/regularize` and `/api/zones/{id}/items/regularize` at the
+public proxy. The `items` alias is **Unreleased, after 2.1.21**; blocking only
+`images` would leave the same direct-drop handler exposed through `items`.
+Local CLI clients can
 still reach the backend directly; remote clients use `drop --zone ID` or the
 normal multipart upload endpoint. If you deliberately expose those routes,
 provide an appropriate proxy access policy and understand the
@@ -188,7 +191,7 @@ Keep Pasteberth on loopback and proxy the public HTTPS hostname:
 
 ```caddy
 pasteberth.example.internal {
-    @direct_drop path /paste/api/drop/resolve /paste/api/zones/*/images/regularize
+    @direct_drop path /paste/api/drop/resolve /paste/api/zones/*/images/regularize /paste/api/zones/*/items/regularize
     respond @direct_drop 403
     @paste path /paste /paste/*
     reverse_proxy @paste 127.0.0.1:8765 {
@@ -223,7 +226,7 @@ server {
     ssl_certificate /absolute/path/fullchain.pem;
     ssl_certificate_key /absolute/path/private-key.pem;
 
-    location ~ ^/paste/api/(drop/resolve|zones/[^/]+/images/regularize)$ {
+    location ~ ^/paste/api/(drop/resolve|zones/[^/]+/(images|items)/regularize)$ {
         return 403;
     }
 

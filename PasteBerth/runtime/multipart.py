@@ -12,8 +12,8 @@ from .config import LimitsConfig
 _DEFAULT_LIMITS = LimitsConfig()
 
 _PARAM_RE = {
-    "name": re.compile(r'\bname="((?:[^"\\]|\\.)*)"'),
-    "filename": re.compile(r'\bfilename="((?:[^"\\]|\\.)*)"'),
+    "name": re.compile(r'(?:^|;)\s*name="((?:[^"\\]|\\.)*)"', re.I),
+    "filename": re.compile(r'(?:^|;)\s*filename="((?:[^"\\]|\\.)*)"', re.I),
 }
 
 
@@ -62,7 +62,7 @@ def parse_multipart(
     max_header_bytes: int | None = _DEFAULT_LIMITS.max_multipart_header_bytes,
     max_field_name_length: int | None = _DEFAULT_LIMITS.max_multipart_field_name_length,
 ) -> dict[str, tuple[str | None, str | None, bytes]]:
-    """Return {field name: (client filename|None, content type|None, content)}."""
+    """Return named parts, rejecting missing or duplicate names before collapse."""
     delimiter = b"--" + boundary.encode("utf-8")
     fields: dict[str, tuple[str | None, str | None, bytes]] = {}
     part_count = 0
@@ -116,15 +116,18 @@ def parse_multipart(
             elif lower.startswith("content-type:"):
                 part_ctype = line.split(":", 1)[1].strip() or None
         name_match = _PARAM_RE["name"].search(disposition)
-        if name_match:
-            name = _unescape(name_match.group(1))
-            if not name or (
-                max_field_name_length is not None and len(name) > max_field_name_length
-            ):
-                raise MultipartError("invalid field name")
-            file_match = _PARAM_RE["filename"].search(disposition)
-            filename = _unescape(file_match.group(1)) if file_match else None
-            fields[name] = (filename, part_ctype, content)
+        if not name_match:
+            raise MultipartError("field name is required")
+        name = _unescape(name_match.group(1))
+        if not name or (
+            max_field_name_length is not None and len(name) > max_field_name_length
+        ):
+            raise MultipartError("invalid field name")
+        if name in fields:
+            raise MultipartError("duplicate field name")
+        file_match = _PARAM_RE["filename"].search(disposition)
+        filename = _unescape(file_match.group(1)) if file_match else None
+        fields[name] = (filename, part_ctype, content)
 
         position = next_position
 

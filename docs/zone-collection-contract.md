@@ -44,9 +44,10 @@ after a scan observes it and a later poll reads the completed registry, without
 a service restart. `/api/groups` uses the same background refresh path.
 **Unreleased:** not every overview request starts a scan; both endpoints share
 the cooldown described in [refresh and lifecycle](#7-refresh-and-lifecycle).
-Directory resolution, mutations, and explicit per-zone history use the refresh
-path synchronously. **Unreleased:** preview/download GET and HEAD and ZIP use
-the published registry without starting discovery or waiting for a scan.
+Directory resolution, mutations, and legacy `/images` history use the refresh
+path synchronously. **Unreleased:** generic `/items` listing, content GET/HEAD
+on either route, and ZIP use the published registry without starting discovery
+or waiting for a scan.
 
 ## 2. Configuration
 
@@ -248,7 +249,7 @@ startup, foreground, background, and failed attempts. Its expiry does not
 itself schedule work: the next eligible overview poll can launch one job, and
 requests arriving while a refresh runs do not launch another.
 
-**Unreleased:** mutations, directory resolution, and explicit per-zone history
+**Unreleased:** mutations, directory resolution, and legacy `/images` history
 reads bypass the background cooldown. They perform a synchronous refresh or
 wait for the in-flight refresh instead of
 starting a second one. Actions that already refreshed during zone validation do not
@@ -257,14 +258,21 @@ service action, not one scan per helper call. A multi-request client workflow
 can still invoke several service actions. This is request coalescing and
 throttling, not a watcher, a hard timeout, or a discovery deadline.
 
-**Unreleased downloads:** preview/download GET and HEAD and ZIP use only the
-last published registry. They do not start or wait for discovery, even if the
+**Unreleased reads:** generic `/items` listing, content GET/HEAD on either route,
+and ZIP use only the last published registry. They do not start or wait for
+discovery, even if the
 cooldown has expired or the requested ID is unknown. A new zone returns
 `404 unknown_zone` until published; an already published zone can remain
 addressable after losing eligibility until a later registry publishes its
 removal. Selected-file and directory-identity checks still apply. This is an
 explicit change from `2.1.21`'s request-time refresh, not fresh collection
 validation localized to the selected zone.
+
+Generic listing requests `blocking=False` for the selected zone's history and
+returns `423 zone_busy` on lock contention. It still reads that history; only
+global discovery refresh/join is skipped. Generic content also uses nonblocking
+acquisition, while legacy `/previews` preserves blocking acquisition. Filesystem
+I/O can block regardless of the lock mode.
 
 The service replaces the dynamic zone configuration, destinations, locks, and
 group memberships as one in-memory snapshot. A later request sees the current
@@ -279,7 +287,8 @@ This is a registry snapshot, not an atomic snapshot of all zone contents.
 Overview requests still read each history and check free space synchronously;
 slow filesystem I/O can block the response even with background discovery.
 A busy or temporarily unavailable dynamic zone can have `busy: true`,
-`count: null`, and `images: []`.
+`count: null`, and `items: []` with the unreleased `schema=items` selector, or
+`images: []` in the default legacy schema.
 Do not interpret that placeholder history as file deletion. See the
 [API response contract](reference/api.md#routes).
 

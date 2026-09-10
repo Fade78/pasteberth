@@ -38,6 +38,9 @@ running a focused probe, not by trusting an older paragraph.
 | Collection eligibility, IDs, labels, and groups | `runtime/zone_collection.py`, `runtime/config.py` | `tests/test_zone_collection.py`, `tests/test_config.py` |
 | Request-triggered scans and busy overview behavior | `runtime/service.py`: `_refresh_zone_collections`, `overview`, `history` | `tests/test_zone_collection.py`, `tests/test_webapp.py` |
 | Unreleased published-registry downloads, retained handles, lock scope, limits, and cleanup | `runtime/service.py`: `open_preview`, `archive_files`; `runtime/storage.py`: `acquire_reads`; `runtime/webapp.py`, `runtime/config.py` | `tests/test_downloads.py`, `tests/test_managed_reads.py`, `tests/test_discovery_refresh.py`, `tests/test_config.py` |
+| Unreleased item vocabulary, legacy schemas, upload aliases, and nonblocking generic listing | `runtime/webapp.py`: `_ROUTES`, `_item_api_payload`, `_select_item_schema`, `_h_zone_images`, `_h_zone_upload`; `runtime/client.py`, `runtime/multipart.py` | `tests/test_item_api.py`, `tests/test_client_items.py`, `tests/test_multipart.py` |
+| Stored identity, null legacy metadata, Python compatibility aliases, and conditional reads | `runtime/storage.py`: `StoredItem`, `StoredImage`, `UnknownItemError`, `UnknownImageError`, `_validated_item`, `_owned_item`; `runtime/service.py`: `item_payload`, `open_preview`; `runtime/webapp.py`: `_if_match_satisfied`, `_h_preview` | `tests/test_conditional_downloads.py`, `tests/test_item_api.py`, `tests/test_managed_reads.py` |
+| External consumer URL/auth boundaries, pre-publication verification, and post-publication report failure | `contrib/fetch_pasteberth_item.py`: `Consumer`, `main` (repository-relative) | `tests/test_item_consumer.py` |
 | Transfer metadata, partial outcomes, and retention | `runtime/service.py`: `transfer`; `runtime/storage.py`: `apply_retention` | `tests/test_transfer.py`, `tests/test_storage.py` |
 | MCP offers only the `drop` application tool | `runtime/mcp.py`: `DROP_TOOL`, `McpServer._dispatch`; `runtime/cli.py` | `tests/test_mcp.py`, `tests/test_cli.py` |
 | Shared authentication, password rotation, and request boundaries | `runtime/auth.py`: `SessionStore`; `runtime/webapp.py`; `runtime/cli.py`: server setup | `tests/test_auth.py`, `tests/test_webapp.py` |
@@ -53,11 +56,13 @@ editorial direction, but are not required to build or test documentation.
 - **Discovery versus registration:** collections expose eligible directories; they do not publish every file in them or create project directories.
 - **Local versus daemon policy:** `register` uses its selected local validation. It does not enforce the daemon's zone retention or per-zone free-space reserve.
 - **Snapshot:** the overview uses a registry snapshot and per-zone history reads, not an atomic content snapshot across zones. A busy zone's empty history is not proof of deletion.
-- **Unreleased downloads:** registry membership is eventual, with no download-triggered discovery or wait for a scan. Acquisition retains selected metadata and handles under shared filesystem locks; streaming holds no zone locks. It still enumerates names and reads journals, can wait on a writer or filesystem, and is not a snapshot against external in-place edits.
+- **Unreleased reads:** generic listing and both content routes use eventual registry membership without discovery refresh/join. Generic listing/content and HTTP ZIP request nonblocking locks; legacy listing still refreshes and legacy previews wait for writers. Filesystem I/O can block in either mode. Downloads retain selected metadata and handles, then stream without zone locks; this is not a snapshot against external in-place edits.
 - **Retention:** the current publication is protected during its own retention pass. Later publications may evict earlier items, including transfers in the same batch.
-- **Metadata:** a digest is not a signature, source metadata is not authenticated identity, and `changed_at` is currently null rather than a usable modification timestamp.
+- **Metadata:** `sha256`/`etag` are stored payload identity or null, not a read-time hash, signature, or metadata revision. Comments preserve ETag, A-to-B-to-A restores A's tag, and `changed_at` remains null. No listing/download hashes all legacy files to fill unknown identities; source metadata is not authenticated identity.
+- **Consumer publication:** verify length and known digest before local replacement. Legacy unknown identity cannot pin a listing version. Exit 3 means publication succeeded but stdout reporting failed; no rollback is promised. This example does not implement SFTP, builds, or a zone snapshot.
+- **API compatibility:** legacy routes/fields and Python aliases remain supported throughout 2.x; removal is no earlier than 3.0 and announced in advance. Aggregate routes default to legacy and require `schema=items` for their generic responses. Generic responses do not duplicate histories or retain `preview_url`.
 - **Replacement and transfer:** a stable name is not versioning. A multi-file operation may partly succeed; a target may be published before a subsequent step fails.
-- **Security:** groups do not isolate users. Direct-drop routes have an immediate-loopback-peer exception; a public loopback proxy needs the documented access policy.
+- **Security:** groups do not isolate users. Direct-drop routes have an immediate-loopback-peer exception; public proxy blockers must cover resolve and both `images/regularize` and `items/regularize`, not just the old path.
 - **HTML:** ordinary rich copying is sanitized, but explicit raw copying and downloads preserve original content. The receiving application has its own behavior.
 - **Support:** Linux validation, Wine coverage, native platform support, browser simulation, and deployed-host checks are different evidence.
 
@@ -81,7 +86,9 @@ prefer daemon publication when its policy and coordination are required.
 From the repository root:
 
 ```sh
-python3 -m unittest discover -s tests -p test_documentation.py -v
+mkdir -p work/tmp
+export TMPDIR="$PWD/work/tmp"
+PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -p test_documentation.py -v
 npm run test:all
 ```
 
@@ -120,6 +127,10 @@ files are not protected by Git ignore rules when served over HTTP. Follow the
 [allowlisted site export](../site/DEPLOYMENT.md), review new entries in
 `site/publish-files.txt`, and validate the resulting public files. Markdown
 links remain Markdown; no HTML manual is generated automatically.
+The external-consumer recipe links to `contrib/fetch_pasteberth_item.py`; an
+allowlisted documentation export must include both that example and
+`docs/recipes/external-consumer.md`. Do not expose the rest of `contrib/` or the
+checkout by replacing an explicit allowlist with a broad copy.
 
 Documentation work does not authorize deployment, publishing, tagging, or a
 new product version. Use the [release process](release-process.md) when those

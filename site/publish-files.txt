@@ -2,6 +2,7 @@ README.md
 GUIDE.md
 CHANGELOG.md
 LICENSE
+contrib/fetch_pasteberth_item.py
 docs/concepts.md
 docs/contributing.md
 docs/deployment.md
@@ -17,6 +18,7 @@ docs/zone-collection-contract.md
 docs/recipes/agent-output.md
 docs/recipes/current-result.md
 docs/recipes/documents.md
+docs/recipes/external-consumer.md
 docs/recipes/personal-staging.md
 docs/recipes/project-zones.md
 docs/recipes/register-file.md
