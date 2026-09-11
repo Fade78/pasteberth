@@ -675,7 +675,8 @@ class PosixPlatformFS(PlatformFS):
         if uid_getter is not None and owner != uid_getter():
             private = False
         detail = None if private else "owner or permissions are too broad"
-        return PermissionAudit(path, private, owner, mode, detail)
+        writable_by_other = bool(mode & (stat.S_IWGRP | stat.S_IWOTH))
+        return PermissionAudit(path, private, owner, mode, detail, writable_by_other)
 
     def is_owned(self, entry: EntryInfo) -> bool:
         uid_getter = getattr(os, "getuid", None)

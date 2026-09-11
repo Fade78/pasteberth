@@ -1,9 +1,9 @@
 # Pasteberth Documentation
 
 Stage and retrieve files across browsers, filesystems, tools, and working
-contexts. Choose a path below for the documented **2.1.22** runtime. Start with
+contexts. Choose a path below for the documented **2.1.23** runtime. Start with
 the task you need, then follow its links for exact options and guarantees.
-Changes marked **Unreleased** describe the working tree after 2.1.22, including
+Changes marked **Unreleased** describe the working tree after 2.1.23, including
 the generic item API and version-aware external-consumer recipe.
 
 ## Contents

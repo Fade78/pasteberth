@@ -201,9 +201,11 @@ not invalidate them. See [credential rotation](../operations.md#credentials-and-
 and [bearer token operations](../operations.md#bearer-tokens).
 
 `token_file` defaults to `tokens.sqlite3` next to the selected configuration.
-It must be an absolute path outside the read-only deployment, in a private
-directory writable by the service account. The registry is created with a
-private mode and contains only token hashes, grants, and suspension state.
+It must be an absolute path outside the read-only deployment, in a directory
+writable by the service account. The registry is created with a private mode;
+its parent directories must not be writable by other users or groups, but
+their read and traverse permissions are an administrative choice. The
+registry contains only token hashes, grants, and suspension state.
 When authentication is enabled, the server opens the registry at startup; set
 an explicit path when the configuration directory is read-only or managed by a
 system service with a separate state directory. Set `enabled = false` to turn

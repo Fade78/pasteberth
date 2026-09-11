@@ -752,6 +752,26 @@ class TestConfigurationDepot(unittest.TestCase):
         self.assertIn("token registry", proc.stdout)
         self.assertIn("permissions too open", proc.stdout)
 
+    def test_audit_accepte_un_parent_registre_lisible_non_inscriptible(self):
+        if platform_fs().backend_name == "windows":
+            self.skipTest("chmod POSIX non représentatif des ACL Windows")
+        registry_dir = self.tmp / "registry"
+        registry_dir.mkdir(mode=0o755)
+        registry_dir.chmod(0o755)
+        token_file = registry_dir / "tokens.sqlite3"
+        token_file.write_bytes(b"not a real registry")
+        token_file.chmod(0o600)
+        cfg = write_config(
+            self.tmp,
+            auth_enabled=True,
+            password="token-readable-parent-password",
+            token_file=str(token_file),
+        )
+
+        proc = run_cli(["audit", "--config", str(cfg)])
+
+        self.assertNotIn("token registry directory: permissions too open", proc.stdout)
+
     def test_audit_refuse_parent_registre_tokens_non_repertoire(self):
         cfg = write_config(
             self.tmp,

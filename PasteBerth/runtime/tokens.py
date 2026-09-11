@@ -322,7 +322,7 @@ class TokenStore:
             raise TokenStoreError(
                 f"cannot audit token registry directory: {self.path.parent}"
             ) from exc
-        if not parent_audit.private:
+        if parent_audit.directory_is_writable_by_other():
             raise TokenStoreError(
                 f"permissions are too open on token registry directory: {self.path.parent}"
             )
@@ -335,17 +335,7 @@ class TokenStore:
                 raise TokenStoreError(
                     f"cannot audit token registry ancestor: {current}"
                 ) from exc
-            mode = ancestor_audit.mode
-            if mode is not None:
-                group_writable_sticky = bool(mode & stat.S_IWGRP and mode & stat.S_ISVTX)
-                world_writable_sticky = bool(mode & stat.S_IWOTH and mode & stat.S_ISVTX)
-                if (mode & stat.S_IWGRP and not group_writable_sticky) or (
-                    mode & stat.S_IWOTH and not world_writable_sticky
-                ):
-                    raise TokenStoreError(
-                        f"permissions are too open on token registry ancestor: {current}"
-                    )
-            elif not ancestor_audit.private:
+            if ancestor_audit.directory_is_writable_by_other():
                 raise TokenStoreError(
                     f"permissions are too open on token registry ancestor: {current}"
                 )

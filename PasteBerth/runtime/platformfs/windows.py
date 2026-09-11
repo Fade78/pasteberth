@@ -797,7 +797,10 @@ class WindowsPlatformFS(PlatformFS):
         except (OSError, PermissionSecurityError, UnsupportedFilesystemError):
             return None
 
-    def _security_audit_handle(self, handle: int) -> tuple[str, bool, str | None]:
+    def _security_audit_handle(
+        self,
+        handle: int,
+    ) -> tuple[str, bool, bool, str | None]:
         owner = ctypes.c_void_p()
         descriptor = ctypes.c_void_p()
         dacl = ctypes.c_void_p()
@@ -817,7 +820,7 @@ class WindowsPlatformFS(PlatformFS):
             )
         try:
             if not owner.value:
-                return "", False, "owner is missing"
+                return "", False, True, "owner is missing"
             owner_sid = self._sid_string(owner)
             present = ctypes.c_int()
             defaulted = ctypes.c_int()
@@ -830,7 +833,7 @@ class WindowsPlatformFS(PlatformFS):
             ):
                 _raise_code(ctypes.get_last_error(), "GetSecurityDescriptorDacl")
             if not present.value or not dacl_pointer.value:
-                return owner_sid, False, "DACL is missing or implicitly inherited"
+                return owner_sid, False, True, "DACL is missing or implicitly inherited"
             size_info = _ACL_SIZE_INFORMATION()
             if not self._api.GetAclInformation(
                 dacl_pointer,
@@ -844,8 +847,21 @@ class WindowsPlatformFS(PlatformFS):
                 | _FILE_GENERIC_WRITE
                 | _FILE_GENERIC_EXECUTE
                 | _FILE_DELETE_CHILD
+                | _GENERIC_WRITE
+                | _DELETE
+                | _WRITE_DAC
                 | _GENERIC_ALL
             )
+            writable = (
+                _GENERIC_WRITE
+                | _FILE_GENERIC_WRITE
+                | _DELETE
+                | _WRITE_DAC
+                | _FILE_DELETE_CHILD
+                | _GENERIC_ALL
+            )
+            writable_by_other = False
+            access_by_other = False
             for index in range(size_info.AceCount):
                 ace = ctypes.c_void_p()
                 if not self._api.GetAce(
@@ -863,9 +879,17 @@ class WindowsPlatformFS(PlatformFS):
                 mask = ctypes.c_uint32.from_address(_handle_value(ace) + 4).value
                 sid_address = _handle_value(ace) + 8
                 ace_sid = self._sid_string(sid_address)
-                if ace_sid != owner_sid and mask & sensitive:
-                    return owner_sid, False, "ACL grants access to another principal"
-            return owner_sid, True, None
+                if ace_sid != owner_sid:
+                    writable_by_other = writable_by_other or bool(mask & writable)
+                    access_by_other = access_by_other or bool(mask & sensitive)
+            if access_by_other:
+                return (
+                    owner_sid,
+                    False,
+                    writable_by_other,
+                    "ACL grants access to another principal",
+                )
+            return owner_sid, True, writable_by_other, None
         finally:
             if descriptor.value:
                 self._api.LocalFree(descriptor)
@@ -1667,7 +1691,7 @@ class WindowsPlatformFS(PlatformFS):
             desired_access=_GENERIC_READ | _READ_CONTROL | _FILE_READ_ATTRIBUTES,
         )
         try:
-            owner, private, detail = self._security_audit_handle(handle)
-            return PermissionAudit(path, private, owner, None, detail)
+            owner, private, writable_by_other, detail = self._security_audit_handle(handle)
+            return PermissionAudit(path, private, owner, None, detail, writable_by_other)
         finally:
             self._close_native(handle)

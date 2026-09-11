@@ -133,11 +133,11 @@ Start with [project zones](docs/recipes/project-zones.md), or follow
 
 ## Quick Start
 
-The documented runtime is **2.1.22**, officially supported on **Linux** with
+The documented runtime is **2.1.23**, officially supported on **Linux** with
 **Python 3.11+** and a supported local filesystem. It has no third-party Python
 runtime dependency.
 
-Changes labelled **Unreleased** describe the working tree, not the `2.1.22`
+Changes labelled **Unreleased** describe the working tree, not the `2.1.23`
 release. They include generic item routes and conditional downloads, streamed
 downloads, archive budgets, discovery
 optimizations, and a date alongside the time for items older than 24 elapsed
@@ -152,7 +152,7 @@ memory adapter, not production authentication or storage.
 For a first local runtime trial:
 
 ```sh
-git clone --branch v2.1.22 --depth 1 https://github.com/Fade78/pasteberth.git
+git clone --branch v2.1.23 --depth 1 https://github.com/Fade78/pasteberth.git
 cd pasteberth
 ./PasteBerth/pasteberth
 ```
@@ -178,7 +178,7 @@ directory is independent of the documentation and development tooling.
 - **Retention, not archiving:** history covers currently managed files; a stable filename is not versioning or permanent retention.
 - **Clipboard limits:** supported content can be copied; normal HTML copying is sanitized, but explicit raw-HTML copying and downloads preserve original content.
 
-| Area | 2.1.22 support |
+| Area | 2.1.23 support |
 |---|---|
 | Server | Linux, Python 3.11 or newer |
 | Storage | Local filesystem with required backend capabilities |

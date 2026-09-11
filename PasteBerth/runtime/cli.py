@@ -1173,16 +1173,8 @@ def _audit_controlled_parents(fs, path: Path) -> str | None:
             audit = fs.audit_permissions(current, directory=True)
         except (OSError, UnsupportedFilesystemError) as exc:
             return f"inaccessible parent ({current}: {exc})"
-        mode = audit.mode
-        if mode is not None:
-            world_writable_sticky = bool(mode & stat.S_IWOTH and mode & stat.S_ISVTX)
-            group_writable_sticky = bool(mode & stat.S_IWGRP and mode & stat.S_ISVTX)
-            if (mode & stat.S_IWGRP and not group_writable_sticky) or (
-                mode & stat.S_IWOTH and not world_writable_sticky
-            ):
-                return f"parent writable by a third party: {current}"
-        elif not audit.private:
-            return f"non-private ACL on parent: {current}"
+        if audit.directory_is_writable_by_other():
+            return f"parent writable by a third party: {current}"
         if current == Path(current.anchor):
             return None
         current = current.parent
@@ -1480,7 +1472,7 @@ def _cmd_audit(args: argparse.Namespace) -> int:
                 except (OSError, UnsupportedFilesystemError) as exc:
                     errors.append(f"token registry directory: permissions unreadable ({exc})")
                 else:
-                    if not parent_audit.private:
+                    if parent_audit.directory_is_writable_by_other():
                         detail = (
                             oct(parent_audit.mode)
                             if parent_audit.mode is not None

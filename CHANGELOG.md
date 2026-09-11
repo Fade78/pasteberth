@@ -4,6 +4,14 @@ This file records user-visible changes to Pasteberth.
 
 ## [Unreleased]
 
+## [2.1.23] - 2026-09-11
+
+### Token Registry Permissions
+
+- allow token-registry parent directories to be readable by others while
+  rejecting parents writable by other users or groups; the registry file
+  remains private;
+
 ## [2.1.22] - 2026-09-11
 
 ### Scoped Bearer Tokens

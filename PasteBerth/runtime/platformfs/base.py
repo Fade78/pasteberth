@@ -6,6 +6,7 @@ private and expose only the small contract defined here.
 """
 from __future__ import annotations
 
+import stat
 from dataclasses import dataclass
 from pathlib import Path
 from typing import BinaryIO, NamedTuple
@@ -74,6 +75,16 @@ class PermissionAudit:
     owner: int | str | None
     mode: int | None
     detail: str | None = None
+    writable_by_other: bool | None = None
+
+    def directory_is_writable_by_other(self) -> bool:
+        """Return whether an untrusted principal can modify this directory."""
+        if self.mode is not None:
+            writable = bool(self.mode & (stat.S_IWGRP | stat.S_IWOTH))
+            return writable and not bool(self.mode & stat.S_ISVTX)
+        if self.writable_by_other is not None:
+            return self.writable_by_other
+        return not self.private
 
 
 @dataclass(frozen=True)

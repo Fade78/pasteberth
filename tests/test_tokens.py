@@ -108,6 +108,17 @@ class TestTokenStore(unittest.TestCase):
             with self.assertRaisesRegex(TokenStoreError, "permissions"):
                 TokenStore(inner / "tokens.sqlite3")
 
+    def test_registry_allows_readable_but_not_writable_ancestors(self):
+        if os.name == "nt":
+            self.skipTest("POSIX directory permissions are not representative on Windows")
+        with tempfile.TemporaryDirectory() as raw:
+            outer = Path(raw) / "outer"
+            inner = outer / "inner"
+            inner.mkdir(parents=True, mode=0o755)
+            outer.chmod(0o755)
+            store = TokenStore(inner / "tokens.sqlite3")
+            self.assertTrue(store.path.is_file())
+
 
 class TokenHTTPTest(unittest.TestCase):
     def setUp(self):
