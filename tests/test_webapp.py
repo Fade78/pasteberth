@@ -507,7 +507,7 @@ class TestModeAnonymeLoopback(Base):
     def test_index_servi(self):
         status, headers, body = self.req("GET", "/")
         self.assertEqual(status, 200)
-        self.assertIn(b"/static/app.js", body)
+        self.assertIn(f"/static/app.js?v={__version__}".encode(), body)
         self.assertIn(f"v{__version__}".encode(), body)
         self.assertNotIn(b"__PASTEBERTH_VERSION__", body)
         self.assertEqual(headers["cache-control"], "no-store")
@@ -566,6 +566,8 @@ class TestUrlPrefix(Base):
         self.assertEqual(status, 404)
 
         status, _, _ = self.req("GET", "/paste/static/app.js")
+        self.assertEqual(status, 200)
+        status, _, _ = self.req("GET", f"/paste/static/app.js?v={__version__}")
         self.assertEqual(status, 200)
 
     def test_redirection_et_logs_ne_contiennent_pas_un_token_de_query(self):

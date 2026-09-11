@@ -292,6 +292,10 @@ class TestContratsFrontend(unittest.TestCase):
     def test_version_dans_le_branding(self):
         self.assertIn("brand-version", self.index_html)
         self.assertIn("__PASTEBERTH_VERSION__", self.index_html)
+        self.assertIn(
+            "__PASTEBERTH_URL_PREFIX__/static/app.js?v=__PASTEBERTH_VERSION__",
+            self.index_html,
+        )
         self.assertIn("brand-version", self.style_css)
 
     def test_raccourcis_clavier(self):

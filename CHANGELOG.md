@@ -4,6 +4,13 @@ This file records user-visible changes to Pasteberth.
 
 ## [Unreleased]
 
+## [2.1.24] - 2026-09-11
+
+### Frontend Asset Cache Busting
+
+- version the browser application's JavaScript URL so a new release cannot
+  reuse a stale cached asset with an incompatible runtime;
+
 ## [2.1.23] - 2026-09-11
 
 ### Token Registry Permissions

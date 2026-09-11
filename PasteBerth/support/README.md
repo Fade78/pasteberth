@@ -85,7 +85,7 @@ poll reads the completed registry. No configuration edit or service restart
 is needed; the directory must still be readable, writable, and
 traversable and satisfy the rule's depth and subtree constraints.
 
-**Unreleased (runtime version still `2.1.23`):** zone and group overviews share
+**Unreleased (runtime version still `2.1.24`):** zone and group overviews share
 a background cooldown of `max(10 seconds, last full refresh duration)` from
 completion, including registry installation. Startup, foreground, and failed
 refresh attempts also set it. The next eligible poll can launch one job;
@@ -94,7 +94,7 @@ not every overview starts a scan. Mutations, directory resolution, and legacy
 without a duplicate refresh in the same action. Scanner caches are shared across rules
 within one pass only. Overview
 history and free-space checks remain synchronous and can block; there is no
-hard discovery or response deadline. These changes are not in the `2.1.23`
+hard discovery or response deadline. These changes are not in the `2.1.24`
 release.
 
 **Unreleased reads:** generic `/items` listings, GET/HEAD content on either

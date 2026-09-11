@@ -4,14 +4,14 @@
 
 ## Requirements and Support
 
-The 2.1.23 implementation requires:
+The 2.1.24 implementation requires:
 
 - Python 3.11 or newer;
 - a local filesystem supported by the active platform backend;
 - a modern browser for the Web UI;
 - no third-party Python runtime dependency.
 
-Linux is the current official and tested server platform for v2.1.23. The
+Linux is the current official and tested server platform for v2.1.24. The
 Windows backend has broad Wine coverage, but native Windows/NTFS validation is
 still outstanding. A Darwin backend exists, but native macOS validation and
 official support are also outstanding. Only supported local filesystems are
@@ -31,12 +31,12 @@ manual validation on the target desktop.
 
 ### Deployable copy
 
-The supported v2.1.23 installation is the tracked `PasteBerth/` directory. It is
+The supported v2.1.24 installation is the tracked `PasteBerth/` directory. It is
 the complete code-only deployment unit: it needs no root access, installation
 script, Python package installation, or build step.
 
 ```sh
-git clone --branch v2.1.23 --depth 1 https://github.com/Fade78/pasteberth.git
+git clone --branch v2.1.24 --depth 1 https://github.com/Fade78/pasteberth.git
 cd pasteberth
 cp -a PasteBerth "$HOME/PasteBerth"
 mkdir -p "$HOME/.local/bin"
@@ -145,7 +145,7 @@ The direct-drop endpoints use the immediate peer for their loopback exception.
 A public request forwarded by a loopback proxy therefore qualifies even without
 a session. The examples below block `/api/drop/resolve` and both
 `/api/zones/{id}/images/regularize` and `/api/zones/{id}/items/regularize` at the
-public proxy. The `items` alias is **Unreleased, after 2.1.23**; blocking only
+public proxy. The `items` alias is **Unreleased, after 2.1.24**; blocking only
 `images` would leave the same direct-drop handler exposed through `items`.
 Local CLI clients can
 still reach the backend directly; remote clients use `drop --zone ID` or the
@@ -344,7 +344,7 @@ that all clipboard or downloaded content is sanitized.
 
 The next major platform goal is native Windows and macOS support with the same
 transaction and security guarantees. That work is intentionally separate from
-the v2.1.23 support matrix and must not be represented as already supported.
+the v2.1.24 support matrix and must not be represented as already supported.
 The repository contains opt-in `platform_windows` and `platform_macos` CI jobs;
 enable them only after registering native runners with
 `PASTEBERTH_NATIVE_WINDOWS_CI=1` or `PASTEBERTH_NATIVE_MACOS_CI=1`.
