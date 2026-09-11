@@ -119,6 +119,7 @@ class AuthConfig:
     session_ttl_hours: int = 72
     max_sessions: int | None = DEFAULT_MAX_SESSIONS
     password_file: Path | None = None
+    token_file: Path | None = None
 
 
 @dataclass(frozen=True)
@@ -253,7 +254,11 @@ class Config:
 
     def password_file(self) -> Path:
         """Return the password hash location (0600, never a symlink)."""
-        return self.auth.password_file or self.config_path.parent / "passwd"
+        return self.auth.password_file or self.config_path.resolve().parent / "passwd"
+
+    def token_file(self) -> Path:
+        """Return the persistent bearer-token registry location."""
+        return self.auth.token_file or self.config_path.resolve().parent / "tokens.sqlite3"
 
 
 def _expect_table(value: object, where: str) -> dict:
@@ -447,7 +452,7 @@ def _parse_auth(raw: object, warnings: list[str]) -> AuthConfig:
     table = _expect_table(raw, "[auth]")
     _warn_unknown(
         table,
-        {"enabled", "session_ttl_hours", "max_sessions", "password_file"},
+        {"enabled", "session_ttl_hours", "max_sessions", "password_file", "token_file"},
         "[auth]",
         warnings,
     )
@@ -470,6 +475,17 @@ def _parse_auth(raw: object, warnings: list[str]) -> AuthConfig:
         if not password_file.is_absolute():
             raise ConfigError("[auth]: 'password_file' must be an absolute path")
         password_file = ensure_external_path(password_file, "[auth] 'password_file'")
+    token_file_raw = table.get("token_file")
+    token_file = None
+    if token_file_raw is not None:
+        if not isinstance(token_file_raw, str) or not token_file_raw.strip():
+            raise ConfigError("[auth]: 'token_file' must be an absolute path")
+        if "\x00" in token_file_raw:
+            raise ConfigError("[auth]: 'token_file' contains a NUL character")
+        token_file = Path(os.path.expanduser(token_file_raw))
+        if not token_file.is_absolute():
+            raise ConfigError("[auth]: 'token_file' must be an absolute path")
+        token_file = ensure_external_path(token_file, "[auth] 'token_file'")
     if enabled and "password_hash" in table:
         warnings.append(
             "[auth]: 'password_hash' in config.toml is ignored; "
@@ -480,6 +496,7 @@ def _parse_auth(raw: object, warnings: list[str]) -> AuthConfig:
         session_ttl_hours=ttl,
         max_sessions=max_sessions,
         password_file=password_file,
+        token_file=token_file,
     )
 
 

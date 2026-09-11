@@ -792,6 +792,8 @@ code, kbd {
 .comment-save-btn:focus-visible,
 .replace-btn:focus-visible,
 .transfer-btn:focus-visible,
+.small-btn:focus-visible,
+.primary-btn:focus-visible,
 .group-tab:focus-visible,
 .tab-zone-link:focus-visible,
 .thumb-wrap:focus-visible,
@@ -818,6 +820,155 @@ code, kbd {
 }
 
 .ghost-btn:hover { background: rgba(255, 255, 255, 0.07); }
+
+.small-btn,
+.primary-btn {
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 7px;
+  padding: 0.35rem 0.65rem;
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--text);
+  font: inherit;
+  font-size: 0.78rem;
+  cursor: pointer;
+}
+
+.small-btn:hover { background: rgba(255, 255, 255, 0.13); }
+.small-btn:disabled { cursor: not-allowed; opacity: 0.45; }
+
+.primary-btn {
+  width: 100%;
+  border-color: rgba(77, 163, 255, 0.55);
+  background: rgba(77, 163, 255, 0.18);
+  color: #dceeff;
+  font-weight: 700;
+}
+
+.primary-btn:hover { background: rgba(77, 163, 255, 0.3); }
+.danger-btn { border-color: rgba(255, 123, 114, 0.45); color: #ffd7d3; }
+
+/* ---------------------------------------------------------- access panel */
+
+dialog.access-dialog {
+  width: min(96vw, 76rem);
+  max-width: min(96vw, 76rem);
+  max-height: 92vh;
+  overflow: auto;
+  padding: 1.2rem;
+  background: var(--panel);
+  color: var(--text);
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: var(--radius);
+}
+
+dialog.access-dialog::backdrop { background: rgba(4, 6, 9, 0.72); }
+dialog.access-dialog:not([open]) { display: none; }
+
+.access-head,
+.section-head,
+.token-card-head,
+.suspension-row,
+.token-secret-line {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.access-head { justify-content: space-between; gap: 1.5rem; }
+.access-head h2, .access-card h3, .access-card h4 { margin: 0; }
+.access-head h2 { font-size: 1.2rem; }
+.dialog-note { margin: 0.35rem 0 0; color: var(--muted); font-size: 0.82rem; }
+
+.access-layout {
+  display: grid;
+  grid-template-columns: minmax(18rem, 0.85fr) minmax(22rem, 1.15fr);
+  gap: 1rem;
+  margin-top: 1rem;
+}
+
+.access-card {
+  min-width: 0;
+  padding: 1rem;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.025);
+}
+
+.access-card > label,
+.grant-controls > label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  margin-top: 0.8rem;
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
+.access-card input[type="text"],
+.access-card input[type="number"],
+.access-card select {
+  min-width: 0;
+  padding: 0.45rem 0.55rem;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 6px;
+  background: rgba(0, 0, 0, 0.22);
+  color: var(--text);
+  font: inherit;
+}
+
+.check-row {
+  display: inline-flex !important;
+  flex-direction: row !important;
+  align-items: center;
+  gap: 0.45rem;
+  margin-top: 0.65rem !important;
+  color: var(--text) !important;
+  cursor: pointer;
+}
+
+.check-row input { accent-color: var(--accent); }
+.section-head { justify-content: space-between; margin: 1rem 0 0.55rem; }
+.section-head h4 { color: var(--muted); font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.06em; }
+.section-head .muted { margin-left: auto; font-size: 0.75rem; }
+
+.token-grants { display: grid; gap: 0.65rem; }
+.token-grant-row {
+  min-width: 0;
+  margin: 0;
+  padding: 0.7rem;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 8px;
+}
+
+.token-grant-row legend { padding: 0 0.3rem; color: var(--muted); font-size: 0.72rem; }
+.grant-controls { display: grid; grid-template-columns: minmax(0, 0.8fr) minmax(0, 1.2fr); gap: 0.55rem; }
+.grant-permissions { display: flex; flex-wrap: wrap; gap: 0.8rem; grid-column: 1 / -1; }
+.grant-replace-label { grid-column: 1 / 2; }
+.grant-remove { align-self: end; justify-self: end; grid-column: 2; }
+
+.token-list { display: grid; gap: 0.65rem; margin-top: 0.7rem; }
+.token-card { padding: 0.75rem; border: 1px solid rgba(255, 255, 255, 0.12); border-radius: 8px; }
+.token-card-head { justify-content: space-between; }
+.token-card-head h4 { min-width: 0; overflow-wrap: anywhere; }
+.token-card > code { display: block; margin-top: 0.4rem; color: var(--muted); overflow-wrap: anywhere; font-size: 0.7rem; }
+.token-meta { margin: 0.4rem 0; font-size: 0.72rem; }
+.token-state { flex: 0 0 auto; padding: 0.15rem 0.45rem; border-radius: 999px; background: rgba(70, 194, 111, 0.15); color: #9ae6ae; font-size: 0.68rem; font-weight: 700; }
+.token-state-suspended { background: rgba(255, 209, 102, 0.16); color: #ffe7a3; }
+.token-state-revoked, .token-state-expired, .token-state-missing { background: rgba(255, 123, 114, 0.15); color: #ffd7d3; }
+.token-grant-summary { margin: 0.45rem 0; padding-left: 1.1rem; color: var(--muted); font-size: 0.72rem; }
+.token-actions { display: flex; flex-wrap: wrap; gap: 0.45rem; margin-top: 0.6rem; }
+
+.token-secret { margin-top: 0.7rem; padding: 0.75rem; border: 1px solid rgba(255, 209, 102, 0.5); border-radius: 8px; background: rgba(255, 209, 102, 0.08); color: #ffe7a3; }
+.token-secret p { margin: 0.35rem 0; font-size: 0.75rem; }
+.token-secret-line { align-items: flex-start; }
+.token-secret-line code { flex: 1; min-width: 0; padding: 0.45rem; overflow-wrap: anywhere; color: var(--text); font-size: 0.7rem; }
+
+.suspension-card { margin-top: 1rem; }
+.suspension-list { display: grid; gap: 0.4rem; }
+.suspension-row { justify-content: space-between; min-width: 0; padding: 0.45rem 0; border-top: 1px solid rgba(255, 255, 255, 0.07); font-size: 0.78rem; }
+.suspension-row > span:first-child { min-width: 0; overflow-wrap: anywhere; }
+.access-message { margin: 0.8rem 0 0; color: #9ae6ae; font-size: 0.8rem; }
+.access-message.error { color: #ffd7d3; }
 
 /* ------------------------------------------------------------ thumbnails */
 
@@ -1151,4 +1302,13 @@ kbd {
   .pv-actions { flex: 1 1 100%; }
   .pv-actions button { flex: 1 1 auto; }
   .help { font-size: 0.68rem; }
+  .topbar { align-items: flex-start; }
+  .topbar-right { flex-wrap: wrap; justify-content: flex-end; gap: 0.45rem; }
+  .access-layout { grid-template-columns: 1fr; }
+  dialog.access-dialog { width: calc(100vw - 1rem); max-width: calc(100vw - 1rem); padding: 0.8rem; }
+  .access-head { align-items: flex-start; }
+  .grant-controls { grid-template-columns: 1fr; }
+  .grant-permissions, .grant-replace-label, .grant-remove { grid-column: 1; }
+  .grant-remove { justify-self: start; }
+  .suspension-row { align-items: flex-start; flex-wrap: wrap; }
 }

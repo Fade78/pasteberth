@@ -22,7 +22,7 @@ read-only deployment.
 By default it refuses to replace an existing file; add the global `--force`
 option only after checking the target path.
 
-The active configuration, password file, TLS private key, and zone directories
+The active configuration, password file, bearer-token registry, TLS private key, and zone directories
 must be outside `PasteBerth/`. These paths may contain symbolic links; Pasteberth
 resolves the target before opening it and checks the target and its parents.
 
@@ -180,6 +180,7 @@ enabled = true
 session_ttl_hours = 72
 max_sessions = 4096
 # password_file = "/absolute/path/to/passwd"
+# token_file = "/absolute/path/to/tokens.sqlite3"
 ```
 
 The password file defaults to `passwd` next to the selected configuration. It
@@ -194,7 +195,20 @@ Authentication uses one shared password, not individual accounts. A session
 can access all configured zones; zone groups are not access-control lists.
 Changing the password file invalidates existing sessions on their next
 validation; each session is tied to the file version at login. A restart is
-not required. See [credential rotation](../operations.md#credentials-and-sessions).
+not required. Bearer tokens are separate persistent credentials and are
+managed from the Web UI or the token API; changing the shared password does
+not invalidate them. See [credential rotation](../operations.md#credentials-and-sessions)
+and [bearer token operations](../operations.md#bearer-tokens).
+
+`token_file` defaults to `tokens.sqlite3` next to the selected configuration.
+It must be an absolute path outside the read-only deployment, in a private
+directory writable by the service account. The registry is created with a
+private mode and contains only token hashes, grants, and suspension state.
+When authentication is enabled, the server opens the registry at startup; set
+an explicit path when the configuration directory is read-only or managed by a
+system service with a separate state directory. Set `enabled = false` to turn
+off both sessions and bearer-token authentication; bearer credentials are not
+an anonymous-mode access mechanism.
 
 ### Zones
 

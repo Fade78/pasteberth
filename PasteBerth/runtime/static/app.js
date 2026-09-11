@@ -22,6 +22,10 @@
     zones: [],            // [{id,label,color,retain,count,upload_limit_bytes,items:[...]}]
     activeId: null,
     authEnabled: true,
+    accessAdmin: false,
+    accessAdminLoaded: false,
+    tokenAdmin: null,
+    accessRequestInFlight: false,
     showFullPath: true,
     maxArchiveFiles: null,
     offline: false,
@@ -61,6 +65,7 @@
   const groupTabs = document.getElementById("group-tabs");
   const statusEl = document.getElementById("status");
   const statusText = document.getElementById("status-text");
+  const accessButton = document.getElementById("access-button");
   const logoutForm = document.getElementById("logout-form");
   const toastEl = document.getElementById("toast");
   const pvToastEl = document.getElementById("pv-toast");
@@ -80,6 +85,20 @@
   const replacementZone = document.getElementById("replace-zone");
   const replacementCancel = document.getElementById("replace-cancel");
   const replacementConfirm = document.getElementById("replace-confirm");
+  const accessDialog = document.getElementById("access-dialog");
+  const accessBackdrop = document.getElementById("access-backdrop");
+  const accessClose = document.getElementById("access-close");
+  const tokenForm = document.getElementById("token-form");
+  const tokenLabel = document.getElementById("token-label");
+  const tokenDuration = document.getElementById("token-duration");
+  const tokenPermanent = document.getElementById("token-permanent");
+  const addGrantButton = document.getElementById("add-grant");
+  const tokenGrants = document.getElementById("token-grants");
+  const tokenSecret = document.getElementById("token-secret");
+  const tokenList = document.getElementById("token-list");
+  const refreshTokensButton = document.getElementById("refresh-tokens");
+  const suspensionList = document.getElementById("suspension-list");
+  const accessMessage = document.getElementById("access-message");
   const filePicker = document.getElementById("file-picker");
   const replacementQueue = [];
   const dialogInvokers = new WeakMap();
@@ -241,13 +260,15 @@
     let res;
     try {
       const requestOptions = Object.assign({}, options || {});
+      const redirectOnUnauthorized = requestOptions.redirectOnUnauthorized !== false;
+      delete requestOptions.redirectOnUnauthorized;
       requestOptions.headers = Object.assign({ Accept: "application/json" }, requestOptions.headers || {});
       res = await fetch(appPath(path), requestOptions);
     } catch (err) {
       if (err && err.name === "AbortError") throw err;
       throw new Error("network unreachable");
     }
-    if (res.status === 401 && state.authEnabled) {
+    if (res.status === 401 && state.authEnabled && redirectOnUnauthorized) {
       window.location.href = appPath("/login");
       throw new Error("session expired");
     }
@@ -293,6 +314,509 @@
     }
     return payload;
   }
+
+  // ---------------------------------------------------------- access admin
+
+  function tokenCatalog() {
+    const catalog = state.tokenAdmin?.catalog;
+    return {
+      zones: Array.isArray(catalog?.zones) ? catalog.zones : [],
+      groups: Array.isArray(catalog?.groups) ? catalog.groups : [],
+    };
+  }
+
+  function setAccessMessage(message, kind = "") {
+    if (!accessMessage) return;
+    accessMessage.textContent = message || "";
+    accessMessage.className = `access-message ${kind}`.trim();
+    accessMessage.hidden = !message;
+  }
+
+  function clearTokenSecret() {
+    if (!tokenSecret) return;
+    tokenSecret.replaceChildren();
+    tokenSecret.hidden = true;
+  }
+
+  function showTokenSecret(credential, action = "Created") {
+    if (!tokenSecret || typeof credential !== "string" || !credential) return;
+    tokenSecret.replaceChildren();
+    const title = document.createElement("strong");
+    title.textContent = `${action} token secret`;
+    const warning = document.createElement("p");
+    warning.textContent = "Copy it now. Pasteberth cannot recover this secret later.";
+    const line = document.createElement("div");
+    line.className = "token-secret-line";
+    const value = document.createElement("code");
+    value.textContent = credential;
+    const copy = document.createElement("button");
+    copy.type = "button";
+    copy.className = "small-btn";
+    copy.textContent = "Copy";
+    copy.addEventListener("click", async () => {
+      if (await writeClipboard(credential)) toast("Token secret copied");
+      else toast("Could not copy the token secret", "error");
+    });
+    line.append(value, copy);
+    tokenSecret.append(title, warning, line);
+    tokenSecret.hidden = false;
+  }
+
+  function addGrantRow(initial = {}) {
+    if (!tokenGrants) return;
+    const row = document.createElement("fieldset");
+    row.className = "token-grant-row";
+    const legend = document.createElement("legend");
+    legend.textContent = "Grant";
+    row.appendChild(legend);
+
+    const controls = document.createElement("div");
+    controls.className = "grant-controls";
+    const scopeLabel = document.createElement("label");
+    scopeLabel.textContent = "Scope";
+    const scopeSelect = document.createElement("select");
+    scopeSelect.className = "grant-scope";
+    for (const [value, label] of [
+      ["zone", "Zone"],
+      ["group", "Group"],
+      ["path", "PATH"],
+      ["global", "Global"],
+    ]) {
+      const option = document.createElement("option");
+      option.value = value;
+      option.textContent = label;
+      scopeSelect.appendChild(option);
+    }
+    scopeSelect.value = initial.scope_type || "zone";
+    scopeLabel.appendChild(scopeSelect);
+    const valueLabel = document.createElement("label");
+    valueLabel.className = "grant-value-label";
+    const valueCaption = document.createElement("span");
+    valueLabel.appendChild(valueCaption);
+    const valueWrap = document.createElement("span");
+    valueLabel.appendChild(valueWrap);
+    controls.append(scopeLabel, valueLabel);
+
+    const permissions = document.createElement("div");
+    permissions.className = "grant-permissions";
+    const permissionInputs = {};
+    for (const name of ["L", "R", "W"]) {
+      const label = document.createElement("label");
+      label.className = "check-row";
+      const input = document.createElement("input");
+      input.type = "checkbox";
+      input.dataset.permission = name;
+      input.checked = Array.isArray(initial.permissions) && initial.permissions.includes(name);
+      const text = document.createElement("span");
+      text.textContent = name;
+      label.append(input, text);
+      permissions.appendChild(label);
+      permissionInputs[name] = input;
+    }
+    controls.appendChild(permissions);
+
+    const replaceLabel = document.createElement("label");
+    replaceLabel.className = "check-row grant-replace-label";
+    const replaceInput = document.createElement("input");
+    replaceInput.type = "checkbox";
+    replaceInput.className = "grant-replace";
+    replaceInput.checked = initial.allow_replace === true;
+    const replaceText = document.createElement("span");
+    replaceText.textContent = "Allow named replacement";
+    replaceLabel.append(replaceInput, replaceText);
+    controls.appendChild(replaceLabel);
+
+    const remove = document.createElement("button");
+    remove.type = "button";
+    remove.className = "small-btn danger-btn grant-remove";
+    remove.textContent = "Remove";
+    remove.addEventListener("click", () => row.remove());
+    controls.appendChild(remove);
+    row.appendChild(controls);
+
+    let currentValue = typeof initial.scope_value === "string" ? initial.scope_value : "";
+    const updateValueControl = () => {
+      const scope = scopeSelect.value;
+      valueWrap.replaceChildren();
+      if (scope === "global") {
+        valueLabel.hidden = true;
+      } else {
+        valueLabel.hidden = false;
+        valueCaption.textContent = scope === "zone"
+          ? "Zone ID"
+          : scope === "group"
+            ? "Group"
+            : "Absolute path";
+        if (scope === "path") {
+          const input = document.createElement("input");
+          input.type = "text";
+          input.className = "grant-value";
+          input.maxLength = 4096;
+          input.value = currentValue;
+          input.placeholder = "/srv/pasteberth/project";
+          valueWrap.appendChild(input);
+        } else {
+          const select = document.createElement("select");
+          select.className = "grant-value";
+          const empty = document.createElement("option");
+          empty.value = "";
+          empty.textContent = scope === "zone" ? "Select a zone" : "Select a group";
+          select.appendChild(empty);
+          const entries = scope === "zone" ? tokenCatalog().zones : tokenCatalog().groups;
+          for (const entry of entries) {
+            const option = document.createElement("option");
+            option.value = scope === "zone" ? entry.id : entry.name;
+            option.textContent = scope === "zone"
+              ? `${entry.label || entry.id} (${entry.id})`
+              : entry.name;
+            select.appendChild(option);
+          }
+          if (currentValue && !entries.some(entry => (
+            scope === "zone" ? entry.id : entry.name
+          ) === currentValue)) {
+            const option = document.createElement("option");
+            option.value = currentValue;
+            option.textContent = `${currentValue} (not active)`;
+            select.appendChild(option);
+          }
+          select.value = currentValue;
+          valueWrap.appendChild(select);
+        }
+      }
+    };
+    scopeSelect.addEventListener("change", () => {
+      currentValue = "";
+      updateValueControl();
+    });
+    valueWrap.addEventListener("change", () => {
+      currentValue = valueWrap.querySelector(".grant-value")?.value || "";
+    });
+    valueWrap.addEventListener("input", () => {
+      currentValue = valueWrap.querySelector(".grant-value")?.value || "";
+    });
+    const syncReplacement = () => {
+      const enabled = permissionInputs.W.checked;
+      replaceInput.disabled = !enabled;
+      if (!enabled) replaceInput.checked = false;
+    };
+    permissionInputs.W.addEventListener("change", syncReplacement);
+    syncReplacement();
+    updateValueControl();
+    tokenGrants.appendChild(row);
+  }
+
+  function collectTokenGrants() {
+    const rows = [...(tokenGrants?.querySelectorAll(".token-grant-row") || [])];
+    if (!rows.length) throw new Error("Add at least one grant");
+    return rows.map((row) => {
+      const scopeType = row.querySelector(".grant-scope")?.value;
+      const scopeValue = row.querySelector(".grant-value")?.value || "";
+      if (scopeType !== "global" && !scopeValue.trim()) {
+        throw new Error("Every non-global grant needs a target");
+      }
+      const permissions = ["L", "R", "W"].filter((name) => (
+        row.querySelector(`[data-permission="${name}"]`)?.checked
+      ));
+      return {
+        scope_type: scopeType,
+        scope_value: scopeType === "global" ? "" : scopeValue,
+        permissions,
+        allow_replace: Boolean(row.querySelector(".grant-replace")?.checked),
+      };
+    });
+  }
+
+  function resetTokenForm() {
+    if (!tokenForm) return;
+    tokenForm.reset();
+    tokenDuration.disabled = false;
+    tokenGrants.replaceChildren();
+    addGrantRow();
+  }
+
+  function tokenTime(value) {
+    if (value === null || value === undefined) return "Never";
+    const milliseconds = Number(value) * 1000;
+    if (!Number.isFinite(milliseconds) || milliseconds > 8640000000000000) return "Far future";
+    const date = new Date(milliseconds);
+    return Number.isNaN(date.getTime()) ? "Unknown" : date.toLocaleString();
+  }
+
+  function suspensionKey(scopeType, scopeValue = "") {
+    return `${scopeType}\u0000${scopeValue}`;
+  }
+
+  function suspensionSet() {
+    return new Set((state.tokenAdmin?.suspensions || []).map((item) => (
+      suspensionKey(item.scope_type, item.scope_value || "")
+    )));
+  }
+
+  function renderTokenList() {
+    if (!tokenList) return;
+    tokenList.replaceChildren();
+    const records = Array.isArray(state.tokenAdmin?.tokens) ? state.tokenAdmin.tokens : [];
+    if (!records.length) {
+      const empty = document.createElement("p");
+      empty.className = "muted";
+      empty.textContent = "No bearer tokens have been issued.";
+      tokenList.appendChild(empty);
+      return;
+    }
+    for (const token of records) {
+      const card = document.createElement("article");
+      card.className = `token-card token-state-${token.state || "unknown"}`;
+      const head = document.createElement("div");
+      head.className = "token-card-head";
+      const title = document.createElement("h4");
+      title.textContent = token.label || "Unnamed token";
+      const stateBadge = document.createElement("span");
+      stateBadge.className = "token-state";
+      stateBadge.textContent = token.state || "unknown";
+      head.append(title, stateBadge);
+      const identifier = document.createElement("code");
+      identifier.textContent = token.token_id || "";
+      const expiry = document.createElement("p");
+      expiry.className = "muted token-meta";
+      expiry.textContent = `Created ${tokenTime(token.created_at)}; expires ${tokenTime(token.expires_at)}`;
+      const grants = document.createElement("ul");
+      grants.className = "token-grant-summary";
+      for (const grant of token.grants || []) {
+        const item = document.createElement("li");
+        const target = grant.scope_type === "global"
+          ? "all zones"
+          : `${grant.scope_type}: ${grant.scope_value || ""}`;
+        const rights = (grant.permissions || []).join("") || "none";
+        item.textContent = `${target} [${rights}] - ${grant.status || "unknown"}`;
+        grants.appendChild(item);
+      }
+      const actions = document.createElement("div");
+      actions.className = "token-actions";
+      const extend = document.createElement("button");
+      extend.type = "button";
+      extend.className = "small-btn";
+      extend.textContent = "Extend";
+      extend.disabled = token.state === "revoked";
+      extend.addEventListener("click", () => tokenLifecycleAction(token, "extend"));
+      const rotate = document.createElement("button");
+      rotate.type = "button";
+      rotate.className = "small-btn";
+      rotate.textContent = "Rotate";
+      rotate.disabled = token.state === "revoked";
+      rotate.addEventListener("click", () => tokenLifecycleAction(token, "rotate"));
+      const revoke = document.createElement("button");
+      revoke.type = "button";
+      revoke.className = "small-btn danger-btn";
+      revoke.textContent = "Revoke";
+      revoke.disabled = token.state === "revoked";
+      revoke.addEventListener("click", () => tokenRevokeAction(token));
+      actions.append(extend, rotate, revoke);
+      card.append(head, identifier, expiry, grants, actions);
+      tokenList.appendChild(card);
+    }
+  }
+
+  function renderSuspensions() {
+    if (!suspensionList) return;
+    suspensionList.replaceChildren();
+    const catalog = tokenCatalog();
+    const definitions = [
+      { scope_type: "global", scope_value: "", label: "All bearer tokens" },
+      ...catalog.zones.map((zone) => ({
+        scope_type: "zone", scope_value: zone.id,
+        label: `Zone: ${zone.label || zone.id} (${zone.id})`,
+      })),
+      ...catalog.groups.map((group) => ({
+        scope_type: "group", scope_value: group.name,
+        label: `Group: ${group.name}`,
+      })),
+    ];
+    if (!definitions.length) {
+      const empty = document.createElement("p");
+      empty.className = "muted";
+      empty.textContent = "No suspendable scopes are configured.";
+      suspensionList.appendChild(empty);
+      return;
+    }
+    const active = suspensionSet();
+    for (const definition of definitions) {
+      const row = document.createElement("div");
+      row.className = "suspension-row";
+      const label = document.createElement("span");
+      label.textContent = definition.label;
+      const status = document.createElement("span");
+      const suspended = active.has(suspensionKey(definition.scope_type, definition.scope_value));
+      status.className = suspended ? "token-state token-state-suspended" : "muted";
+      status.textContent = suspended ? "suspended" : "active";
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = suspended ? "small-btn" : "small-btn danger-btn";
+      button.textContent = suspended ? "Resume" : "Suspend";
+      button.addEventListener("click", () => setTokenSuspension(
+        definition.scope_type,
+        definition.scope_value,
+        !suspended,
+      ));
+      row.append(label, status, button);
+      suspensionList.appendChild(row);
+    }
+  }
+
+  function renderTokenAdmin() {
+    renderTokenList();
+    renderSuspensions();
+    if (tokenGrants && !tokenGrants.children.length) addGrantRow();
+  }
+
+  async function loadTokenAdmin() {
+    if (!state.authEnabled || !accessButton) return null;
+    if (state.accessRequestInFlight) return state.tokenAdmin;
+    state.accessRequestInFlight = true;
+    try {
+      const payload = await api("/api/tokens", { redirectOnUnauthorized: false });
+      if (!payload || !Array.isArray(payload.tokens)) throw new Error("invalid access response");
+      state.tokenAdmin = payload;
+      state.accessAdmin = true;
+      state.accessAdminLoaded = true;
+      accessButton.hidden = false;
+      renderTokenAdmin();
+      return payload;
+    } catch (err) {
+      state.accessAdmin = false;
+      state.accessAdminLoaded = true;
+      accessButton.hidden = true;
+      if (isDialogOpen(accessDialog)) setAccessMessage(err.message, "error");
+      return null;
+    } finally {
+      state.accessRequestInFlight = false;
+    }
+  }
+
+  function tokenDurationPrompt(action) {
+    const raw = window.prompt(
+      `${action} duration in seconds (leave blank for a permanent token):`,
+      "2592000",
+    );
+    if (raw === null) return undefined;
+    if (!raw.trim()) return null;
+    const value = Number(raw);
+    if (!Number.isSafeInteger(value) || value <= 0) {
+      setAccessMessage("Duration must be a positive integer.", "error");
+      return undefined;
+    }
+    return value;
+  }
+
+  async function tokenLifecycleAction(token, action) {
+    const duration = tokenDurationPrompt(action === "rotate" ? "Rotation" : "Extension");
+    if (duration === undefined) return;
+    try {
+      const payload = await api(
+        `/api/tokens/${encodeURIComponent(token.token_id)}/${action}`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ duration_seconds: duration }),
+        },
+      );
+      if (action === "rotate") showTokenSecret(payload.token, "Rotated");
+      setAccessMessage(`${action === "rotate" ? "Token rotated" : "Token extended"}.`);
+      await loadTokenAdmin();
+    } catch (err) {
+      setAccessMessage(err.message, "error");
+    }
+  }
+
+  async function tokenRevokeAction(token) {
+    if (!window.confirm(`Revoke token ${token.label || token.token_id}?`)) return;
+    try {
+      await api(`/api/tokens/${encodeURIComponent(token.token_id)}`, { method: "DELETE" });
+      setAccessMessage("Token revoked.");
+      await loadTokenAdmin();
+    } catch (err) {
+      setAccessMessage(err.message, "error");
+    }
+  }
+
+  async function setTokenSuspension(scopeType, scopeValue, suspended) {
+    try {
+      await api("/api/token-suspensions", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          scope_type: scopeType,
+          scope_value: scopeValue,
+          suspended,
+        }),
+      });
+      setAccessMessage(suspended ? "Scope suspended." : "Scope resumed.");
+      await loadTokenAdmin();
+    } catch (err) {
+      setAccessMessage(err.message, "error");
+    }
+  }
+
+  async function openAccessPanel() {
+    if (!state.accessAdmin && !(await loadTokenAdmin())) return;
+    clearTokenSecret();
+    setAccessMessage("");
+    openDialog(accessDialog, accessButton);
+  }
+
+  function closeAccessPanel() {
+    if (!accessDialog) return;
+    if (closeDialog(accessDialog)) return;
+    clearTokenSecret();
+    setAccessMessage("");
+    restoreDialogInvoker(accessDialog);
+  }
+
+  if (accessButton) accessButton.addEventListener("click", openAccessPanel);
+  if (accessClose) accessClose.addEventListener("click", closeAccessPanel);
+  if (accessDialog) accessDialog.addEventListener("close", () => {
+    clearTokenSecret();
+    setAccessMessage("");
+    restoreDialogInvoker(accessDialog);
+  });
+  if (accessDialog) accessDialog.addEventListener("click", (event) => {
+    if (event.target === accessDialog) closeAccessPanel();
+  });
+  if (accessBackdrop) accessBackdrop.addEventListener("click", closeAccessPanel);
+  if (addGrantButton) addGrantButton.addEventListener("click", () => addGrantRow());
+  if (refreshTokensButton) refreshTokensButton.addEventListener("click", async () => {
+    await loadTokenAdmin();
+    setAccessMessage("Access data refreshed.");
+  });
+  if (tokenPermanent) tokenPermanent.addEventListener("change", () => {
+    tokenDuration.disabled = tokenPermanent.checked;
+    if (tokenPermanent.checked) tokenDuration.value = "";
+  });
+  if (tokenForm) tokenForm.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    try {
+      const duration = tokenPermanent.checked ? null : Number(tokenDuration.value);
+      if (duration !== null && (!Number.isSafeInteger(duration) || duration <= 0)) {
+        throw new Error("Duration must be a positive integer or permanent.");
+      }
+      const label = tokenLabel.value.trim();
+      if (!label) throw new Error("A token label is required.");
+      const payload = await api("/api/tokens", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          label,
+          duration_seconds: duration,
+          grants: collectTokenGrants(),
+        }),
+      });
+      showTokenSecret(payload.token, "Created");
+      setAccessMessage("Token created. Copy the secret before closing this panel.");
+      resetTokenForm();
+      await loadTokenAdmin();
+    } catch (err) {
+      setAccessMessage(err.message, "error");
+    }
+  });
 
   // ---------------------------------------------------------------- clipboard
 
@@ -1813,7 +2337,7 @@
   }
 
   function applicationDialogOpen() {
-    return isDialogOpen(pv) || isDialogOpen(replacementDialog);
+    return isDialogOpen(pv) || isDialogOpen(replacementDialog) || isDialogOpen(accessDialog);
   }
 
   function dialogInvokerSelector(candidate) {
@@ -2218,6 +2742,13 @@
       state.showFullPath = overview.show_full_path !== false;
       state.maxArchiveFiles = overview.max_archive_files ?? null;
       logoutForm.hidden = !state.authEnabled;
+      if (!state.authEnabled) {
+        state.accessAdmin = false;
+        state.accessAdminLoaded = true;
+        if (accessButton) accessButton.hidden = true;
+      } else if (!state.accessAdminLoaded || isDialogOpen(accessDialog)) {
+        await loadTokenAdmin();
+      }
       state.zones = nextZones;
       state.groups = overview.groups || [];
       for (const zoneId of Object.keys(state.selectedByZone)) {
@@ -2629,7 +3160,11 @@
 
   function openDialog(dialog, invoker = document.activeElement) {
     rememberDialogInvoker(dialog, invoker);
-    const backdrop = dialog === pv ? previewBackdrop : replacementBackdrop;
+    const backdrop = dialog === pv
+      ? previewBackdrop
+      : dialog === replacementDialog
+        ? replacementBackdrop
+        : accessBackdrop;
     if (typeof dialog.showModal === "function") {
       dialog.classList.remove("dialog-fallback");
       if (backdrop) backdrop.hidden = true;
@@ -2644,7 +3179,11 @@
   }
 
   function closeDialog(dialog, returnValue = "") {
-    const backdrop = dialog === pv ? previewBackdrop : replacementBackdrop;
+    const backdrop = dialog === pv
+      ? previewBackdrop
+      : dialog === replacementDialog
+        ? replacementBackdrop
+        : accessBackdrop;
     if (dialog.classList.contains("dialog-fallback")) {
       dialog.classList.remove("dialog-fallback");
       dialog.removeAttribute("open");
@@ -3045,13 +3584,14 @@
   });
 
   document.addEventListener("keydown", (event) => {
-    const fallbackDialog = [pv, replacementDialog]
+    const fallbackDialog = [pv, replacementDialog, accessDialog]
       .find(dialog => dialog.classList.contains("dialog-fallback"));
     if (fallbackDialog) {
       if (event.key === "Escape") {
         event.preventDefault();
         if (fallbackDialog === pv) closePreview();
-        else closeReplacementPrompt(false);
+        else if (fallbackDialog === replacementDialog) closeReplacementPrompt(false);
+        else closeAccessPanel();
       } else if (event.key === "Tab") {
         trapFallbackDialog(event, fallbackDialog);
       }

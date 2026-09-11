@@ -57,10 +57,11 @@ proof that the daemon can see the file. Use `drop --zone ID FILE...` for a
 remote upload without sharing a directory path with the service.
 
 After an HTTP `401`, `drop` can prompt for a password or read
-`PASTEBERTH_PASSWORD`/`--password-stdin`. `pasteberth mcp` uses newline-delimited
+`PASTEBERTH_PASSWORD`/`--password-stdin`, or use a scoped bearer token from
+`PASTEBERTH_TOKEN`/`--token-stdin`. `pasteberth mcp` uses newline-delimited
 JSON-RPC on stdin/stdout and never prompts there; have its trusted launcher
-supply `PASTEBERTH_PASSWORD`. The MCP `drop` tool accepts local file paths or
-in-memory content and uploads through HTTP.
+supply `PASTEBERTH_TOKEN` or `PASTEBERTH_PASSWORD`. The MCP `drop` tool accepts
+local file paths or in-memory content and uploads through HTTP.
 
 `config.example.toml`, `deploy/pasteberth.service`, and
 `completions/pasteberth.bash` are reference files. `pasteberth completion`
@@ -84,7 +85,7 @@ poll reads the completed registry. No configuration edit or service restart
 is needed; the directory must still be readable, writable, and
 traversable and satisfy the rule's depth and subtree constraints.
 
-**Unreleased (runtime version still `2.1.21`):** zone and group overviews share
+**Unreleased (runtime version still `2.1.22`):** zone and group overviews share
 a background cooldown of `max(10 seconds, last full refresh duration)` from
 completion, including registry installation. Startup, foreground, and failed
 refresh attempts also set it. The next eligible poll can launch one job;
@@ -93,7 +94,7 @@ not every overview starts a scan. Mutations, directory resolution, and legacy
 without a duplicate refresh in the same action. Scanner caches are shared across rules
 within one pass only. Overview
 history and free-space checks remain synchronous and can block; there is no
-hard discovery or response deadline. These changes are not in the `2.1.21`
+hard discovery or response deadline. These changes are not in the `2.1.22`
 release.
 
 **Unreleased reads:** generic `/items` listings, GET/HEAD content on either

@@ -4,6 +4,20 @@ This file records user-visible changes to Pasteberth.
 
 ## [Unreleased]
 
+## [2.1.22] - 2026-09-11
+
+### Scoped Bearer Tokens
+
+- add a persistent SQLite bearer-token registry with hashed secrets, rotation,
+  revocation, expiration, suspensions, and zone, group, path, and global grants;
+- enforce `L`, `R`, and `W` permissions across the HTTP API while keeping token
+  lifecycle operations restricted to authenticated administrators;
+- add bearer-token support to the CLI, MCP client, configuration, and HTTP
+  client, including strict credential precedence and write-only response
+  redaction;
+- protect the token registry file and every ancestor directory against unsafe
+  permissions, symlinks, and non-regular paths.
+
 ### Generic Items And Content Identity
 
 - add canonical `/api/zones/{id}/items` routes for listing, upload, comments,
@@ -39,7 +53,7 @@ This file records user-visible changes to Pasteberth.
 
 Identity is stored metadata for cooperating managed bytes, not a read-time hash
 or protection against arbitrary external in-place writers. No whole-zone
-snapshot, SFTP deployment, server-side build, or release-version bump is added.
+snapshot, SFTP deployment, or server-side build is added.
 
 ### Dates And Discovery
 
@@ -85,7 +99,7 @@ Acquisition still enumerates names and reads journals, and filesystem calls can
 block. These changes promise neither O(1) reads nor a hard 100 ms response, do
 not protect against arbitrary external in-place writes, and add no thread pool
 or native Windows support guarantee. Existing cooperating CLI writers remain
-compatible. These changes are not released; the runtime version remains `2.1.21`.
+compatible. These changes are included in the `2.1.22` release.
 
 ## [2.1.21] - 2026-09-09
 

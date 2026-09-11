@@ -84,9 +84,9 @@ conditions that may be intentional but deserve review.
 ### Filesystem drop
 
 ```text
-pasteberth drop [--config PATH] [--server URL] [--insecure] [--password-stdin] \
+pasteberth drop [--config PATH] [--server URL] [--insecure] [--password-stdin | --token-stdin] \
   [--replace] ZONE_DIRECTORY SOURCE_FILE...
-pasteberth drop [--config PATH] [--server URL] [--insecure] [--password-stdin] \
+pasteberth drop [--config PATH] [--server URL] [--insecure] [--password-stdin | --token-stdin] \
   [--replace] --zone ID SOURCE_FILE...
 ```
 
@@ -134,7 +134,10 @@ Without `--replace`, an existing managed filename is refused. With
 `--replace`, only a coherent Pasteberth-managed pair may be replaced. A foreign
 file is never overwritten, even with `--replace`; `--replace` is not applicable
 to `register`. Authentication prompts for a password after a `401`;
-`PASTEBERTH_PASSWORD` and `--password-stdin` support non-interactive calls.
+`PASTEBERTH_PASSWORD` and `--password-stdin` support non-interactive password
+calls. `PASTEBERTH_TOKEN` or `--token-stdin` selects a bearer token instead;
+the two stdin modes cannot be combined, and `--password-stdin` rejects an
+ambient `PASTEBERTH_TOKEN` rather than silently selecting the wrong credential.
 
 `--password-stdin` takes precedence over `PASTEBERTH_PASSWORD`. Do not put a real
 password in a command history or a checked-in integration file. A protected
@@ -145,10 +148,29 @@ pasteberth drop --server https://pasteberth.example.internal/paste \
   --zone project-alpha --password-stdin report.pdf < /secure/path/password.txt
 ```
 
-Successful uploads print one formatted reference per source to stdout; errors
-go to stderr. Sources are processed independently, so a nonzero exit can follow
-successful deposits. Neither `drop` nor MCP accepts an arbitrary stdin content
-stream: use a source file, or MCP's in-memory content fields.
+For a scoped API credential, keep the secret out of the command line. The
+environment form is convenient for a controlled process; `--token-stdin` is
+useful for a protected secret file:
+
+```sh
+PASTEBERTH_TOKEN="$(cat /secure/path/token.txt)" \
+  pasteberth drop --server https://pasteberth.example.internal/paste \
+  --zone project-alpha report.pdf
+pasteberth drop --server https://pasteberth.example.internal/paste \
+  --zone project-alpha --token-stdin report.pdf < /secure/path/token.txt
+```
+
+Bearer `drop` always uses the HTTP upload path; it does not use local direct
+staging because the direct-drop routes accept sessions or loopback peers, not
+bearer tokens. Use the `--zone ID` form with a bearer token; the target-directory
+form requires session or loopback authentication. The token must have `W` on the target zone, and named
+replacement additionally needs token policy `allow_replace` plus `--replace`.
+
+Successful uploads print one formatted reference per source to stdout; a
+write-only bearer token prints `accepted` because its reference is intentionally
+hidden. Errors go to stderr. Sources are processed independently, so a nonzero
+exit can follow successful deposits. Neither `drop` nor MCP accepts an arbitrary
+stdin content stream: use a source file, or MCP's in-memory content fields.
 
 ### Filesystem register
 

@@ -17,6 +17,7 @@ from unittest import mock
 from PasteBerth.runtime import __version__
 from PasteBerth.runtime.platformfs import VolumeSpace
 from PasteBerth.runtime.storage import SpaceInfo
+from PasteBerth.runtime.tokens import PERMISSION_WRITE, SCOPE_ZONE, TokenGrant
 from tests.helpers import (
     build_multipart,
     json_of,
@@ -434,6 +435,49 @@ class TestConfigurationProxyParDefaut(Base):
                 self.assertEqual(json_of(body), {"ok": True})
 
 
+class TestDirectDropCredentials(Base):
+    auth = True
+    password = PASSWORD
+
+    def test_loopback_direct_drop_rejects_invalid_or_ambiguous_bearer(self):
+        _record, token = self.server.tokens.create(
+            "direct-drop-test",
+            [TokenGrant(SCOPE_ZONE, "default", PERMISSION_WRITE)],
+            duration_seconds=3600,
+        )
+        body = json.dumps({"directory": str(self.zones_dirs["default"])}).encode()
+        headers = {
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/json",
+        }
+        status, _, response = self.req(
+            "POST",
+            "/api/drop/resolve",
+            body=body,
+            headers=headers,
+            cookie=None,
+        )
+        self.assertEqual(status, 403, response)
+
+        status, _, response = self.req(
+            "POST",
+            "/api/drop/resolve",
+            body=body,
+            headers={**headers, "Authorization": "Bearer not-a-token"},
+            cookie=None,
+        )
+        self.assertEqual(status, 401, response)
+
+        status, _, response = self.req(
+            "POST",
+            "/api/drop/resolve",
+            body=body,
+            headers=headers,
+            cookie=self.cookie,
+        )
+        self.assertEqual(status, 401, response)
+
+
 class TestProxySpoofingParDefaut(Base):
     auth = True
     password = PASSWORD
@@ -523,6 +567,38 @@ class TestUrlPrefix(Base):
 
         status, _, _ = self.req("GET", "/paste/static/app.js")
         self.assertEqual(status, 200)
+
+    def test_redirection_et_logs_ne_contiennent_pas_un_token_de_query(self):
+        with self.assertLogs("pasteberth.http", level="INFO") as captured:
+            status, headers, _ = self.req(
+                "GET",
+                "/paste?token=pb_secret_value&accessToken=pb_access_value"
+                "&auth_token=pb_auth_value&bearerToken=pb_bearer_value"
+                "&next=%2Fapi%2Fhealth",
+            )
+        self.assertEqual(status, 303)
+        self.assertEqual(headers["location"], "/paste/?next=%2Fapi%2Fhealth")
+        logs = "\n".join(captured.output)
+        for secret in ("pb_secret_value", "pb_access_value", "pb_auth_value", "pb_bearer_value"):
+            self.assertNotIn(secret, logs)
+
+        with self.assertLogs("pasteberth.http", level="INFO") as captured:
+            status, headers, _ = self.req(
+                "GET",
+                "/paste?keep=1;next=%3Ftoken%3Dpb_nested_value",
+            )
+        self.assertEqual(status, 303)
+        self.assertEqual(headers["location"], "/paste/?keep=1")
+        self.assertNotIn("pb_nested_value", "\n".join(captured.output))
+
+        with self.assertLogs("pasteberth.http", level="INFO") as captured:
+            status, headers, _ = self.req(
+                "GET",
+                "/paste?keep=1&next=%253Ftoken%253Dpb_double_nested_value",
+            )
+        self.assertEqual(status, 303)
+        self.assertEqual(headers["location"], "/paste/?keep=1")
+        self.assertNotIn("pb_double_nested_value", "\n".join(captured.output))
 
     def test_upload_et_preview_url_sont_sous_prefixe(self):
         body, ctype = build_multipart(data=make_png(10, 5))

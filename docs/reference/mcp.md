@@ -9,21 +9,22 @@ pasteberth mcp [--config PATH] [--server URL] [--insecure]
 ```
 
 ```sh
-# Have the trusted launcher supply PASTEBERTH_PASSWORD through its environment.
+# Have the trusted launcher supply PASTEBERTH_TOKEN through its environment.
 pasteberth mcp --config /absolute/path/config.toml
 ```
 
-On Windows, set `PASTEBERTH_PASSWORD` in `cmd.exe` before invoking
-`PasteBerth\pasteberth.cmd`; in PowerShell use `$env:PASTEBERTH_PASSWORD =
-"your-password"`. The MCP process can read any regular local file readable by
+On Windows, set `PASTEBERTH_TOKEN` in `cmd.exe` before invoking
+`PasteBerth\pasteberth.cmd`; in PowerShell use `$env:PASTEBERTH_TOKEN =
+"your-token"`. The MCP process can read any regular local file readable by
 its account, so it should only be launched by a trusted agent.
 
 `mcp` serves newline-delimited JSON-RPC on standard input and standard output.
 The initial `drop` tool accepts a `zone` and one or more `items`; each item is
 either a local `path`, UTF-8 `content` plus `filename`, or `content_base64` plus
 `filename`. It calls the existing HTTP upload endpoint rather than accessing
-Pasteberth storage directly. `PASTEBERTH_PASSWORD` is used after a `401`; the
-adapter never prompts on stdin because that stream belongs to MCP. The adapter
+Pasteberth storage directly. `PASTEBERTH_TOKEN` is sent as a bearer credential.
+When it is absent, `PASTEBERTH_PASSWORD` is used after a `401`; the adapter
+never prompts on stdin because that stream belongs to MCP. The adapter
 supports modern `server/discover` and per-request metadata for protocol
 `2026-07-28`, and the legacy `initialize` handshake described below.
 
@@ -75,11 +76,17 @@ directly, register files, discover zones for the agent, or provide MCP tools
 for reading/deleting/transferring storage. Use the [HTTP API](api.md) or
 [CLI](cli.md) for the operations those interfaces implement.
 
+When `PASTEBERTH_TOKEN` is set, the token must have `W` on the target zone.
+The adapter sends the top-level `replace` request only when it is true; the
+token grant must independently allow named replacement. A bearer token cannot
+use the loopback direct-drop exception or administer other tokens.
+
 ## Results And Errors
 
 A successful `tools/call` returns MCP `content` with a text block containing
 JSON shaped as `{"zone":"default","items":[...],"errors":[]}`. Each successful
-item is the HTTP upload payload, including the returned `reference`.
+item is the HTTP upload payload, including the returned `reference` when the
+bearer token also has `R`; a write-only bearer result is `{"accepted":true}`.
 Per-item failures contain the zero-based `index` and a `message`. Some items
 can succeed even when others fail; `isError` is true if `errors` is nonempty.
 Do not blindly retry the whole call, particularly with `replace=true`.

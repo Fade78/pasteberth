@@ -44,6 +44,7 @@ from .storage import (
     portable_filename,
     valid_filename,
 )
+from .tokens import AccessSnapshot, normalize_scope_path
 
 log = logging.getLogger("pasteberth.service")
 
@@ -636,6 +637,23 @@ class PasteService:
         with self._registry_lock:
             return len(self._zone_cfg)
 
+    def access_snapshot(self) -> AccessSnapshot:
+        """Return the live zone/group identities used by token authorization."""
+        self._refresh_zone_collections(background=True)
+        with self._registry_lock:
+            destinations = dict(self._destinations)
+            groups = tuple(self._group_zone_ids.items())
+        return AccessSnapshot(
+            zone_paths={
+                zid: normalize_scope_path(str(destinations[zid].directory))
+                for zid in destinations
+            },
+            group_zone_ids={
+                name: tuple(zone_ids)
+                for name, zone_ids in groups
+            },
+        )
+
     def zone_for_directory(self, directory: str | Path) -> ZoneConfig:
         """Resolve a client path against the daemon's live zone registry."""
         try:
@@ -688,7 +706,12 @@ class PasteService:
             for name, zone_ids in groups
         ]
 
-    def overview(self, *, blocking: bool = True) -> dict:
+    def overview(
+        self,
+        *,
+        blocking: bool = True,
+        zone_ids: set[str] | None = None,
+    ) -> dict:
         self._refresh_zone_collections(background=True)
         with self._registry_lock:
             group_snapshot = tuple(self._group_zone_ids.items())
@@ -705,6 +728,7 @@ class PasteService:
                     self._zone_groups.get(zid, ()),
                 )
                 for zid, zone in self._zone_cfg.items()
+                if zone_ids is None or zid in zone_ids
             )
         zones = []
         for zid, zone, destination, zone_lock, groups in snapshot:
@@ -758,6 +782,14 @@ class PasteService:
                     "allow_zip_download": zone.allow_zip_download,
                 }
             )
+        if zone_ids is not None:
+            group_snapshot = tuple(
+                (
+                    name,
+                    tuple(zid for zid in group_zone_ids if zid in zone_ids),
+                )
+                for name, group_zone_ids in group_snapshot
+            )
         return {
             "auth_enabled": self.auth_enabled,
             "max_upload_bytes": self.cfg.max_upload_bytes,
@@ -772,6 +804,20 @@ class PasteService:
         """Return groups without reading storage destinations."""
         self._refresh_zone_collections(background=True)
         return self._group_overview_from_registry()
+
+    def access_catalog(self) -> dict[str, list[dict[str, object]]]:
+        """Return zone and group identities without reading file histories."""
+        self._refresh_zone_collections(background=True)
+        with self._registry_lock:
+            zones: list[dict[str, object]] = [
+                {"id": zid, "label": zone.label}
+                for zid, zone in self._zone_cfg.items()
+            ]
+            groups: list[dict[str, object]] = [
+                {"name": name, "zone_ids": list(zone_ids)}
+                for name, zone_ids in self._group_zone_ids.items()
+            ]
+        return {"zones": zones, "groups": groups}
 
     # --------------------------------------------------------------- upload
 

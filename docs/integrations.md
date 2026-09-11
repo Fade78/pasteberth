@@ -44,9 +44,11 @@ pasteberth drop --server https://pasteberth.example.internal \
 
 Adapt the URL, including any deployment prefix. `drop` prompts after an
 authentication challenge; `PASTEBERTH_PASSWORD` or `--password-stdin` supports
-non-interactive use. Inject secrets through the calling environment rather than
-checking them into scripts. Local CLI configuration can also impose client-side
-limits. The daemon still validates publication and applies its zone policy.
+non-interactive password use. A scoped bearer credential can be supplied with
+`PASTEBERTH_TOKEN` or `--token-stdin`. Inject secrets through the calling
+environment or protected stdin rather than checking them into scripts. Local
+CLI configuration can also impose client-side limits. The daemon still
+validates publication and applies its zone policy.
 
 Each successful source prints a reference. Multiple sources are independent,
 and the command exits nonzero if any fail. Existing managed names require
@@ -94,8 +96,9 @@ executable and argument list, adapting both absolute paths:
 This is a host-neutral invocation, not an OpenCode configuration schema. Use
 the installed host's documented local MCP configuration syntax. If needed,
 add `--server https://pasteberth.example.internal` to select the service URL.
-Supply `PASTEBERTH_PASSWORD` in the adapter's environment when authentication
-is enabled. The adapter never prompts on stdin because stdin/stdout carry
+Supply `PASTEBERTH_TOKEN` in the adapter's environment when using a scoped
+credential, or `PASTEBERTH_PASSWORD` when using a session. The adapter never
+prompts on stdin because stdin/stdout carry
 newline-delimited JSON-RPC.
 
 Example arguments for the `drop` tool, with three alternative source forms:
@@ -129,9 +132,10 @@ and [agent-output recipe](recipes/agent-output.md).
 
 ## HTTP Clients and References
 
-Use the [API reference](reference/api.md) for session login, same-origin headers,
-multipart publication, overview reads, downloads, comments, archives, and
-transfers. Preserve the session cookie and send a matching `Origin` or
+Use the [API reference](reference/api.md) for session login, bearer grants,
+same-origin headers, multipart publication, overview reads, downloads,
+comments, archives, and transfers. Preserve the session cookie, or send a
+bearer token without a cookie, and send a matching `Origin` or
 `Referer` on unsafe requests; non-browser requests without either header are
 also accepted under the documented API checks. There is no CORS interface for
 arbitrary cross-origin browser applications.

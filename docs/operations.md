@@ -109,6 +109,29 @@ Sessions are in memory and are not backed up. Keep the password file and TLS
 private keys private, outside the code bundle. Back them up using a protected
 backup destination if recovery requires the same credentials.
 
+### Bearer tokens
+
+Bearer tokens are persistent capabilities stored in the configured SQLite
+`token_file`. Create and manage them from the authenticated Web UI or the
+token endpoints in the [HTTP API](reference/api.md#bearer-tokens). The secret
+is displayed only after creation or rotation; it cannot be recovered from the
+registry. A token survives daemon restarts and global-password rotation, so
+revoke it explicitly when its calling process is retired or compromised.
+
+Use the admin panel to inspect whether grants are active, missing, or
+suspended. Group and global grants follow the current zone registry; a group
+rename detaches grants using the old name. A zone or group suspension also
+blocks direct zone grants matching that scope. Keep the token registry in the
+same protected backup set as the configuration and password file. Restoring it
+restores token validity, revocations, and suspensions, but never recovers a
+plaintext secret.
+
+For scripts, inject `PASTEBERTH_TOKEN` through the process environment or use
+`--token-stdin`; do not place a token in a command argument, URL, cookie, log,
+or checked-in configuration. Use the smallest grant set possible. `W` does
+not imply `R`, and named replacement requires both the token's
+`allow_replace` policy and an explicit replacement request.
+
 ## Backup, Upgrade, and Recovery
 
 Stop the service and all CLI or external writers before a consistent
@@ -130,7 +153,7 @@ restart the service.
 
 Record the deployed version and configuration path. Preserve all configured
 zone directories, matching sidecars, existing transaction artifacts, the TOML
-configuration, password file, and any locally managed TLS credentials. Code is
+configuration, password file, token registry, and any locally managed TLS credentials. Code is
 replaceable from a release; zone data and deployment secrets are not part of
 the code-only bundle. Back up foreign files separately if they matter, without
 relabeling them as Pasteberth-owned content.

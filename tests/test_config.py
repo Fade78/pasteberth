@@ -214,6 +214,25 @@ class TestParsing(unittest.TestCase):
         self.assertEqual(cfg.auth.password_file, password_file)
         self.assertEqual(cfg.password_file(), password_file)
 
+    def test_fichiers_auth_par_defaut_suivent_la_cible_d_une_config_symlinkee(self):
+        external = self.tmp / "external"
+        external.mkdir()
+        real_config = write_config(
+            external,
+            auth_enabled=True,
+            password="config-link-password",
+        )
+        scratch_root = Path(__file__).resolve().parents[1] / "work" / "tmp"
+        with tempfile.TemporaryDirectory(dir=scratch_root) as raw:
+            linked_config = Path(raw) / "config.toml"
+            try:
+                linked_config.symlink_to(real_config)
+            except (OSError, NotImplementedError):
+                self.skipTest("symlinks unavailable")
+            cfg = load_config(linked_config)
+            self.assertEqual(cfg.password_file(), external / "passwd")
+            self.assertEqual(cfg.token_file(), external / "tokens.sqlite3")
+
     def test_max_sessions_configurable_ou_sans_limite(self):
         cfg = make_cfg(self.tmp, max_sessions=12)
         self.assertEqual(cfg.auth.max_sessions, 12)

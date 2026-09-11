@@ -9,9 +9,10 @@
 The Web UI checks this limit before submitting a ZIP selection; the server
 remains authoritative. Archive capacity failures still return HTTP 503.
 
-The browser API is same-origin and uses the session cookie. There is no CORS
-API or bearer-token API. Non-browser clients can use HTTP login and cookies.
-The supplied Web UI and the bundled HTTP client are implementation examples.
+The browser API is same-origin and uses the session cookie. Non-browser clients
+can use HTTP login and cookies, or an operator-issued bearer token with the
+scope documented below. There is no CORS API. The supplied Web UI and bundled
+HTTP client are implementation examples.
 
 **Unreleased, after 2.1.21:** new clients should use the generic `items` routes
 below, multipart `file`, and `schema=items` on aggregate routes. Content identity
@@ -30,27 +31,92 @@ and previews. The prefix is a configured public path, not part of the browser
 | Method | Path | Authentication | Purpose |
 |---|---|---|---|
 | `GET` | `/api/health` | public | Liveness probe. |
-| `GET` | `/api/zones?schema=items` | session | Registry/group snapshot with separately read per-zone histories, counts, and busy status. |
-| `GET` | `/api/groups` | session | Group definitions and matching zone IDs. |
+| `GET` | `/api/zones?schema=items` | session or bearer `L` | Registry/group snapshot with separately read per-zone histories, counts, and busy status. |
+| `GET` | `/api/groups` | session or bearer `L` | Group definitions and matching zone IDs. |
 | `POST` | `/api/drop/resolve` | loopback or session | Resolve a target directory to a configured zone ID. |
-| `GET` | `/api/zones/{id}/items` | session | Complete zone history, newest first, from a published zone without discovery refresh. |
-| `POST` | `/api/zones/{id}/items` | session | Upload multipart content. |
+| `GET` | `/api/zones/{id}/items` | session or bearer `L` | Complete zone history, newest first, from a published zone without discovery refresh. |
+| `POST` | `/api/zones/{id}/items` | session or bearer `W` | Upload multipart content. |
 | `POST` | `/api/zones/{id}/items/regularize` | loopback or session | Regularize one CLI direct-drop staging file. |
-| `PATCH` | `/api/zones/{id}/items/{filename}/comment` | session | Replace the item's short Unicode comment. |
-| `DELETE` | `/api/zones/{id}/items/{filename}` | session | Delete one managed item. |
-| `POST` | `/api/zones/{id}/items/batch-delete` | session | Delete several managed items. |
-| `POST` | `/api/zones/{id}/items/archive` | session | Stream selected managed items as a ZIP. |
-| `POST` | `/api/transfers?schema=items` | session | Copy or move managed items between two configured zones. |
-| `GET` | `/api/zones/{id}/items/{filename}/content` | session | Preview or download managed payload bytes. |
-| `HEAD` | `/api/zones/{id}/items/{filename}/content` | session | Same acquisition, conditional checks, and representation headers as GET, without a body. |
+| `PATCH` | `/api/zones/{id}/items/{filename}/comment` | session or bearer `W` | Replace the item's short Unicode comment. |
+| `DELETE` | `/api/zones/{id}/items/{filename}` | session or bearer `W` | Delete one managed item. |
+| `POST` | `/api/zones/{id}/items/batch-delete` | session or bearer `W` | Delete several managed items. |
+| `POST` | `/api/zones/{id}/items/archive` | session or bearer `R` | Stream selected managed items as a ZIP. |
+| `POST` | `/api/transfers?schema=items` | session or scoped bearer | Copy or move managed items between two configured zones. |
+| `GET` | `/api/zones/{id}/items/{filename}/content` | session or bearer `R` | Preview or download managed payload bytes. |
+| `HEAD` | `/api/zones/{id}/items/{filename}/content` | session or bearer `R` | Same acquisition, conditional checks, and representation headers as GET, without a body. |
 | `GET` | `/login` | public | Login page when authentication is enabled. |
 | `POST` | `/login` | public | Create a session from a password form, JSON body, or multipart form. |
 | `POST` | `/logout` | session | Revoke the current session. |
+| `GET` | `/api/zones/{id}/access` | session or bearer | Report access to one known zone without exposing a global listing. |
+| `GET` | `/api/tokens` | session admin | List token metadata, grant resolution, suspensions, and scope catalog. |
+| `POST` | `/api/tokens` | session admin | Create a token; the plaintext secret is returned once. |
+| `POST` | `/api/tokens/{id}/extend` | session admin | Replace the expiration while keeping the secret. |
+| `POST` | `/api/tokens/{id}/rotate` | session admin | Replace the secret and expiration; the new secret is returned once. |
+| `DELETE` | `/api/tokens/{id}` | session admin | Revoke one token. |
+| `GET` | `/api/token-suspensions` | session admin | List global, zone, and group suspensions. |
+| `POST` | `/api/token-suspensions` | session admin | Set or clear one token suspension. |
 
 The table describes an authentication-enabled deployment. If authentication
 is explicitly disabled, session checks accept requests without a cookie.
 "Public" does not bypass Host checks. Health returns `{"ok":true}` and is a
 liveness check, not proof that every zone is writable or recovery has succeeded.
+
+### Bearer tokens
+
+Tokens are created by an authenticated administrator in the Web UI or with the
+admin endpoints. Send the returned credential only in an HTTP header:
+
+```sh
+export PASTEBERTH_TOKEN='pb_<selector>.<secret>'
+curl --fail-with-body --silent --show-error \
+  --header "Authorization: Bearer $PASTEBERTH_TOKEN" \
+  https://pasteberth.example.internal/paste/api/zones/default/items
+unset PASTEBERTH_TOKEN
+```
+
+The registry stores only a hash of the secret. The secret is returned once on
+creation or rotation; it is not recoverable. A bearer request must not also
+send the `pb_session` cookie. A token cannot access token administration or
+the direct-drop `resolve`/`regularize` routes.
+
+Each token has one or more grants. A grant targets a zone ID, current group
+name, normalized absolute `PATH`, or `global`, and carries any combination of
+`L`, `R`, and `W`. `L` lists metadata, `R` reads bytes and archives, and `W`
+uploads, explicitly replaces named content, deletes, and edits comments.
+Copy requires `R` on the source and `W` on the target; move requires `R+W` on
+the source and `W` on the target. A grant with no rights can use
+`GET /api/zones/{id}/access` to test whether its target exists, but cannot list
+or read it.
+
+Scopes are resolved against the current published zone registry. Missing zone
+IDs, renamed groups, missing or ambiguous paths, expired/revoked tokens, and
+suspended scopes fail closed. An out-of-scope zone is intentionally returned
+as `404 unknown_zone`, not distinguished from an unknown zone. A token that
+does cover a zone but lacks the requested permission receives `403 forbidden`.
+
+Create a token with exactly this JSON shape; `duration_seconds: null` is
+permanent and an explicit duration is measured from creation time:
+
+```json
+{
+  "label": "CI upload",
+  "duration_seconds": 2592000,
+  "grants": [
+    {
+      "scope_type": "group",
+      "scope_value": "builds",
+      "permissions": ["L", "R", "W"],
+      "allow_replace": false
+    }
+  ]
+}
+```
+
+`allow_replace` is policy, not a replacement request. A client must still send
+both `preserve_name=1` and `replace=1` for a named replacement. The admin
+listing reports `active`, `expired`, `revoked`, `suspended`, or `missing` grant
+states and the resolved zone IDs. The registry is external mutable state and
+must be included in protected backups.
 
 `/api/zones/{id}/items` returns `{"zone":"id","items":[...]}` and covers images,
 UTF-8 text, and opaque binary content such as PDFs. Each overview zone reports
@@ -152,12 +218,15 @@ The legacy route also preserves its sole-unknown-field fallback, only when that
 is the entire form; new clients must use a named alias. Control fields must not
 be file parts. `preserve_name=1` retains a valid dropped filename; `replace=1`
 together with `preserve_name=1` explicitly authorizes
-replacing a coherent managed pair. Clients may send `creation_method` with one
+replacing a coherent managed pair. For bearer uploads, the token grant must
+also have `allow_replace = true`. Clients may send `creation_method` with one
 of `web_mouse_drop`, `web_paste`, `filesystem_drop`, or
 `filesystem_register`; browser requests default to `web_paste`, and filesystem
 clients should send `filesystem_drop`. This field records the client's declared
 path through the upload pipeline; it does not authenticate the source and must
-not be treated as a security boundary.
+not be treated as a security boundary. A bearer token with `W` but without `R`
+receives `{"accepted":true}` instead of a reference or duplicate/replacement
+metadata; clients must not infer the stored filename from that response.
 
 #### Login and write example
 
@@ -223,8 +292,8 @@ The main application error codes are:
 | Status | Codes | Meaning |
 |---:|---|---|
 | `400` | `invalid_request`, `empty_upload`, `invalid_filename`, `invalid_image`, `invalid_comment` | The request or content is invalid. |
-| `401` | `unauthorized` | A protected route has no valid session. |
-| `403` | `forbidden_host`, `forbidden_origin`, `zip_disabled` | The host/origin is not allowed or ZIP is disabled for the zone. |
+| `401` | `unauthorized` | A protected route has no valid session or bearer credential; the response includes `WWW-Authenticate`. |
+| `403` | `forbidden_host`, `forbidden_origin`, `forbidden`, `admin_required`, `zip_disabled` | The host/origin is not allowed, the token lacks a required permission, or ZIP is disabled for the zone. |
 | `404` | `unknown_zone`, `unknown_item`, `unknown_image` (legacy), `not_found` | The requested resource does not exist. |
 | `405` | `method_not_allowed` | The HTTP method is not supported for the requested resource. |
 | `409` | `storage_conflict` | A foreign file or another storage conflict prevents the operation. |
@@ -235,7 +304,7 @@ The main application error codes are:
 | `428` | `replacement_required` | Explicit replacement was required but not requested. |
 | `429` | `rate_limited` | Login attempts are temporarily throttled. |
 | `500` | `destination_error`, `internal` | The server could not complete a storage or internal operation. |
-| `503` | `retention_error`, `server_busy` | Retention failed after publication, or request admission capacity is exhausted; **Unreleased:** also ZIP capacity. |
+| `503` | `retention_error`, `server_busy`, `token_store_error` | Retention failed after publication, request admission/archive capacity is exhausted, or the token registry is unavailable. |
 | `507` | `storage_low` | The configured free-space reserve would be exceeded. |
 
 This is the application error shape, not a guarantee for proxy failures,

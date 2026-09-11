@@ -96,6 +96,7 @@ enabled = true                    # false only with the explicit opt-in above
 session_ttl_hours = 72            # server-side session lifetime
 max_sessions = 4096               # use "unlimited" to disable FIFO eviction
 # password_file = "/absolute/path/to/passwd"  # regular 0600 file
+# token_file = "/absolute/path/to/tokens.sqlite3"  # private SQLite registry
 
 # --------------------------------------------------------------- default zone
 # id                : logical API/UI identifier (first [a-z0-9], then [a-z0-9_-], max 64)

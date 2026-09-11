@@ -16,6 +16,7 @@ from unittest import mock
 from PasteBerth.runtime import __version__
 from PasteBerth.runtime.auth import load_password_hash, verify_password
 from PasteBerth.runtime.client import ClientError, PasteberthClient
+from PasteBerth.runtime.tokens import PERMISSION_WRITE, SCOPE_ZONE, TokenGrant
 from PasteBerth.runtime.cli import (
     _audit_tls,
     _drop_server_url,
@@ -732,6 +733,41 @@ class TestConfigurationDepot(unittest.TestCase):
         proc = run_cli(["audit", "--config", str(cfg)])
         self.assertEqual(proc.returncode, 2)
         self.assertIn("missing or invalid scrypt hash", proc.stdout)
+
+    def test_audit_refuse_registre_tokens_trop_lisible(self):
+        if platform_fs().backend_name == "windows":
+            self.skipTest("chmod POSIX non représentatif des ACL Windows")
+        cfg = write_config(
+            self.tmp,
+            auth_enabled=True,
+            password="token-audit-password",
+        )
+        token_file = self.tmp / "tokens.sqlite3"
+        token_file.write_bytes(b"not a real registry")
+        token_file.chmod(0o644)
+
+        proc = run_cli(["audit", "--config", str(cfg)])
+
+        self.assertEqual(proc.returncode, 2)
+        self.assertIn("token registry", proc.stdout)
+        self.assertIn("permissions too open", proc.stdout)
+
+    def test_audit_refuse_parent_registre_tokens_non_repertoire(self):
+        cfg = write_config(
+            self.tmp,
+            auth_enabled=True,
+            password="token-parent-audit-password",
+            token_file=str(self.tmp / "registry-file" / "tokens.sqlite3"),
+        )
+        parent = self.tmp / "registry-file"
+        parent.write_bytes(b"not a directory")
+        parent.chmod(0o600)
+
+        proc = run_cli(["audit", "--config", str(cfg)])
+
+        self.assertEqual(proc.returncode, 2)
+        self.assertIn("token registry directory", proc.stdout)
+        self.assertIn("regular directory required", proc.stdout)
 
     def test_audit_zones_partageant_un_repertoire_echoue(self):
         shared = self.tmp / "shared"
@@ -1602,6 +1638,91 @@ class TestServerBackedDropAuth(unittest.TestCase):
         self.assertEqual(proc.returncode, 0, proc.stderr)
         self.assertIn("@", proc.stdout)
         self.assertTrue((self.tmp / "default-images" / source.name).exists())
+
+    def test_drop_bearer_utilise_upload_http_et_exige_un_id_de_zone(self):
+        _record, token = self.server.tokens.create(
+            "cli",
+            [TokenGrant(SCOPE_ZONE, "default", PERMISSION_WRITE)],
+            duration_seconds=3600,
+        )
+        source = self.tmp / "bearer.txt"
+        source.write_text("bearer", encoding="utf-8")
+
+        uploaded = run_cli(
+            [
+                "drop",
+                "--config",
+                str(self.cfg),
+                "--server",
+                f"http://127.0.0.1:{self.server.port}",
+                "--zone",
+                "default",
+                str(source),
+            ],
+            env={"PASTEBERTH_TOKEN": token},
+        )
+
+        self.assertEqual(uploaded.returncode, 0, uploaded.stderr)
+        self.assertEqual((self.tmp / "default-images" / source.name).read_text(), "bearer")
+
+        conflicting = run_cli(
+            [
+                "drop",
+                "--config",
+                str(self.cfg),
+                "--server",
+                f"http://127.0.0.1:{self.server.port}",
+                "--zone",
+                "default",
+                "--password-stdin",
+                str(source),
+            ],
+            input_text="drop-password\n",
+            env={"PASTEBERTH_TOKEN": token},
+        )
+
+        self.assertEqual(conflicting.returncode, 2)
+        self.assertIn("cannot be combined", conflicting.stderr)
+
+        rejected = run_cli(
+            [
+                "drop",
+                "--config",
+                str(self.cfg),
+                "--server",
+                f"http://127.0.0.1:{self.server.port}",
+                "--token-stdin",
+                str(self.tmp / "default-images"),
+                str(source),
+            ],
+            input_text=token + "\n",
+        )
+
+        self.assertEqual(rejected.returncode, 2)
+        self.assertIn("requires --zone", rejected.stderr)
+
+    def test_empty_token_stdin_does_not_fall_back_to_direct_or_password_auth(self):
+        source = self.tmp / "empty-token.txt"
+        source.write_text("must not publish", encoding="utf-8")
+
+        proc = run_cli(
+            [
+                "drop",
+                "--config",
+                str(self.cfg),
+                "--server",
+                f"http://127.0.0.1:{self.server.port}",
+                "--zone",
+                "default",
+                "--token-stdin",
+                str(source),
+            ],
+            input_text="\n",
+        )
+
+        self.assertEqual(proc.returncode, 2)
+        self.assertIn("empty bearer token", proc.stderr)
+        self.assertFalse((self.tmp / "default-images" / source.name).exists())
 
 
 if __name__ == "__main__":

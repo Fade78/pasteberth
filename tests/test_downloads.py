@@ -15,6 +15,7 @@ import zipfile
 
 from PasteBerth.runtime.config import load_config
 from PasteBerth.runtime.service import PasteService, ServiceError
+from PasteBerth.runtime.tokens import PERMISSION_ALL
 from PasteBerth.runtime.webapp import ClientAbort, make_handler
 from tests.helpers import LiveServer, build_multipart, request
 from tests.helpers import write_config
@@ -294,6 +295,7 @@ class TestDownloadHandler(DownloadFixture):
         handler._request_timer = None
         handler.connection = mock.Mock()
         handler.connection.fileno.return_value = 10
+        handler._zone_permissions = lambda _zid, _required: (PERMISSION_ALL, True)
         handler.wfile = io.BytesIO()
         handler.send_response = mock.Mock()
         handler.send_header = mock.Mock()

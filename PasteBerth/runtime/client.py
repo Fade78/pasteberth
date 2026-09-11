@@ -35,12 +35,19 @@ class ClientResponse:
 class PasteberthClient:
     """Minimal client for login, uploads, and zone resolution."""
 
-    def __init__(self, base_url: str, *, timeout: float = 60.0, insecure: bool = False):
+    def __init__(
+        self,
+        base_url: str,
+        *,
+        timeout: float = 60.0,
+        insecure: bool = False,
+        bearer_token: str | None = None,
+    ):
         try:
             parsed = urllib.parse.urlsplit(base_url)
             port = parsed.port
         except ValueError as exc:
-            raise ClientError(f"invalid server URL: {base_url!r}") from exc
+            raise ClientError("invalid server URL") from exc
         if parsed.scheme not in {"http", "https"} or not parsed.hostname:
             raise ClientError("server URL must use http:// or https:// and include a host")
         if parsed.username is not None or parsed.password is not None:
@@ -52,6 +59,14 @@ class PasteberthClient:
         self.port = port
         self.base_path = parsed.path.rstrip("/")
         self.timeout = timeout if timeout and timeout > 0 else 60.0
+        if bearer_token is not None and (
+            not isinstance(bearer_token, str)
+            or not bearer_token
+            or any(ord(char) > 0xFF for char in bearer_token)
+            or any(ord(char) < 0x20 or ord(char) == 0x7F for char in bearer_token)
+        ):
+            raise ClientError("bearer token must be a non-empty header-safe string")
+        self.bearer_token = bearer_token
         self._tls_context = (
             ssl._create_unverified_context() if insecure and self.scheme == "https" else None
         )
@@ -87,6 +102,10 @@ class PasteberthClient:
         }
         if content_type:
             headers["Content-Type"] = content_type
+        if self.bearer_token:
+            if cookie:
+                raise ClientError("session cookie and bearer token cannot be combined")
+            headers["Authorization"] = f"Bearer {self.bearer_token}"
         if cookie:
             headers["Cookie"] = cookie
         connection = self._connection()
@@ -110,6 +129,8 @@ class PasteberthClient:
             connection.close()
 
     def login(self, password: str) -> str:
+        if self.bearer_token:
+            raise ClientError("bearer clients do not use password sessions")
         body = urllib.parse.urlencode({"password": password}).encode("utf-8")
         response = self.request(
             "POST",

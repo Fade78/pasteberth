@@ -11,6 +11,7 @@ import unittest
 from pathlib import Path
 
 from PasteBerth.runtime.mcp import McpServer, run_stdio
+from PasteBerth.runtime.tokens import PERMISSION_WRITE, SCOPE_ZONE, TokenGrant
 from tests.helpers import LiveServer, REPO_ROOT, write_config
 
 
@@ -271,7 +272,7 @@ class TestMcpDrop(unittest.TestCase):
 
     def test_authenticated_drop_uses_environment_password(self):
         auth_tmp = self.tmp / "auth"
-        auth_tmp.mkdir()
+        auth_tmp.mkdir(mode=0o700)
         cfg = write_config(auth_tmp, auth_enabled=True, password="mcp-password")
         server = LiveServer(cfg)
         self.addCleanup(server.stop)
@@ -303,5 +304,47 @@ class TestMcpDrop(unittest.TestCase):
         self.assertFalse(response["result"]["isError"])
         self.assertEqual(
             (auth_tmp / "default-images" / "secure.txt").read_text(),
+            "secret",
+        )
+
+    def test_authenticated_drop_accepts_write_only_bearer_response(self):
+        auth_tmp = self.tmp / "bearer-auth"
+        auth_tmp.mkdir(mode=0o700)
+        cfg = write_config(auth_tmp, auth_enabled=True, password="unused-password")
+        server = LiveServer(cfg)
+        self.addCleanup(server.stop)
+        _record, token = server.tokens.create(
+            "mcp",
+            [TokenGrant(SCOPE_ZONE, "default", PERMISSION_WRITE)],
+            duration_seconds=3600,
+        )
+
+        proc = _run_mcp(
+            cfg,
+            server.port,
+            [
+                {
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "method": "tools/call",
+                    "params": {
+                        "name": "drop",
+                        "arguments": {
+                            "zone": "default",
+                            "items": [{"filename": "bearer.txt", "content": "secret"}],
+                        },
+                    },
+                }
+            ],
+            env={"PASTEBERTH_TOKEN": token},
+        )
+
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        response = json.loads(proc.stdout)
+        result = json.loads(response["result"]["content"][0]["text"])
+        self.assertFalse(response["result"]["isError"])
+        self.assertEqual(result["items"], [{"accepted": True}])
+        self.assertEqual(
+            (auth_tmp / "default-images" / "bearer.txt").read_text(),
             "secret",
         )

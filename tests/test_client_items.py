@@ -7,11 +7,32 @@ import urllib.parse
 from pathlib import Path
 from unittest import mock
 
-from PasteBerth.runtime.client import ClientResponse, PasteberthClient, api_error
+from PasteBerth.runtime.client import ClientError, ClientResponse, PasteberthClient, api_error
 from tests.helpers import LiveServer, make_png, request, write_config
 
 
 class TestItemTransport(unittest.TestCase):
+    def test_bearer_transport_sets_header_and_rejects_cookie(self):
+        client = PasteberthClient("https://example.test/paste", bearer_token="pb_secret")
+        with mock.patch("PasteBerth.runtime.client.http.client.HTTPSConnection") as connect:
+            connection = connect.return_value
+            raw_response = connection.getresponse.return_value
+            raw_response.status = 200
+            raw_response.read.return_value = b'{"ok":true}'
+            raw_response.getheaders.return_value = []
+            self.assertEqual(client.request("GET", "/api/health").json(), {"ok": True})
+            self.assertEqual(
+                connection.request.call_args.kwargs["headers"]["Authorization"],
+                "Bearer pb_secret",
+            )
+        with self.assertRaisesRegex(ClientError, "cannot be combined"):
+            client.request("GET", "/api/health", cookie="pb_session=test")
+        with self.assertRaisesRegex(ClientError, "header-safe"):
+            PasteberthClient("https://example.test", bearer_token="pb_\u2603")
+        with self.assertRaises(ClientError) as invalid_url:
+            PasteberthClient("https://user:secret@example.test:not-a-port")
+        self.assertNotIn("secret", str(invalid_url.exception))
+
     def test_upload_uses_file_field_and_encoded_item_route(self):
         client = PasteberthClient("https://example.test/paste")
         response = ClientResponse(404, {}, b'{"error":{"code":"unknown_item","message":"missing"}}')

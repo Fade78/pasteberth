@@ -93,7 +93,9 @@ pasteberth drop --server https://pasteberth.example.internal \
 
 Adapt the URL and zone ID. The file is local to the CLI process; the zone is
 on the server. Use `PASTEBERTH_PASSWORD` or `--password-stdin` for unattended
-authentication. Existing managed names require explicit `--replace`.
+password authentication, or `PASTEBERTH_TOKEN` / `--token-stdin` for a scoped
+bearer credential. Existing managed names require explicit `--replace`, and a
+bearer grant must also allow named replacement.
 
 Registration uses local validation, not the running daemon's retention or
 per-zone free-space policy. See [which interface to use](docs/integrations.md),
@@ -131,11 +133,11 @@ Start with [project zones](docs/recipes/project-zones.md), or follow
 
 ## Quick Start
 
-The documented runtime is **2.1.21**, officially supported on **Linux** with
+The documented runtime is **2.1.22**, officially supported on **Linux** with
 **Python 3.11+** and a supported local filesystem. It has no third-party Python
 runtime dependency.
 
-Changes labelled **Unreleased** describe the working tree, not the `2.1.21`
+Changes labelled **Unreleased** describe the working tree, not the `2.1.22`
 release. They include generic item routes and conditional downloads, streamed
 downloads, archive budgets, discovery
 optimizations, and a date alongside the time for items older than 24 elapsed
@@ -150,7 +152,7 @@ memory adapter, not production authentication or storage.
 For a first local runtime trial:
 
 ```sh
-git clone --branch v2.1.21 --depth 1 https://github.com/Fade78/pasteberth.git
+git clone --branch v2.1.22 --depth 1 https://github.com/Fade78/pasteberth.git
 cd pasteberth
 ./PasteBerth/pasteberth
 ```
@@ -169,14 +171,14 @@ directory is independent of the documentation and development tooling.
 
 ## Boundaries And Support
 
-- **Trusted participants:** one shared service password, not individual Web accounts. Groups are views, not per-zone ACLs.
+- **Trusted participants:** one shared service password plus optional scoped bearer tokens; there are no individual Web accounts. Groups are views, not per-zone ACLs.
 - **References are paths:** a copied reference is not a public URL. Its consumer must see the server-side path and have filesystem access.
 - **Explicit publication:** MCP currently exposes only `drop`, not zone exploration or artifact retrieval.
 - **Storage coordination:** managed operations coordinate cooperating Pasteberth processes, not arbitrary external editors or writers. Multi-file operations can partially succeed.
 - **Retention, not archiving:** history covers currently managed files; a stable filename is not versioning or permanent retention.
 - **Clipboard limits:** supported content can be copied; normal HTML copying is sanitized, but explicit raw-HTML copying and downloads preserve original content.
 
-| Area | 2.1.21 support |
+| Area | 2.1.22 support |
 |---|---|
 | Server | Linux, Python 3.11 or newer |
 | Storage | Local filesystem with required backend capabilities |

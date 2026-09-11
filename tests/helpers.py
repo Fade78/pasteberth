@@ -13,6 +13,7 @@ from http.client import HTTPConnection
 from pathlib import Path
 
 from PasteBerth.runtime.auth import LoginRateLimiter, SessionStore, hash_password, save_password_hash
+from PasteBerth.runtime.tokens import TokenStore
 from PasteBerth.runtime.config import load_config, prepare_directories
 from PasteBerth.runtime.server import PasteberthServer
 from PasteBerth.runtime.service import PasteService
@@ -162,6 +163,7 @@ def write_config(
     tls_certificate: str | None = None,
     tls_private_key: str | None = None,
     password_file: str | None = None,
+    token_file: str | None = None,
     min_free_percent: float | None = None,
     limits: dict[str, object] | None = None,
     extra: str = "",
@@ -245,6 +247,8 @@ def write_config(
         lines.append(f"max_sessions = {rendered_sessions}")
     if password_file is not None:
         lines.append(f"password_file = {json.dumps(password_file)}")
+    if token_file is not None:
+        lines.append(f"token_file = {json.dumps(token_file)}")
     lines.append("")
     for zone in zones:
         lines.append("[[zones]]")
@@ -313,6 +317,7 @@ class LiveServer:
         self.cfg = load_config(cfg_path)
         prepare_directories(self.cfg)
         self.service = PasteService(self.cfg)
+        self.tokens = TokenStore(self.cfg.token_file()) if self.cfg.auth.enabled else None
         self.sessions = SessionStore(
             self.cfg.auth.session_ttl_hours * 3600,
             password_file=self.cfg.password_file() if self.cfg.auth.enabled else None,
@@ -324,7 +329,13 @@ class LiveServer:
             max_delay=self.cfg.limits.max_login_delay_seconds,
             forget_after=self.cfg.limits.login_forget_after_seconds,
         )
-        handler = make_handler(self.cfg, self.service, self.sessions, self.limiter)
+        handler = make_handler(
+            self.cfg,
+            self.service,
+            self.sessions,
+            self.limiter,
+            self.tokens,
+        )
         self.httpd = PasteberthServer(("127.0.0.1", 0), handler, limits=self.cfg.limits)
         self.port = self.httpd.server_address[1]
         self.thread = threading.Thread(target=self.httpd.serve_forever, daemon=True)
@@ -346,6 +357,7 @@ class LiveServer:
         fresh.cfg = _lc(self.cfg.config_path)
         prepare_directories(fresh.cfg)
         fresh.service = PasteService(fresh.cfg)
+        fresh.tokens = TokenStore(fresh.cfg.token_file()) if fresh.cfg.auth.enabled else None
         fresh.sessions = _SS(
             fresh.cfg.auth.session_ttl_hours * 3600,
             password_file=fresh.cfg.password_file() if fresh.cfg.auth.enabled else None,
@@ -357,7 +369,13 @@ class LiveServer:
             max_delay=fresh.cfg.limits.max_login_delay_seconds,
             forget_after=fresh.cfg.limits.login_forget_after_seconds,
         )
-        handler = make_handler(fresh.cfg, fresh.service, fresh.sessions, fresh.limiter)
+        handler = make_handler(
+            fresh.cfg,
+            fresh.service,
+            fresh.sessions,
+            fresh.limiter,
+            fresh.tokens,
+        )
         fresh.httpd = PasteberthServer(
             ("127.0.0.1", 0), handler, limits=fresh.cfg.limits
         )

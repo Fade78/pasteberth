@@ -16,6 +16,7 @@
   </h1>
   <div class="topbar-right">
     <span id="status" class="status" role="status"><span class="dot"></span><span id="status-text">connecting…</span></span>
+    <button id="access-button" class="ghost-btn" type="button" hidden aria-haspopup="dialog" aria-controls="access-dialog">Access</button>
     <form id="logout-form" action="__PASTEBERTH_URL_PREFIX__/logout" method="post" hidden>
       <button class="ghost-btn" type="submit">Log out</button>
     </form>
@@ -49,6 +50,53 @@
     </div>
   </div>
   <div id="pv-toast" class="toast" role="status" hidden></div>
+</dialog>
+
+<div id="access-backdrop" class="dialog-fallback-backdrop" hidden></div>
+<dialog id="access-dialog" class="access-dialog" aria-labelledby="access-title" aria-describedby="access-description" aria-modal="true">
+  <div class="access-head">
+    <div>
+      <h2 id="access-title">Access tokens</h2>
+      <p id="access-description" class="dialog-note">Create scoped bearer credentials for API clients. A secret is shown only once.</p>
+    </div>
+    <button id="access-close" class="ghost-btn" type="button">Close</button>
+  </div>
+  <div class="access-layout">
+    <form id="token-form" class="access-card">
+      <h3>Issue a token</h3>
+      <label>
+        Label
+        <input id="token-label" name="label" type="text" maxlength="120" required autocomplete="off" placeholder="CI upload">
+      </label>
+      <label>
+        Duration (seconds)
+        <input id="token-duration" name="duration_seconds" type="number" min="1" step="1" inputmode="numeric" placeholder="2592000">
+      </label>
+      <label class="check-row"><input id="token-permanent" type="checkbox"> Permanent token</label>
+      <div class="section-head">
+        <h4>Grants</h4>
+        <button id="add-grant" class="small-btn" type="button">Add grant</button>
+      </div>
+      <div id="token-grants" class="token-grants"></div>
+      <button class="primary-btn" type="submit">Create token</button>
+    </form>
+    <section class="access-card">
+      <div class="section-head">
+        <h3>Issued tokens</h3>
+        <button id="refresh-tokens" class="small-btn" type="button">Refresh</button>
+      </div>
+      <div id="token-secret" class="token-secret" hidden></div>
+      <div id="token-list" class="token-list"></div>
+    </section>
+  </div>
+  <section class="access-card suspension-card">
+    <div class="section-head">
+      <h3>Token suspensions</h3>
+      <span class="muted">Suspended scopes deny every matching token.</span>
+    </div>
+    <div id="suspension-list" class="suspension-list"></div>
+  </section>
+  <p id="access-message" class="access-message" role="status" hidden></p>
 </dialog>
 
 <div id="replace-backdrop" class="dialog-fallback-backdrop" hidden></div>

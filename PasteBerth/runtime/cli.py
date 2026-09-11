@@ -45,6 +45,7 @@ from .auth import (
     save_password_hash,
     valid_password_hash,
 )
+from .tokens import TokenStore, TokenStoreError
 from .config import (
     ConfigError,
     check_startup_policy,
@@ -145,6 +146,14 @@ def _cmd_serve(args: argparse.Namespace) -> int:
     except (DestinationError, OSError) as exc:
         log.error("pasteberth: destination error\n  %s", exc)
         return 2
+    tokens = None
+    if cfg.auth.enabled:
+        try:
+            tokens = TokenStore(cfg.token_file())
+        except TokenStoreError as exc:
+            log.error("pasteberth: token registry error\n  %s", exc)
+            service.close()
+            return 2
     sessions = SessionStore(
         cfg.auth.session_ttl_hours * 3600,
         password_file=cfg.password_file() if cfg.auth.enabled else None,
@@ -156,7 +165,7 @@ def _cmd_serve(args: argparse.Namespace) -> int:
         max_delay=cfg.limits.max_login_delay_seconds,
         forget_after=cfg.limits.login_forget_after_seconds,
     )
-    handler = _build_handler(cfg, service, sessions, limiter)
+    handler = _build_handler(cfg, service, sessions, limiter, tokens)
 
     from .server import serve_forever
 
@@ -390,6 +399,16 @@ def _drop_password(args: argparse.Namespace) -> str:
     return getpass.getpass("Pasteberth password: ")
 
 
+def _drop_token(args: argparse.Namespace) -> str | None:
+    if getattr(args, "token_stdin", False):
+        value = sys.stdin.read().strip()
+        if not value:
+            raise ConfigError("--token-stdin received an empty bearer token")
+        return value
+    value = os.environ.get("PASTEBERTH_TOKEN")
+    return value.strip() if value and value.strip() else None
+
+
 def _try_direct_drop(
     destination: LocalDestination | None,
     client: PasteberthClient,
@@ -544,6 +563,18 @@ def _cmd_register(args: argparse.Namespace) -> int:
 
 
 def _cmd_drop(args: argparse.Namespace) -> int:
+    if args.password_stdin and args.token_stdin:
+        print(
+            "pasteberth: --password-stdin and --token-stdin are mutually exclusive",
+            file=sys.stderr,
+        )
+        return 2
+    if args.password_stdin and os.environ.get("PASTEBERTH_TOKEN", "").strip():
+        print(
+            "pasteberth: --password-stdin cannot be combined with PASTEBERTH_TOKEN",
+            file=sys.stderr,
+        )
+        return 2
     if args.zone_id is None and args.directory is not None and not args.files:
         print(
             "pasteberth: drop requires a zone directory and at least one source file; "
@@ -554,8 +585,15 @@ def _cmd_drop(args: argparse.Namespace) -> int:
     config_path = find_config_path(_config_arg(args))
     cookie = None
     password = None
+    bearer_token = None
     try:
         cfg = build_default_config() if config_path is None else load_config(config_path)
+        bearer_token = _drop_token(args)
+        if bearer_token is not None and args.zone_id is None:
+            raise ConfigError(
+                "bearer drop requires --zone ID; target-directory resolution "
+                "uses session or loopback authentication"
+            )
         local_zone = None
         if args.zone_id is not None:
             if not _DROP_ZONE_RE.fullmatch(args.zone_id):
@@ -576,6 +614,7 @@ def _cmd_drop(args: argparse.Namespace) -> int:
             _drop_server_url(cfg, args.server_url),
             timeout=cfg.limits.http_request_timeout_seconds or 60.0,
             insecure=args.insecure,
+            bearer_token=bearer_token,
         )
         if target_directory is not None:
             zone_id = _resolve_drop_zone(client, target_directory, cookie=cookie)
@@ -597,7 +636,7 @@ def _cmd_drop(args: argparse.Namespace) -> int:
                 local_destination_zone = _zone_for_directory(cfg, str(destination_directory))
             except ConfigError:
                 pass
-        if destination_directory is not None:
+        if destination_directory is not None and bearer_token is None:
             try:
                 local_endpoint = is_loopback_address(client.host)
             except ConfigError:
@@ -647,6 +686,8 @@ def _cmd_drop(args: argparse.Namespace) -> int:
                 cookie=cookie,
             )
             if response.status == 401:
+                if bearer_token is not None:
+                    raise api_error(response)
                 if password is None:
                     password = _drop_password(args)
                 cookie = client.login(password)
@@ -661,13 +702,16 @@ def _cmd_drop(args: argparse.Namespace) -> int:
             if response.status != 201:
                 raise api_error(response)
             payload = response.json()
-            if not isinstance(payload, dict) or not isinstance(payload.get("reference"), str):
+            if not isinstance(payload, dict) or not (
+                isinstance(payload.get("reference"), str)
+                or payload.get("accepted") is True
+            ):
                 raise ClientError("server returned an invalid upload response", status=response.status)
         except (EOFError, OSError, ValueError, ClientError) as exc:
             failures += 1
             print(f"pasteberth: {raw_source}: {exc}", file=sys.stderr)
             continue
-        print(payload["reference"])
+        print(payload["reference"] if "reference" in payload else "accepted")
     return 1 if failures else 0
 
 
@@ -748,6 +792,11 @@ def _mcp_password() -> str:
     return password
 
 
+def _mcp_token() -> str | None:
+    value = os.environ.get("PASTEBERTH_TOKEN")
+    return value.strip() if value and value.strip() else None
+
+
 def _cmd_mcp(args: argparse.Namespace) -> int:
     config_path = find_config_path(_config_arg(args))
     try:
@@ -756,6 +805,7 @@ def _cmd_mcp(args: argparse.Namespace) -> int:
             _drop_server_url(cfg, args.server_url),
             timeout=cfg.limits.http_request_timeout_seconds or 60.0,
             insecure=args.insecure,
+            bearer_token=_mcp_token(),
         )
     except (ConfigError, ClientError) as exc:
         print(f"pasteberth: configuration error\n  {exc}", file=sys.stderr)
@@ -796,6 +846,8 @@ def _cmd_mcp(args: argparse.Namespace) -> int:
                     cookie=cookie,
                 )
                 if response.status == 401:
+                    if client.bearer_token:
+                        raise api_error(response)
                     cookie = client.login(_mcp_password())
                     response = client.upload(
                         zone_id,
@@ -808,8 +860,9 @@ def _cmd_mcp(args: argparse.Namespace) -> int:
                 if response.status != 201:
                     raise api_error(response)
                 payload = response.json()
-                if not isinstance(payload, dict) or not isinstance(
-                    payload.get("reference"), str
+                if not isinstance(payload, dict) or not (
+                    isinstance(payload.get("reference"), str)
+                    or payload.get("accepted") is True
                 ):
                     raise ClientError("server returned an invalid upload response")
                 uploaded.append(payload)
@@ -898,6 +951,7 @@ enabled = true
 session_ttl_hours = 72
 max_sessions = 4096  # use "unlimited" to disable FIFO eviction
 # password_file = "/absolute/path/to/passwd"
+# token_file = "/absolute/path/to/tokens.sqlite3"
 
 [[zones]]
 id = "default"
@@ -1377,6 +1431,7 @@ def _cmd_audit(args: argparse.Namespace) -> int:
         )
         errors.extend(config_errors)
 
+    fs = platform_fs()
     if sys.version_info < (3, 11):
         errors.append("Python 3.11 or newer is required")
     uses_default_storage = any(
@@ -1397,6 +1452,44 @@ def _cmd_audit(args: argparse.Namespace) -> int:
         else:
             if not valid_password_hash(stored_hash):
                 errors.append(f"missing or invalid scrypt hash: {cfg.password_file()}")
+        token_file = cfg.token_file()
+        try:
+            token_is_symlink = token_file.is_symlink()
+        except OSError as exc:
+            errors.append(f"token registry: inspection failed ({exc})")
+            token_is_symlink = False
+        if token_is_symlink:
+            errors.append(f"token registry: symbolic link is not allowed: {token_file}")
+        elif token_file.exists():
+            token_errors, _ = _audit_regular_file(
+                token_file,
+                "token registry",
+                require_owner=True,
+                require_private=True,
+            )
+            errors.extend(token_errors)
+        if token_file.parent.exists():
+            if not token_file.parent.is_dir():
+                errors.append(
+                    f"token registry directory: regular directory required: "
+                    f"{token_file.parent}"
+                )
+            else:
+                try:
+                    parent_audit = fs.audit_permissions(token_file.parent, directory=True)
+                except (OSError, UnsupportedFilesystemError) as exc:
+                    errors.append(f"token registry directory: permissions unreadable ({exc})")
+                else:
+                    if not parent_audit.private:
+                        detail = (
+                            oct(parent_audit.mode)
+                            if parent_audit.mode is not None
+                            else (parent_audit.detail or "ACL")
+                        )
+                        errors.append(
+                            f"token registry directory: permissions too open ({detail}): "
+                            f"{token_file.parent}"
+                        )
     if uses_default_storage and config_path is not None:
         warnings.append(
             f"default storage in use: {default_storage_path()}"
@@ -1423,7 +1516,6 @@ def _cmd_audit(args: argparse.Namespace) -> int:
             "accept_bin, accept_img, and accept_doc are all false: "
             "the server will reject all content"
         )
-    fs = platform_fs()
     for index, rule in enumerate(cfg.zone_collections, start=1):
         if rule.file_group is None:
             continue
@@ -1497,11 +1589,16 @@ def _cmd_audit(args: argparse.Namespace) -> int:
     return 0
 
 
-def _build_handler(cfg, service: PasteService, sessions: SessionStore,
-                   limiter: LoginRateLimiter):
+def _build_handler(
+    cfg,
+    service: PasteService,
+    sessions: SessionStore,
+    limiter: LoginRateLimiter,
+    tokens: TokenStore | None = None,
+):
     from .webapp import make_handler
 
-    return make_handler(cfg, service, sessions, limiter)
+    return make_handler(cfg, service, sessions, limiter, tokens)
 
 
 def _cmd_passwd(args: argparse.Namespace) -> int:
@@ -1620,7 +1717,8 @@ def build_parser() -> argparse.ArgumentParser:
             "it creates or refreshes only the sidecar and relies on the directory's\n"
             "filesystem permissions. Use --replace only for an upload to a managed\n"
             "filename. Use\n"
-            "--password-stdin for non-interactive HTTP authentication."
+            "--password-stdin for non-interactive password authentication, or\n"
+            "--token-stdin for a bearer credential. PASTEBERTH_TOKEN is also accepted."
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
@@ -1652,6 +1750,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--password-stdin",
         action="store_true",
         help="read the password from stdin for an HTTP authentication challenge",
+    )
+    p_drop.add_argument(
+        "--token-stdin",
+        action="store_true",
+        help="read a bearer token from stdin instead of using PASTEBERTH_TOKEN",
     )
     p_drop.add_argument(
         "--insecure",
@@ -1686,7 +1789,8 @@ def build_parser() -> argparse.ArgumentParser:
         description=(
             "Serve Pasteberth MCP tools over newline-delimited JSON-RPC on stdin/stdout.\n\n"
             "The stdio stream is reserved for MCP messages; authentication uses\n"
-            "PASTEBERTH_PASSWORD when the HTTP server requires a session.\n"
+            "PASTEBERTH_TOKEN for a bearer token, or PASTEBERTH_PASSWORD for\n"
+            "a session when the HTTP server requires authentication.\n"
             "The initial tool is drop, which accepts local paths or in-memory content."
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
