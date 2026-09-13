@@ -553,6 +553,7 @@ class TestUrlPrefix(Base):
         self.assertEqual(status, 200)
         self.assertIn(b'/paste/static/app.js', body)
         self.assertNotIn(b'href="/static/style.css"', body)
+        self.assertIn(f'href="/paste/static/style.css?v={__version__}"'.encode(), body)
 
         status, _, body = self.req("GET", "/paste/api/health")
         self.assertEqual(status, 200)
@@ -568,6 +569,8 @@ class TestUrlPrefix(Base):
         status, _, _ = self.req("GET", "/paste/static/app.js")
         self.assertEqual(status, 200)
         status, _, _ = self.req("GET", f"/paste/static/app.js?v={__version__}")
+        self.assertEqual(status, 200)
+        status, _, _ = self.req("GET", f"/paste/static/style.css?v={__version__}")
         self.assertEqual(status, 200)
 
     def test_redirection_et_logs_ne_contiennent_pas_un_token_de_query(self):

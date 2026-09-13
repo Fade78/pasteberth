@@ -2201,6 +2201,24 @@
     return state.groups.filter(groupIsDisplayed);
   }
 
+  function captureThumbScrollTops() {
+    const positions = new Map();
+    for (const thumbs of grid.querySelectorAll(".zone[data-zone] .thumbs")) {
+      const zone = thumbs.closest(".zone[data-zone]");
+      if (zone) positions.set(zone.dataset.zone, thumbs.scrollTop);
+    }
+    return positions;
+  }
+
+  function restoreThumbScrollTops(positions) {
+    for (const [zoneId, scrollTop] of positions) {
+      const thumbs = grid.querySelector(
+        `.zone[data-zone="${CSS.escape(zoneId)}"] .thumbs`,
+      );
+      if (thumbs) thumbs.scrollTop = scrollTop;
+    }
+  }
+
   function reconcileActiveGroup() {
     const previous = state.activeGroupId;
     if (!state.groups.length) {
@@ -2222,6 +2240,7 @@
   }
 
   function renderAll() {
+    const thumbScrollTops = captureThumbScrollTops();
     grid.replaceChildren();
     const visibleZones = getVisibleZones();
     const visibleIds = new Set(visibleZones.map(zone => zone.id));
@@ -2242,6 +2261,7 @@
     if (!group || !tabLayout) {
       state.tabSelectionAnchorId = null;
       for (const zone of visibleZones) grid.appendChild(renderZone(zone));
+      restoreThumbScrollTops(thumbScrollTops);
       return;
     }
 
@@ -2282,6 +2302,7 @@
     for (const zone of openZones) main.appendChild(renderZone(zone));
     if (showTabSidebar) grid.append(list, main);
     else grid.append(main);
+    restoreThumbScrollTops(thumbScrollTops);
   }
 
   function toggleOpenZone(zoneId, event = {}) {
@@ -2444,7 +2465,13 @@
   function rerenderZone(zoneId) {
     const zone = state.zones.find(z => z.id === zoneId);
     const old = grid.querySelector(`.zone[data-zone="${CSS.escape(zoneId)}"]`);
-    if (zone && old) old.replaceWith(renderZone(zone));
+    if (zone && old) {
+      const oldThumbs = old.querySelector(".thumbs");
+      const next = renderZone(zone);
+      const nextThumbs = next.querySelector(".thumbs");
+      if (oldThumbs && nextThumbs) nextThumbs.scrollTop = oldThumbs.scrollTop;
+      old.replaceWith(next);
+    }
   }
 
   function refreshUploadedZone(zoneId) {

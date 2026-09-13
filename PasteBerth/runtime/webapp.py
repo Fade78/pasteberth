@@ -1141,6 +1141,13 @@ def make_handler(
             self._finish(200, "text/html; charset=utf-8", data)
 
         def _redirect(self, location: str, status: int = 303) -> None:
+            log.info(
+                "%s %s -> %d redirect %s",
+                _safe_log_text(self.command),
+                _safe_log_text(self.path, limit=200),
+                status,
+                _safe_log_text(location, limit=200),
+            )
             body = b""
             self.send_response(status)
             self.send_header("Location", location)
@@ -1151,13 +1158,6 @@ def make_handler(
             for key, value in self._security_headers():
                 self.send_header(key, value)
             self.end_headers()
-            log.info(
-                "%s %s -> %d redirect %s",
-                _safe_log_text(self.command),
-                _safe_log_text(self.path, limit=200),
-                status,
-                _safe_log_text(location, limit=200),
-            )
 
         # -------------------------------------------------------------- login
 

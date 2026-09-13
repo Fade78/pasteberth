@@ -4,6 +4,15 @@ This file records user-visible changes to Pasteberth.
 
 ## [Unreleased]
 
+## [2.1.25] - 2026-09-13
+
+### Compact Zone Layout
+
+- cap the zone thumbnail index and scroll it internally, while preventing the
+  grid from stretching shorter zones to the height of their neighbors;
+- version the browser stylesheet URL so layout changes cannot remain hidden by
+  a stale cached asset;
+
 ## [2.1.24] - 2026-09-11
 
 ### Frontend Asset Cache Busting

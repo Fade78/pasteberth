@@ -101,13 +101,22 @@ def build_demo(version: str) -> None:
     html = html.replace('<title>Pasteberth</title>',
         '<title>Pasteberth — local website demo</title><meta name="robots" content="noindex">'
         + '<meta http-equiv="Content-Security-Policy" content="' + csp.replace("'", '&#39;') + '">')
-    html = html.replace('<link rel="stylesheet" href="/static/style.css">',
-        '<style>' + (ROOT / 'assets/product/style.css').read_text() + '</style>')
+    html = re.sub(
+        r'<link rel="stylesheet" href="/static/style\.css(?:\?[^\"]*)?">',
+        lambda _: '<style>' + (ROOT / 'assets/product/style.css').read_text() + '</style>',
+        html,
+        count=1,
+    )
     html = html.replace('/static/favicon.svg', data_url(ROOT / 'assets/product/favicon.svg'))
     scripts = '<script>window.PB_DEMO_SEED=' + embedded_json(seed) + ';</script>'
     for name in ['assets/demo-adapter.js', 'assets/product/app.js']:
         scripts += '<script>' + (ROOT / name).read_text() + '</script>'
-    html = html.replace('<script src="/static/app.js"></script>', scripts)
+    html = re.sub(
+        r'<script src="/static/app\.js(?:\?[^\"]*)?"></script>',
+        lambda _: scripts,
+        html,
+        count=1,
+    )
     (ROOT / 'demo.html').write_text(html, encoding='utf-8')
     (ROOT / 'assets/example-data.js').write_text('window.PB_EXAMPLES=' + embedded_json(seed['files']) + ';', encoding='utf-8')
 

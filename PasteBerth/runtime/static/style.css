@@ -91,6 +91,7 @@ code, kbd {
   grid-template-columns: repeat(auto-fit, minmax(min(100%, 27rem), 1fr));
   gap: 14px;
   padding: 14px;
+  align-items: start;
 }
 
 .grid.tab-layout {
@@ -166,6 +167,7 @@ code, kbd {
   gap: 14px;
   min-width: 0;
   padding: 14px;
+  align-items: start;
 }
 
 .tab-zone-main:empty::before {
@@ -268,7 +270,7 @@ code, kbd {
   border: 1px solid var(--line);
   border-radius: var(--radius);
   min-width: 0;
-  min-height: 300px;
+  min-height: 240px;
   padding: 12px 14px 14px;
   display: flex;
   flex-direction: column;
@@ -976,6 +978,11 @@ dialog.access-dialog:not([open]) { display: none; }
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
+  max-height: 176px;
+  overflow-y: auto;
+  align-content: flex-start;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
 }
 
 .history-index {
@@ -1296,7 +1303,7 @@ kbd {
   .latest-actions { gap: 4px; }
   .latest-actions button { padding: 0.25rem 0.5rem; font-size: 0.75rem; }
   .meta .dims { font-size: 0.68rem; }
-  .thumbs { gap: 4px; }
+  .thumbs { gap: 4px; max-height: 132px; }
   .thumb { width: 44px; height: 44px; }
   .thumb-content { width: 44px; height: 44px; }
   .pv-actions { flex: 1 1 100%; }

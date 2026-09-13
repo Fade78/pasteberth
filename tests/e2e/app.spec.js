@@ -393,6 +393,47 @@ test.describe("timestamps", () => {
     await page.evaluate(() => document.dispatchEvent(new Event("visibilitychange")));
     await expect(zone.locator(".thumb-wrap .new-badge")).toHaveCount(1);
   });
+
+  test("limite l'index de contenu avec un défilement interne", async ({ page }) => {
+    await page.setViewportSize({ width: 1100, height: 800 });
+    await mockItems(page, Array.from({ length: 30 }, (_, index) => ({
+      filename: `item-${index}.txt`,
+      created_at: "2026-01-01T12:00:00Z",
+    })));
+    await openApp(page);
+
+    const thumbs = page.locator('[data-zone="default"] .thumbs');
+    await expect(thumbs).toBeVisible();
+    await expect(thumbs).toHaveCSS("max-height", "176px");
+    const dimensions = await thumbs.evaluate(element => ({
+      clientHeight: element.clientHeight,
+      scrollHeight: element.scrollHeight,
+    }));
+    expect(dimensions.scrollHeight).toBeGreaterThan(dimensions.clientHeight);
+    await expect(page.locator(".grid")).toHaveCSS("align-items", "start");
+
+    const scrolledTop = await thumbs.evaluate(element => {
+      element.scrollTop = element.scrollHeight;
+      return element.scrollTop;
+    });
+    expect(scrolledTop).toBeGreaterThan(0);
+    const refresh = page.waitForResponse(
+      response => response.url().endsWith("/api/zones?schema=items"),
+    );
+    await page.evaluate(() => document.dispatchEvent(new Event("visibilitychange")));
+    await refresh;
+    await expect.poll(() => thumbs.evaluate(element => element.scrollTop)).toBe(scrolledTop);
+
+    const rerenderedTop = await thumbs.evaluate(element => {
+      element.scrollTop = element.scrollHeight;
+      return element.scrollTop;
+    });
+    await page.locator('[data-zone="default"] .clear-btn').click();
+    await expect.poll(() => thumbs.evaluate(element => element.scrollTop)).toBe(rerenderedTop);
+
+    await page.setViewportSize({ width: 500, height: 800 });
+    await expect(thumbs).toHaveCSS("max-height", "132px");
+  });
 });
 
 test("uses generic uploads and per-zone items with content-only metadata", async ({ page }) => {

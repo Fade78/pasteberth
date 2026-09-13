@@ -174,6 +174,29 @@ class SiteSources(unittest.TestCase):
         self.assertIn((ROOT / 'assets/site.js').read_text(), preview)
         self.assertNotIn('<script src=', preview)
 
+    def test_build_inlines_versioned_product_stylesheet(self):
+        with tempfile.TemporaryDirectory(dir=WORK) as td:
+            fixture = Path(td) / 'site'
+            shutil.copytree(ROOT, fixture, ignore=shutil.ignore_patterns(
+                '.venv', 'qa', 'previews', '__pycache__', 'export.*'))
+            template = fixture / 'assets/product/index.template.html'
+            template.write_text(template.read_text()
+                .replace(
+                    '<link rel="stylesheet" href="/static/style.css">',
+                    '<link rel="stylesheet" href="/static/style.css?v=2.1.25">')
+                .replace(
+                    '<script src="/static/app.js"></script>',
+                    '<script src="/static/app.js?v=2.1.25"></script>'))
+            with patch.object(rebuild, 'ROOT', fixture):
+                build_demo('2.1.25')
+            demo = (fixture / 'demo.html').read_text()
+            self.assertIn(
+                '<style>' + (fixture / 'assets/product/style.css').read_text() + '</style>',
+                demo,
+            )
+            self.assertNotIn('/static/style.css?v=2.1.25', demo)
+            self.assertNotIn('/static/app.js?v=2.1.25', demo)
+
     def test_historical_captures_are_pinned(self):
         manifest = json.loads((ROOT / 'capture-manifest.json').read_text())
         self.assertIn('historical', manifest['status'])
