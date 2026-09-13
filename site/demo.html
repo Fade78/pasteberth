@@ -99,6 +99,7 @@ code, kbd {
   grid-template-columns: repeat(auto-fit, minmax(min(100%, 27rem), 1fr));
   gap: 14px;
   padding: 14px;
+  align-items: start;
 }
 
 .grid.tab-layout {
@@ -117,6 +118,11 @@ code, kbd {
   flex-direction: column;
   gap: 4px;
   min-width: 0;
+  min-height: max(0px, min(240px, calc(100vh - 7rem)));
+  max-height: max(0px, calc(100vh - 7rem));
+  overflow-y: auto;
+  align-self: stretch;
+  scrollbar-gutter: stable;
   padding: 14px 10px 14px 14px;
   border-right: 1px solid rgba(255, 255, 255, 0.07);
 }
@@ -169,17 +175,17 @@ code, kbd {
 }
 
 .tab-zone-main {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(min(100%, 27rem), 1fr));
+  display: block;
   gap: 14px;
   min-width: 0;
   padding: 14px;
+  position: relative;
 }
 
 .tab-zone-main:empty::before {
-  grid-column: 1 / -1;
   color: var(--muted);
   content: "Select a zone to open it";
+  display: block;
   padding: 2rem;
   text-align: center;
 }
@@ -276,7 +282,7 @@ code, kbd {
   border: 1px solid var(--line);
   border-radius: var(--radius);
   min-width: 0;
-  min-height: 300px;
+  min-height: 240px;
   padding: 12px 14px 14px;
   display: flex;
   flex-direction: column;
@@ -800,6 +806,8 @@ code, kbd {
 .comment-save-btn:focus-visible,
 .replace-btn:focus-visible,
 .transfer-btn:focus-visible,
+.small-btn:focus-visible,
+.primary-btn:focus-visible,
 .group-tab:focus-visible,
 .tab-zone-link:focus-visible,
 .thumb-wrap:focus-visible,
@@ -827,12 +835,166 @@ code, kbd {
 
 .ghost-btn:hover { background: rgba(255, 255, 255, 0.07); }
 
+.small-btn,
+.primary-btn {
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 7px;
+  padding: 0.35rem 0.65rem;
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--text);
+  font: inherit;
+  font-size: 0.78rem;
+  cursor: pointer;
+}
+
+.small-btn:hover { background: rgba(255, 255, 255, 0.13); }
+.small-btn:disabled { cursor: not-allowed; opacity: 0.45; }
+
+.primary-btn {
+  width: 100%;
+  border-color: rgba(77, 163, 255, 0.55);
+  background: rgba(77, 163, 255, 0.18);
+  color: #dceeff;
+  font-weight: 700;
+}
+
+.primary-btn:hover { background: rgba(77, 163, 255, 0.3); }
+.danger-btn { border-color: rgba(255, 123, 114, 0.45); color: #ffd7d3; }
+
+/* ---------------------------------------------------------- access panel */
+
+dialog.access-dialog {
+  width: min(96vw, 76rem);
+  max-width: min(96vw, 76rem);
+  max-height: 92vh;
+  overflow: auto;
+  padding: 1.2rem;
+  background: var(--panel);
+  color: var(--text);
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: var(--radius);
+}
+
+dialog.access-dialog::backdrop { background: rgba(4, 6, 9, 0.72); }
+dialog.access-dialog:not([open]) { display: none; }
+
+.access-head,
+.section-head,
+.token-card-head,
+.suspension-row,
+.token-secret-line {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.access-head { justify-content: space-between; gap: 1.5rem; }
+.access-head h2, .access-card h3, .access-card h4 { margin: 0; }
+.access-head h2 { font-size: 1.2rem; }
+.dialog-note { margin: 0.35rem 0 0; color: var(--muted); font-size: 0.82rem; }
+
+.access-layout {
+  display: grid;
+  grid-template-columns: minmax(18rem, 0.85fr) minmax(22rem, 1.15fr);
+  gap: 1rem;
+  margin-top: 1rem;
+}
+
+.access-card {
+  min-width: 0;
+  padding: 1rem;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.025);
+}
+
+.access-card > label,
+.grant-controls > label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  margin-top: 0.8rem;
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
+.access-card input[type="text"],
+.access-card input[type="number"],
+.access-card select {
+  min-width: 0;
+  padding: 0.45rem 0.55rem;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 6px;
+  background: rgba(0, 0, 0, 0.22);
+  color: var(--text);
+  font: inherit;
+}
+
+.check-row {
+  display: inline-flex !important;
+  flex-direction: row !important;
+  align-items: center;
+  gap: 0.45rem;
+  margin-top: 0.65rem !important;
+  color: var(--text) !important;
+  cursor: pointer;
+}
+
+.check-row input { accent-color: var(--accent); }
+.section-head { justify-content: space-between; margin: 1rem 0 0.55rem; }
+.section-head h4 { color: var(--muted); font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.06em; }
+.section-head .muted { margin-left: auto; font-size: 0.75rem; }
+
+.token-grants { display: grid; gap: 0.65rem; }
+.token-grant-row {
+  min-width: 0;
+  margin: 0;
+  padding: 0.7rem;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 8px;
+}
+
+.token-grant-row legend { padding: 0 0.3rem; color: var(--muted); font-size: 0.72rem; }
+.grant-controls { display: grid; grid-template-columns: minmax(0, 0.8fr) minmax(0, 1.2fr); gap: 0.55rem; }
+.grant-permissions { display: flex; flex-wrap: wrap; gap: 0.8rem; grid-column: 1 / -1; }
+.grant-replace-label { grid-column: 1 / 2; }
+.grant-remove { align-self: end; justify-self: end; grid-column: 2; }
+
+.token-list { display: grid; gap: 0.65rem; margin-top: 0.7rem; }
+.token-card { padding: 0.75rem; border: 1px solid rgba(255, 255, 255, 0.12); border-radius: 8px; }
+.token-card-head { justify-content: space-between; }
+.token-card-head h4 { min-width: 0; overflow-wrap: anywhere; }
+.token-card > code { display: block; margin-top: 0.4rem; color: var(--muted); overflow-wrap: anywhere; font-size: 0.7rem; }
+.token-meta { margin: 0.4rem 0; font-size: 0.72rem; }
+.token-state { flex: 0 0 auto; padding: 0.15rem 0.45rem; border-radius: 999px; background: rgba(70, 194, 111, 0.15); color: #9ae6ae; font-size: 0.68rem; font-weight: 700; }
+.token-state-suspended { background: rgba(255, 209, 102, 0.16); color: #ffe7a3; }
+.token-state-revoked, .token-state-expired, .token-state-missing { background: rgba(255, 123, 114, 0.15); color: #ffd7d3; }
+.token-grant-summary { margin: 0.45rem 0; padding-left: 1.1rem; color: var(--muted); font-size: 0.72rem; }
+.token-actions { display: flex; flex-wrap: wrap; gap: 0.45rem; margin-top: 0.6rem; }
+
+.token-secret { margin-top: 0.7rem; padding: 0.75rem; border: 1px solid rgba(255, 209, 102, 0.5); border-radius: 8px; background: rgba(255, 209, 102, 0.08); color: #ffe7a3; }
+.token-secret p { margin: 0.35rem 0; font-size: 0.75rem; }
+.token-secret-line { align-items: flex-start; }
+.token-secret-line code { flex: 1; min-width: 0; padding: 0.45rem; overflow-wrap: anywhere; color: var(--text); font-size: 0.7rem; }
+
+.suspension-card { margin-top: 1rem; }
+.suspension-list { display: grid; gap: 0.4rem; }
+.suspension-row { justify-content: space-between; min-width: 0; padding: 0.45rem 0; border-top: 1px solid rgba(255, 255, 255, 0.07); font-size: 0.78rem; }
+.suspension-row > span:first-child { min-width: 0; overflow-wrap: anywhere; }
+.access-message { margin: 0.8rem 0 0; color: #9ae6ae; font-size: 0.8rem; }
+.access-message.error { color: #ffd7d3; }
+
 /* ------------------------------------------------------------ thumbnails */
 
 .thumbs {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
+  max-height: 176px;
+  overflow-y: auto;
+  align-content: flex-start;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
 }
 
 .history-index {
@@ -1113,6 +1275,10 @@ kbd {
   .tab-zone-list {
     flex-direction: row;
     overflow-x: auto;
+    overflow-y: hidden;
+    min-height: 0;
+    max-height: none;
+    align-self: auto;
     padding: 8px;
     border-right: 0;
     border-bottom: 1px solid rgba(255, 255, 255, 0.07);
@@ -1153,12 +1319,21 @@ kbd {
   .latest-actions { gap: 4px; }
   .latest-actions button { padding: 0.25rem 0.5rem; font-size: 0.75rem; }
   .meta .dims { font-size: 0.68rem; }
-  .thumbs { gap: 4px; }
+  .thumbs { gap: 4px; max-height: 132px; }
   .thumb { width: 44px; height: 44px; }
   .thumb-content { width: 44px; height: 44px; }
   .pv-actions { flex: 1 1 100%; }
   .pv-actions button { flex: 1 1 auto; }
   .help { font-size: 0.68rem; }
+  .topbar { align-items: flex-start; }
+  .topbar-right { flex-wrap: wrap; justify-content: flex-end; gap: 0.45rem; }
+  .access-layout { grid-template-columns: 1fr; }
+  dialog.access-dialog { width: calc(100vw - 1rem); max-width: calc(100vw - 1rem); padding: 0.8rem; }
+  .access-head { align-items: flex-start; }
+  .grant-controls { grid-template-columns: 1fr; }
+  .grant-permissions, .grant-replace-label, .grant-remove { grid-column: 1; }
+  .grant-remove { justify-self: start; }
+  .suspension-row { align-items: flex-start; flex-wrap: wrap; }
 }
 </style>
 </head>
@@ -1166,10 +1341,11 @@ kbd {
 <header class="topbar">
   <h1 class="brand">
     <img class="brand-icon" src="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciCiAgICAgdmlld0JveD0iMCAwIDUxMiA1MTIiCiAgICAgcm9sZT0iaW1nIgogICAgIGFyaWEtbGFiZWxsZWRieT0idGl0bGUgZGVzYyI+CiAgPHRpdGxlIGlkPSJ0aXRsZSI+UGFzdGViZXJ0aDwvdGl0bGU+CiAgPGRlc2MgaWQ9ImRlc2MiPgogICAgQSBibHVlIGNsaXBib2FyZCBjb250YWluaW5nIHR3byBjb2xvcmVkIHpvbmVzIHdpdGggYmlkaXJlY3Rpb25hbCBhcnJvd3MsCiAgICByZXByZXNlbnRpbmcgYSBicmlkZ2UgYmV0d2VlbiBicm93c2VyIGFuZCBmaWxlc3lzdGVtIGNsaWVudHMuCiAgPC9kZXNjPgoKICA8ZyBmaWxsPSJub25lIgogICAgIHN0cm9rZT0iIzRkYTNmZiIKICAgICBzdHJva2Utd2lkdGg9IjI2IgogICAgIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIKICAgICBzdHJva2UtbGluZWpvaW49InJvdW5kIj4KICAgIDxwYXRoIGQ9Ik0xNTAgMTE4CiAgICAgICAgICAgICBIMTA4CiAgICAgICAgICAgICBDODQgMTE4IDcwIDEzNCA3MCAxNTgKICAgICAgICAgICAgIFY0MDQKICAgICAgICAgICAgIEM3MCA0MjggODYgNDQ0IDExMCA0NDQKICAgICAgICAgICAgIEgzMjYKICAgICAgICAgICAgIEMzNTAgNDQ0IDM2NiA0MjggMzY2IDQwNAogICAgICAgICAgICAgVjM2MCIgLz4KICAgIDxwYXRoIGQ9Ik0zNjYgMjgyIFYyNTQiIC8+CiAgICA8cGF0aCBkPSJNMzY2IDE3NiBWMTU4CiAgICAgICAgICAgICBDMzY2IDEzNCAzNTAgMTE4IDMyNiAxMTgKICAgICAgICAgICAgIEgyODYiIC8+CiAgICA8cGF0aCBkPSJNMTUyIDExOAogICAgICAgICAgICAgVjkyCiAgICAgICAgICAgICBDMTUyIDYyIDE3NCA0MiAyMDQgNDIKICAgICAgICAgICAgIEgyMzIKICAgICAgICAgICAgIEMyNjIgNDIgMjg0IDYyIDI4NCA5MgogICAgICAgICAgICAgVjExOCIgLz4KICAgIDxwYXRoIGQ9Ik0xNTIgMTE4IEgyODQiIC8+CiAgPC9nPgoKICA8cmVjdCB4PSIxMDYiIHk9IjE3NCIgd2lkdGg9IjIxMiIgaGVpZ2h0PSI4NiIgcng9IjIyIiBmaWxsPSIjYzMzZDYwIiAvPgogIDxwYXRoIGQ9Ik0xMzYgMjAzIEgyNDYiIGZpbGw9Im5vbmUiIHN0cm9rZT0iI2Y4ZGNlNCIgc3Ryb2tlLXdpZHRoPSIxNCIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIiBvcGFjaXR5PSIuOTUiIC8+CiAgPHBhdGggZD0iTTEzNiAyMzIgSDIxNiIgZmlsbD0ibm9uZSIgc3Ryb2tlPSIjZjhkY2U0IiBzdHJva2Utd2lkdGg9IjE0IiBzdHJva2UtbGluZWNhcD0icm91bmQiIG9wYWNpdHk9Ii43MiIgLz4KICA8cGF0aCBkPSJNMzE4IDIxNyBINDIwIiBmaWxsPSJub25lIiBzdHJva2U9IiNjMzNkNjAiIHN0cm9rZS13aWR0aD0iMjgiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIgLz4KICA8cGF0aCBkPSJNNDEwIDE3OCBMNDU2IDIxNyBMNDEwIDI1NiBaIiBmaWxsPSIjYzMzZDYwIiAvPgoKICA8cmVjdCB4PSIxMDYiIHk9IjI4NiIgd2lkdGg9IjIxMiIgaGVpZ2h0PSI4NiIgcng9IjIyIiBmaWxsPSIjMzZjOThiIiAvPgogIDxwYXRoIGQ9Ik0xMzYgMzE1IEgyNDYiIGZpbGw9Im5vbmUiIHN0cm9rZT0iI2RkZjhlZCIgc3Ryb2tlLXdpZHRoPSIxNCIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIiBvcGFjaXR5PSIuOTUiIC8+CiAgPHBhdGggZD0iTTEzNiAzNDQgSDIxNiIgZmlsbD0ibm9uZSIgc3Ryb2tlPSIjZGRmOGVkIiBzdHJva2Utd2lkdGg9IjE0IiBzdHJva2UtbGluZWNhcD0icm91bmQiIG9wYWNpdHk9Ii43MiIgLz4KICA8cGF0aCBkPSJNNDU2IDMyOSBIMzUyIiBmaWxsPSJub25lIiBzdHJva2U9IiMzNmM5OGIiIHN0cm9rZS13aWR0aD0iMjgiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIgLz4KICA8cGF0aCBkPSJNMzYyIDI5MCBMMzE4IDMyOSBMMzYyIDM2OCBaIiBmaWxsPSIjMzZjOThiIiAvPgo8L3N2Zz4K" alt="" aria-hidden="true">
-    Pasteberth <span class="brand-version">v2.1.21</span>
+    Pasteberth <span class="brand-version">v2.1.25</span>
   </h1>
   <div class="topbar-right">
     <span id="status" class="status" role="status"><span class="dot"></span><span id="status-text">connecting…</span></span>
+    <button id="access-button" class="ghost-btn" type="button" hidden aria-haspopup="dialog" aria-controls="access-dialog">Access</button>
     <form id="logout-form" action="/logout" method="post" hidden>
       <button class="ghost-btn" type="submit">Log out</button>
     </form>
@@ -1203,6 +1379,53 @@ kbd {
     </div>
   </div>
   <div id="pv-toast" class="toast" role="status" hidden></div>
+</dialog>
+
+<div id="access-backdrop" class="dialog-fallback-backdrop" hidden></div>
+<dialog id="access-dialog" class="access-dialog" aria-labelledby="access-title" aria-describedby="access-description" aria-modal="true">
+  <div class="access-head">
+    <div>
+      <h2 id="access-title">Access tokens</h2>
+      <p id="access-description" class="dialog-note">Create scoped bearer credentials for API clients. A secret is shown only once.</p>
+    </div>
+    <button id="access-close" class="ghost-btn" type="button">Close</button>
+  </div>
+  <div class="access-layout">
+    <form id="token-form" class="access-card">
+      <h3>Issue a token</h3>
+      <label>
+        Label
+        <input id="token-label" name="label" type="text" maxlength="120" required autocomplete="off" placeholder="CI upload">
+      </label>
+      <label>
+        Duration (seconds)
+        <input id="token-duration" name="duration_seconds" type="number" min="1" step="1" inputmode="numeric" placeholder="2592000">
+      </label>
+      <label class="check-row"><input id="token-permanent" type="checkbox"> Permanent token</label>
+      <div class="section-head">
+        <h4>Grants</h4>
+        <button id="add-grant" class="small-btn" type="button">Add grant</button>
+      </div>
+      <div id="token-grants" class="token-grants"></div>
+      <button class="primary-btn" type="submit">Create token</button>
+    </form>
+    <section class="access-card">
+      <div class="section-head">
+        <h3>Issued tokens</h3>
+        <button id="refresh-tokens" class="small-btn" type="button">Refresh</button>
+      </div>
+      <div id="token-secret" class="token-secret" hidden></div>
+      <div id="token-list" class="token-list"></div>
+    </section>
+  </div>
+  <section class="access-card suspension-card">
+    <div class="section-head">
+      <h3>Token suspensions</h3>
+      <span class="muted">Suspended scopes deny every matching token.</span>
+    </div>
+    <div id="suspension-list" class="suspension-list"></div>
+  </section>
+  <p id="access-message" class="access-message" role="status" hidden></p>
 </dialog>
 
 <div id="replace-backdrop" class="dialog-fallback-backdrop" hidden></div>
@@ -1384,6 +1607,9 @@ window.addEventListener('pagehide',()=>{for(const url of objectURLs)URL.revokeOb
   const URL_PREFIX = document.body.dataset.urlPrefix || "";
   const REFRESH_INTERVAL_MS = 10_000;
   const INTERNAL_TRANSFER_MIME = "application/x-pasteberth-transfer";
+  const TRANSIENT_FOCUS_CLASSES = new Set([
+    "active", "open", "selected", "bulk-selected", "dragging", "dragging-item", "attention",
+  ]);
 
   function appPath(path) {
     return `${URL_PREFIX}${path}`;
@@ -1393,12 +1619,17 @@ window.addEventListener('pagehide',()=>{for(const url of objectURLs)URL.revokeOb
     zones: [],            // [{id,label,color,retain,count,upload_limit_bytes,items:[...]}]
     activeId: null,
     authEnabled: true,
+    accessAdmin: false,
+    accessAdminLoaded: false,
+    tokenAdmin: null,
+    accessRequestInFlight: false,
     showFullPath: true,
     maxArchiveFiles: null,
     offline: false,
     selectedByZone: Object.create(null),
     knownItemSignaturesByZone: Object.create(null),
     newItemIdsByZone: Object.create(null),
+    commentDraftsByZone: Object.create(null),
     copyFeedbackByItem: Object.create(null),
     copyFeedbackTimers: Object.create(null),
     copyAttemptByItem: Object.create(null),
@@ -1427,11 +1658,24 @@ window.addEventListener('pagehide',()=>{for(const url of objectURLs)URL.revokeOb
   let copyAttemptSequence = 0;
   let activePreviewController = null;
   let groupOptionsClose = null;
+  let tabLayoutResizeTimer = null;
+  const tabZoneRebalanceFrames = new WeakMap();
+  const tabZoneResizeObserver = typeof window.ResizeObserver === "function"
+    ? new window.ResizeObserver(entries => {
+      const mains = new Set();
+      for (const entry of entries) {
+        const main = entry.target.closest(".tab-zone-main");
+        if (main) mains.add(main);
+      }
+      for (const main of mains) scheduleTabZoneRebalance(main);
+    })
+    : null;
 
   const grid = document.getElementById("grid");
   const groupTabs = document.getElementById("group-tabs");
   const statusEl = document.getElementById("status");
   const statusText = document.getElementById("status-text");
+  const accessButton = document.getElementById("access-button");
   const logoutForm = document.getElementById("logout-form");
   const toastEl = document.getElementById("toast");
   const pvToastEl = document.getElementById("pv-toast");
@@ -1451,6 +1695,20 @@ window.addEventListener('pagehide',()=>{for(const url of objectURLs)URL.revokeOb
   const replacementZone = document.getElementById("replace-zone");
   const replacementCancel = document.getElementById("replace-cancel");
   const replacementConfirm = document.getElementById("replace-confirm");
+  const accessDialog = document.getElementById("access-dialog");
+  const accessBackdrop = document.getElementById("access-backdrop");
+  const accessClose = document.getElementById("access-close");
+  const tokenForm = document.getElementById("token-form");
+  const tokenLabel = document.getElementById("token-label");
+  const tokenDuration = document.getElementById("token-duration");
+  const tokenPermanent = document.getElementById("token-permanent");
+  const addGrantButton = document.getElementById("add-grant");
+  const tokenGrants = document.getElementById("token-grants");
+  const tokenSecret = document.getElementById("token-secret");
+  const tokenList = document.getElementById("token-list");
+  const refreshTokensButton = document.getElementById("refresh-tokens");
+  const suspensionList = document.getElementById("suspension-list");
+  const accessMessage = document.getElementById("access-message");
   const filePicker = document.getElementById("file-picker");
   const replacementQueue = [];
   const dialogInvokers = new WeakMap();
@@ -1612,13 +1870,15 @@ window.addEventListener('pagehide',()=>{for(const url of objectURLs)URL.revokeOb
     let res;
     try {
       const requestOptions = Object.assign({}, options || {});
+      const redirectOnUnauthorized = requestOptions.redirectOnUnauthorized !== false;
+      delete requestOptions.redirectOnUnauthorized;
       requestOptions.headers = Object.assign({ Accept: "application/json" }, requestOptions.headers || {});
       res = await fetch(appPath(path), requestOptions);
     } catch (err) {
       if (err && err.name === "AbortError") throw err;
       throw new Error("network unreachable");
     }
-    if (res.status === 401 && state.authEnabled) {
+    if (res.status === 401 && state.authEnabled && redirectOnUnauthorized) {
       window.location.href = appPath("/login");
       throw new Error("session expired");
     }
@@ -1664,6 +1924,509 @@ window.addEventListener('pagehide',()=>{for(const url of objectURLs)URL.revokeOb
     }
     return payload;
   }
+
+  // ---------------------------------------------------------- access admin
+
+  function tokenCatalog() {
+    const catalog = state.tokenAdmin?.catalog;
+    return {
+      zones: Array.isArray(catalog?.zones) ? catalog.zones : [],
+      groups: Array.isArray(catalog?.groups) ? catalog.groups : [],
+    };
+  }
+
+  function setAccessMessage(message, kind = "") {
+    if (!accessMessage) return;
+    accessMessage.textContent = message || "";
+    accessMessage.className = `access-message ${kind}`.trim();
+    accessMessage.hidden = !message;
+  }
+
+  function clearTokenSecret() {
+    if (!tokenSecret) return;
+    tokenSecret.replaceChildren();
+    tokenSecret.hidden = true;
+  }
+
+  function showTokenSecret(credential, action = "Created") {
+    if (!tokenSecret || typeof credential !== "string" || !credential) return;
+    tokenSecret.replaceChildren();
+    const title = document.createElement("strong");
+    title.textContent = `${action} token secret`;
+    const warning = document.createElement("p");
+    warning.textContent = "Copy it now. Pasteberth cannot recover this secret later.";
+    const line = document.createElement("div");
+    line.className = "token-secret-line";
+    const value = document.createElement("code");
+    value.textContent = credential;
+    const copy = document.createElement("button");
+    copy.type = "button";
+    copy.className = "small-btn";
+    copy.textContent = "Copy";
+    copy.addEventListener("click", async () => {
+      if (await writeClipboard(credential)) toast("Token secret copied");
+      else toast("Could not copy the token secret", "error");
+    });
+    line.append(value, copy);
+    tokenSecret.append(title, warning, line);
+    tokenSecret.hidden = false;
+  }
+
+  function addGrantRow(initial = {}) {
+    if (!tokenGrants) return;
+    const row = document.createElement("fieldset");
+    row.className = "token-grant-row";
+    const legend = document.createElement("legend");
+    legend.textContent = "Grant";
+    row.appendChild(legend);
+
+    const controls = document.createElement("div");
+    controls.className = "grant-controls";
+    const scopeLabel = document.createElement("label");
+    scopeLabel.textContent = "Scope";
+    const scopeSelect = document.createElement("select");
+    scopeSelect.className = "grant-scope";
+    for (const [value, label] of [
+      ["zone", "Zone"],
+      ["group", "Group"],
+      ["path", "PATH"],
+      ["global", "Global"],
+    ]) {
+      const option = document.createElement("option");
+      option.value = value;
+      option.textContent = label;
+      scopeSelect.appendChild(option);
+    }
+    scopeSelect.value = initial.scope_type || "zone";
+    scopeLabel.appendChild(scopeSelect);
+    const valueLabel = document.createElement("label");
+    valueLabel.className = "grant-value-label";
+    const valueCaption = document.createElement("span");
+    valueLabel.appendChild(valueCaption);
+    const valueWrap = document.createElement("span");
+    valueLabel.appendChild(valueWrap);
+    controls.append(scopeLabel, valueLabel);
+
+    const permissions = document.createElement("div");
+    permissions.className = "grant-permissions";
+    const permissionInputs = {};
+    for (const name of ["L", "R", "W"]) {
+      const label = document.createElement("label");
+      label.className = "check-row";
+      const input = document.createElement("input");
+      input.type = "checkbox";
+      input.dataset.permission = name;
+      input.checked = Array.isArray(initial.permissions) && initial.permissions.includes(name);
+      const text = document.createElement("span");
+      text.textContent = name;
+      label.append(input, text);
+      permissions.appendChild(label);
+      permissionInputs[name] = input;
+    }
+    controls.appendChild(permissions);
+
+    const replaceLabel = document.createElement("label");
+    replaceLabel.className = "check-row grant-replace-label";
+    const replaceInput = document.createElement("input");
+    replaceInput.type = "checkbox";
+    replaceInput.className = "grant-replace";
+    replaceInput.checked = initial.allow_replace === true;
+    const replaceText = document.createElement("span");
+    replaceText.textContent = "Allow named replacement";
+    replaceLabel.append(replaceInput, replaceText);
+    controls.appendChild(replaceLabel);
+
+    const remove = document.createElement("button");
+    remove.type = "button";
+    remove.className = "small-btn danger-btn grant-remove";
+    remove.textContent = "Remove";
+    remove.addEventListener("click", () => row.remove());
+    controls.appendChild(remove);
+    row.appendChild(controls);
+
+    let currentValue = typeof initial.scope_value === "string" ? initial.scope_value : "";
+    const updateValueControl = () => {
+      const scope = scopeSelect.value;
+      valueWrap.replaceChildren();
+      if (scope === "global") {
+        valueLabel.hidden = true;
+      } else {
+        valueLabel.hidden = false;
+        valueCaption.textContent = scope === "zone"
+          ? "Zone ID"
+          : scope === "group"
+            ? "Group"
+            : "Absolute path";
+        if (scope === "path") {
+          const input = document.createElement("input");
+          input.type = "text";
+          input.className = "grant-value";
+          input.maxLength = 4096;
+          input.value = currentValue;
+          input.placeholder = "/srv/pasteberth/project";
+          valueWrap.appendChild(input);
+        } else {
+          const select = document.createElement("select");
+          select.className = "grant-value";
+          const empty = document.createElement("option");
+          empty.value = "";
+          empty.textContent = scope === "zone" ? "Select a zone" : "Select a group";
+          select.appendChild(empty);
+          const entries = scope === "zone" ? tokenCatalog().zones : tokenCatalog().groups;
+          for (const entry of entries) {
+            const option = document.createElement("option");
+            option.value = scope === "zone" ? entry.id : entry.name;
+            option.textContent = scope === "zone"
+              ? `${entry.label || entry.id} (${entry.id})`
+              : entry.name;
+            select.appendChild(option);
+          }
+          if (currentValue && !entries.some(entry => (
+            scope === "zone" ? entry.id : entry.name
+          ) === currentValue)) {
+            const option = document.createElement("option");
+            option.value = currentValue;
+            option.textContent = `${currentValue} (not active)`;
+            select.appendChild(option);
+          }
+          select.value = currentValue;
+          valueWrap.appendChild(select);
+        }
+      }
+    };
+    scopeSelect.addEventListener("change", () => {
+      currentValue = "";
+      updateValueControl();
+    });
+    valueWrap.addEventListener("change", () => {
+      currentValue = valueWrap.querySelector(".grant-value")?.value || "";
+    });
+    valueWrap.addEventListener("input", () => {
+      currentValue = valueWrap.querySelector(".grant-value")?.value || "";
+    });
+    const syncReplacement = () => {
+      const enabled = permissionInputs.W.checked;
+      replaceInput.disabled = !enabled;
+      if (!enabled) replaceInput.checked = false;
+    };
+    permissionInputs.W.addEventListener("change", syncReplacement);
+    syncReplacement();
+    updateValueControl();
+    tokenGrants.appendChild(row);
+  }
+
+  function collectTokenGrants() {
+    const rows = [...(tokenGrants?.querySelectorAll(".token-grant-row") || [])];
+    if (!rows.length) throw new Error("Add at least one grant");
+    return rows.map((row) => {
+      const scopeType = row.querySelector(".grant-scope")?.value;
+      const scopeValue = row.querySelector(".grant-value")?.value || "";
+      if (scopeType !== "global" && !scopeValue.trim()) {
+        throw new Error("Every non-global grant needs a target");
+      }
+      const permissions = ["L", "R", "W"].filter((name) => (
+        row.querySelector(`[data-permission="${name}"]`)?.checked
+      ));
+      return {
+        scope_type: scopeType,
+        scope_value: scopeType === "global" ? "" : scopeValue,
+        permissions,
+        allow_replace: Boolean(row.querySelector(".grant-replace")?.checked),
+      };
+    });
+  }
+
+  function resetTokenForm() {
+    if (!tokenForm) return;
+    tokenForm.reset();
+    tokenDuration.disabled = false;
+    tokenGrants.replaceChildren();
+    addGrantRow();
+  }
+
+  function tokenTime(value) {
+    if (value === null || value === undefined) return "Never";
+    const milliseconds = Number(value) * 1000;
+    if (!Number.isFinite(milliseconds) || milliseconds > 8640000000000000) return "Far future";
+    const date = new Date(milliseconds);
+    return Number.isNaN(date.getTime()) ? "Unknown" : date.toLocaleString();
+  }
+
+  function suspensionKey(scopeType, scopeValue = "") {
+    return `${scopeType}\u0000${scopeValue}`;
+  }
+
+  function suspensionSet() {
+    return new Set((state.tokenAdmin?.suspensions || []).map((item) => (
+      suspensionKey(item.scope_type, item.scope_value || "")
+    )));
+  }
+
+  function renderTokenList() {
+    if (!tokenList) return;
+    tokenList.replaceChildren();
+    const records = Array.isArray(state.tokenAdmin?.tokens) ? state.tokenAdmin.tokens : [];
+    if (!records.length) {
+      const empty = document.createElement("p");
+      empty.className = "muted";
+      empty.textContent = "No bearer tokens have been issued.";
+      tokenList.appendChild(empty);
+      return;
+    }
+    for (const token of records) {
+      const card = document.createElement("article");
+      card.className = `token-card token-state-${token.state || "unknown"}`;
+      const head = document.createElement("div");
+      head.className = "token-card-head";
+      const title = document.createElement("h4");
+      title.textContent = token.label || "Unnamed token";
+      const stateBadge = document.createElement("span");
+      stateBadge.className = "token-state";
+      stateBadge.textContent = token.state || "unknown";
+      head.append(title, stateBadge);
+      const identifier = document.createElement("code");
+      identifier.textContent = token.token_id || "";
+      const expiry = document.createElement("p");
+      expiry.className = "muted token-meta";
+      expiry.textContent = `Created ${tokenTime(token.created_at)}; expires ${tokenTime(token.expires_at)}`;
+      const grants = document.createElement("ul");
+      grants.className = "token-grant-summary";
+      for (const grant of token.grants || []) {
+        const item = document.createElement("li");
+        const target = grant.scope_type === "global"
+          ? "all zones"
+          : `${grant.scope_type}: ${grant.scope_value || ""}`;
+        const rights = (grant.permissions || []).join("") || "none";
+        item.textContent = `${target} [${rights}] - ${grant.status || "unknown"}`;
+        grants.appendChild(item);
+      }
+      const actions = document.createElement("div");
+      actions.className = "token-actions";
+      const extend = document.createElement("button");
+      extend.type = "button";
+      extend.className = "small-btn";
+      extend.textContent = "Extend";
+      extend.disabled = token.state === "revoked";
+      extend.addEventListener("click", () => tokenLifecycleAction(token, "extend"));
+      const rotate = document.createElement("button");
+      rotate.type = "button";
+      rotate.className = "small-btn";
+      rotate.textContent = "Rotate";
+      rotate.disabled = token.state === "revoked";
+      rotate.addEventListener("click", () => tokenLifecycleAction(token, "rotate"));
+      const revoke = document.createElement("button");
+      revoke.type = "button";
+      revoke.className = "small-btn danger-btn";
+      revoke.textContent = "Revoke";
+      revoke.disabled = token.state === "revoked";
+      revoke.addEventListener("click", () => tokenRevokeAction(token));
+      actions.append(extend, rotate, revoke);
+      card.append(head, identifier, expiry, grants, actions);
+      tokenList.appendChild(card);
+    }
+  }
+
+  function renderSuspensions() {
+    if (!suspensionList) return;
+    suspensionList.replaceChildren();
+    const catalog = tokenCatalog();
+    const definitions = [
+      { scope_type: "global", scope_value: "", label: "All bearer tokens" },
+      ...catalog.zones.map((zone) => ({
+        scope_type: "zone", scope_value: zone.id,
+        label: `Zone: ${zone.label || zone.id} (${zone.id})`,
+      })),
+      ...catalog.groups.map((group) => ({
+        scope_type: "group", scope_value: group.name,
+        label: `Group: ${group.name}`,
+      })),
+    ];
+    if (!definitions.length) {
+      const empty = document.createElement("p");
+      empty.className = "muted";
+      empty.textContent = "No suspendable scopes are configured.";
+      suspensionList.appendChild(empty);
+      return;
+    }
+    const active = suspensionSet();
+    for (const definition of definitions) {
+      const row = document.createElement("div");
+      row.className = "suspension-row";
+      const label = document.createElement("span");
+      label.textContent = definition.label;
+      const status = document.createElement("span");
+      const suspended = active.has(suspensionKey(definition.scope_type, definition.scope_value));
+      status.className = suspended ? "token-state token-state-suspended" : "muted";
+      status.textContent = suspended ? "suspended" : "active";
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = suspended ? "small-btn" : "small-btn danger-btn";
+      button.textContent = suspended ? "Resume" : "Suspend";
+      button.addEventListener("click", () => setTokenSuspension(
+        definition.scope_type,
+        definition.scope_value,
+        !suspended,
+      ));
+      row.append(label, status, button);
+      suspensionList.appendChild(row);
+    }
+  }
+
+  function renderTokenAdmin() {
+    renderTokenList();
+    renderSuspensions();
+    if (tokenGrants && !tokenGrants.children.length) addGrantRow();
+  }
+
+  async function loadTokenAdmin() {
+    if (!state.authEnabled || !accessButton) return null;
+    if (state.accessRequestInFlight) return state.tokenAdmin;
+    state.accessRequestInFlight = true;
+    try {
+      const payload = await api("/api/tokens", { redirectOnUnauthorized: false });
+      if (!payload || !Array.isArray(payload.tokens)) throw new Error("invalid access response");
+      state.tokenAdmin = payload;
+      state.accessAdmin = true;
+      state.accessAdminLoaded = true;
+      accessButton.hidden = false;
+      renderTokenAdmin();
+      return payload;
+    } catch (err) {
+      state.accessAdmin = false;
+      state.accessAdminLoaded = true;
+      accessButton.hidden = true;
+      if (isDialogOpen(accessDialog)) setAccessMessage(err.message, "error");
+      return null;
+    } finally {
+      state.accessRequestInFlight = false;
+    }
+  }
+
+  function tokenDurationPrompt(action) {
+    const raw = window.prompt(
+      `${action} duration in seconds (leave blank for a permanent token):`,
+      "2592000",
+    );
+    if (raw === null) return undefined;
+    if (!raw.trim()) return null;
+    const value = Number(raw);
+    if (!Number.isSafeInteger(value) || value <= 0) {
+      setAccessMessage("Duration must be a positive integer.", "error");
+      return undefined;
+    }
+    return value;
+  }
+
+  async function tokenLifecycleAction(token, action) {
+    const duration = tokenDurationPrompt(action === "rotate" ? "Rotation" : "Extension");
+    if (duration === undefined) return;
+    try {
+      const payload = await api(
+        `/api/tokens/${encodeURIComponent(token.token_id)}/${action}`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ duration_seconds: duration }),
+        },
+      );
+      if (action === "rotate") showTokenSecret(payload.token, "Rotated");
+      setAccessMessage(`${action === "rotate" ? "Token rotated" : "Token extended"}.`);
+      await loadTokenAdmin();
+    } catch (err) {
+      setAccessMessage(err.message, "error");
+    }
+  }
+
+  async function tokenRevokeAction(token) {
+    if (!window.confirm(`Revoke token ${token.label || token.token_id}?`)) return;
+    try {
+      await api(`/api/tokens/${encodeURIComponent(token.token_id)}`, { method: "DELETE" });
+      setAccessMessage("Token revoked.");
+      await loadTokenAdmin();
+    } catch (err) {
+      setAccessMessage(err.message, "error");
+    }
+  }
+
+  async function setTokenSuspension(scopeType, scopeValue, suspended) {
+    try {
+      await api("/api/token-suspensions", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          scope_type: scopeType,
+          scope_value: scopeValue,
+          suspended,
+        }),
+      });
+      setAccessMessage(suspended ? "Scope suspended." : "Scope resumed.");
+      await loadTokenAdmin();
+    } catch (err) {
+      setAccessMessage(err.message, "error");
+    }
+  }
+
+  async function openAccessPanel() {
+    if (!state.accessAdmin && !(await loadTokenAdmin())) return;
+    clearTokenSecret();
+    setAccessMessage("");
+    openDialog(accessDialog, accessButton);
+  }
+
+  function closeAccessPanel() {
+    if (!accessDialog) return;
+    if (closeDialog(accessDialog)) return;
+    clearTokenSecret();
+    setAccessMessage("");
+    restoreDialogInvoker(accessDialog);
+  }
+
+  if (accessButton) accessButton.addEventListener("click", openAccessPanel);
+  if (accessClose) accessClose.addEventListener("click", closeAccessPanel);
+  if (accessDialog) accessDialog.addEventListener("close", () => {
+    clearTokenSecret();
+    setAccessMessage("");
+    restoreDialogInvoker(accessDialog);
+  });
+  if (accessDialog) accessDialog.addEventListener("click", (event) => {
+    if (event.target === accessDialog) closeAccessPanel();
+  });
+  if (accessBackdrop) accessBackdrop.addEventListener("click", closeAccessPanel);
+  if (addGrantButton) addGrantButton.addEventListener("click", () => addGrantRow());
+  if (refreshTokensButton) refreshTokensButton.addEventListener("click", async () => {
+    await loadTokenAdmin();
+    setAccessMessage("Access data refreshed.");
+  });
+  if (tokenPermanent) tokenPermanent.addEventListener("change", () => {
+    tokenDuration.disabled = tokenPermanent.checked;
+    if (tokenPermanent.checked) tokenDuration.value = "";
+  });
+  if (tokenForm) tokenForm.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    try {
+      const duration = tokenPermanent.checked ? null : Number(tokenDuration.value);
+      if (duration !== null && (!Number.isSafeInteger(duration) || duration <= 0)) {
+        throw new Error("Duration must be a positive integer or permanent.");
+      }
+      const label = tokenLabel.value.trim();
+      if (!label) throw new Error("A token label is required.");
+      const payload = await api("/api/tokens", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          label,
+          duration_seconds: duration,
+          grants: collectTokenGrants(),
+        }),
+      });
+      showTokenSecret(payload.token, "Created");
+      setAccessMessage("Token created. Copy the secret before closing this panel.");
+      resetTokenForm();
+      await loadTokenAdmin();
+    } catch (err) {
+      setAccessMessage(err.message, "error");
+    }
+  });
 
   // ---------------------------------------------------------------- clipboard
 
@@ -2712,7 +3475,8 @@ window.addEventListener('pagehide',()=>{for(const url of objectURLs)URL.revokeOb
       const zone = state.zones.find(item => item.id === zoneId);
       const index = zone ? zone.items.findIndex(item => item.id === itemId) : -1;
       if (zone && index >= 0) zone.items[index] = Object.assign({}, zone.items[index], updated);
-      rerenderZone(zoneId);
+      discardCommentDraft(zoneId, itemId);
+      rerenderZone(zoneId, { preserveCommentDraft: false });
       toast("Comment saved");
     }).catch(err => {
       toast(err.message, "error");
@@ -2745,7 +3509,10 @@ window.addEventListener('pagehide',()=>{for(const url of objectURLs)URL.revokeOb
       cancel.type = "button";
       cancel.className = "ghost-btn";
       cancel.textContent = "Cancel";
-      cancel.addEventListener("click", () => rerenderZone(zoneId));
+      cancel.addEventListener("click", () => {
+        discardCommentDraft(zoneId, item.id);
+        rerenderZone(zoneId, { preserveCommentDraft: false });
+      });
       input.addEventListener("keydown", event => {
         if (event.key !== "Enter") return;
         event.stopPropagation();
@@ -2760,6 +3527,8 @@ window.addEventListener('pagehide',()=>{for(const url of objectURLs)URL.revokeOb
       form.append(input, save, cancel);
       control.replaceChildren(form);
       input.focus();
+      const main = control.closest(".tab-zone-main");
+      if (main) rebalanceTabZoneColumns(main);
     });
     control.appendChild(button);
     return control;
@@ -2883,6 +3652,11 @@ window.addEventListener('pagehide',()=>{for(const url of objectURLs)URL.revokeOb
       setPreviewSource(img, item.content_url);
       img.alt = `Latest image ${item.filename}`;
       img.title = itemDetails(zoneId, item);
+      const hasDimensions = item.width > 0 && item.height > 0;
+      if (hasDimensions) {
+        img.width = item.width;
+        img.height = item.height;
+      }
       img.loading = "lazy";
       img.tabIndex = 0;
       img.setAttribute("role", "button");
@@ -2890,6 +3664,12 @@ window.addEventListener('pagehide',()=>{for(const url of objectURLs)URL.revokeOb
         "aria-label",
         `Open preview of ${item.filename}${newAccessibleSuffix(zoneId, item.id)}`,
       );
+      if (!hasDimensions) {
+        img.addEventListener("load", () => {
+          const main = card.closest(".tab-zone-main");
+          if (main) scheduleTabZoneRebalance(main);
+        });
+      }
       card.append(img, right);
     } else {
       const box = document.createElement("div");
@@ -3048,6 +3828,227 @@ window.addEventListener('pagehide',()=>{for(const url of objectURLs)URL.revokeOb
     return state.groups.filter(groupIsDisplayed);
   }
 
+  function captureThumbScrollTops() {
+    const positions = new Map();
+    for (const thumbs of grid.querySelectorAll(".zone[data-zone] .thumbs")) {
+      const zone = thumbs.closest(".zone[data-zone]");
+      if (zone) positions.set(zone.dataset.zone, thumbs.scrollTop);
+    }
+    return positions;
+  }
+
+  function restoreThumbScrollTops(positions) {
+    for (const [zoneId, scrollTop] of positions) {
+      const thumbs = grid.querySelector(
+        `.zone[data-zone="${CSS.escape(zoneId)}"] .thumbs`,
+      );
+      if (thumbs) thumbs.scrollTop = scrollTop;
+    }
+  }
+
+  function captureTabSidebarScroll() {
+    const sidebar = grid.querySelector(".tab-zone-list");
+    return sidebar ? { left: sidebar.scrollLeft, top: sidebar.scrollTop } : null;
+  }
+
+  function restoreTabSidebarScroll(position) {
+    if (!position) return;
+    const sidebar = grid.querySelector(".tab-zone-list");
+    if (!sidebar) return;
+    sidebar.scrollLeft = position.left;
+    sidebar.scrollTop = position.top;
+  }
+
+  function captureGridFocus() {
+    const active = document.activeElement;
+    if (!active || active === document.body || !grid.contains(active)) return null;
+    const owner = active.closest(".zone[data-zone], .tab-zone-link");
+    if (!owner) return null;
+    const item = active.closest("[data-item-id]");
+    return {
+      classes: [...active.classList].filter(name => !TRANSIENT_FOCUS_CLASSES.has(name)),
+      focusType: active.closest(".comment-control") ? "comment" : null,
+      itemId: item?.dataset.itemId || null,
+      tagName: active.tagName,
+      zoneId: owner.dataset.zone,
+    };
+  }
+
+  function captureExternalFocus() {
+    const active = document.activeElement;
+    return active && active !== document.body && !grid.contains(active) ? active : null;
+  }
+
+  function restoreExternalFocus(active) {
+    if (active?.isConnected && typeof active.focus === "function") active.focus();
+  }
+
+  function restoreGridFocus(descriptor) {
+    if (!descriptor) return;
+    const candidates = grid.querySelectorAll("button, select, textarea, input, [tabindex]");
+    for (const candidate of candidates) {
+      if (candidate.tagName !== descriptor.tagName) continue;
+      if (!descriptor.classes.every(name => candidate.classList.contains(name))) continue;
+      const owner = candidate.closest(".zone[data-zone], .tab-zone-link");
+      if (!owner || owner.dataset.zone !== descriptor.zoneId) continue;
+      const item = candidate.closest("[data-item-id]");
+      if ((item?.dataset.itemId || null) !== descriptor.itemId) continue;
+      candidate.focus();
+      return;
+    }
+    if (descriptor.focusType === "comment") {
+      const button = grid.querySelector(
+        `.zone[data-zone="${CSS.escape(descriptor.zoneId)}"] `
+          + `.latest[data-item-id="${CSS.escape(descriptor.itemId)}"] .comment-btn`,
+      );
+      if (button) button.focus();
+    }
+  }
+
+  function captureCommentDrafts() {
+    for (const editor of grid.querySelectorAll(".comment-editor")) {
+      const zone = editor.closest(".zone[data-zone]");
+      const item = editor.closest(".latest[data-item-id]");
+      const input = editor.querySelector("textarea");
+      if (!zone || !item || !input) continue;
+      const drafts = state.commentDraftsByZone[zone.dataset.zone]
+        || (state.commentDraftsByZone[zone.dataset.zone] = Object.create(null));
+      drafts[item.dataset.itemId] = input.value;
+    }
+  }
+
+  function discardCommentDraft(zoneId, itemId) {
+    const drafts = state.commentDraftsByZone[zoneId];
+    if (!drafts) return;
+    delete drafts[itemId];
+    if (!Object.keys(drafts).length) delete state.commentDraftsByZone[zoneId];
+  }
+
+  function restoreCommentDrafts() {
+    for (const [zoneId, drafts] of Object.entries(state.commentDraftsByZone)) {
+      for (const [itemId, value] of Object.entries(drafts)) {
+        const button = grid.querySelector(
+          `.zone[data-zone="${CSS.escape(zoneId)}"] `
+            + `.latest[data-item-id="${CSS.escape(itemId)}"] .comment-btn`,
+        );
+        if (!button) continue;
+        const control = button.closest(".comment-control");
+        button.click();
+        const editor = control?.querySelector(".comment-editor");
+        const input = editor?.querySelector("textarea");
+        if (input) input.value = value;
+      }
+    }
+  }
+
+  function tabZoneColumnCount(main, zoneCount) {
+    if (!zoneCount) return 0;
+    const styles = getComputedStyle(main);
+    const rootFontSize = Number.parseFloat(getComputedStyle(document.documentElement).fontSize) || 16;
+    const minimumZoneWidth = 27 * rootFontSize;
+    const gap = Number.parseFloat(styles.columnGap) || 14;
+    const horizontalPadding = (Number.parseFloat(styles.paddingLeft) || 0)
+      + (Number.parseFloat(styles.paddingRight) || 0);
+    const availableWidth = Math.max(0, main.clientWidth - horizontalPadding);
+    return Math.max(
+      1,
+      Math.min(
+        zoneCount,
+        Math.floor((availableWidth + gap) / (minimumZoneWidth + gap)),
+      ),
+    );
+  }
+
+  function cancelScheduledTabZoneRebalance(main) {
+    if (!tabZoneRebalanceFrames.has(main)) return;
+    window.cancelAnimationFrame(tabZoneRebalanceFrames.get(main));
+    tabZoneRebalanceFrames.delete(main);
+  }
+
+  function releaseTabZoneObservers(root) {
+    const mains = root.matches?.(".tab-zone-main")
+      ? [root]
+      : [...root.querySelectorAll(".tab-zone-main")];
+    for (const main of mains) {
+      cancelScheduledTabZoneRebalance(main);
+      if (!tabZoneResizeObserver) continue;
+      tabZoneResizeObserver.unobserve(main);
+      for (const zone of main.querySelectorAll(":scope > .zone[data-zone]")) {
+        tabZoneResizeObserver.unobserve(zone);
+      }
+    }
+  }
+
+  function distributeTabZoneElements(main, elements, columnCount) {
+    const styles = getComputedStyle(main);
+    const gap = Number.parseFloat(styles.columnGap) || 14;
+    const paddingLeft = Number.parseFloat(styles.paddingLeft) || 0;
+    const paddingRight = Number.parseFloat(styles.paddingRight) || 0;
+    const paddingTop = Number.parseFloat(styles.paddingTop) || 0;
+    const paddingBottom = Number.parseFloat(styles.paddingBottom) || 0;
+    const availableWidth = Math.max(0, main.clientWidth - paddingLeft - paddingRight);
+    const columnWidth = Math.max(
+      0,
+      (availableWidth - gap * (columnCount - 1)) / columnCount,
+    );
+    const columnHeights = Array.from({ length: columnCount }, () => 0);
+    main.style.removeProperty("grid-template-columns");
+    main.replaceChildren(...elements);
+    for (const zone of elements) {
+      const columnIndex = columnHeights.indexOf(Math.min(...columnHeights));
+      zone.style.position = "absolute";
+      zone.style.width = `${columnWidth}px`;
+      zone.style.left = `${paddingLeft + columnIndex * (columnWidth + gap)}px`;
+      zone.style.top = `${paddingTop + columnHeights[columnIndex]}px`;
+      columnHeights[columnIndex] += zone.getBoundingClientRect().height + gap;
+      tabZoneResizeObserver?.observe(zone);
+    }
+    const contentHeight = Math.max(...columnHeights, 0) - (elements.length ? gap : 0);
+    main.style.height = `${paddingTop + contentHeight + paddingBottom}px`;
+    main.dataset.columnCount = String(columnCount);
+    tabZoneResizeObserver?.observe(main);
+  }
+
+  function rebalanceTabZoneColumns(main) {
+    cancelScheduledTabZoneRebalance(main);
+    const elements = new Map(
+      [...main.querySelectorAll(":scope > .zone[data-zone]")]
+        .map(element => [element.dataset.zone, element]),
+    );
+    const zones = getVisibleZones()
+      .map(zone => elements.get(zone.id))
+      .filter(Boolean);
+    if (zones.length !== elements.size) return;
+    if (!zones.length) {
+      releaseTabZoneObservers(main);
+      main.replaceChildren();
+      main.style.removeProperty("grid-template-columns");
+      main.style.removeProperty("height");
+      delete main.dataset.columnCount;
+      return;
+    }
+    const focus = captureGridFocus();
+    const columns = tabZoneColumnCount(main, zones.length);
+    distributeTabZoneElements(main, zones, columns);
+    restoreGridFocus(focus);
+  }
+
+  function scheduleTabZoneRebalance(main) {
+    if (tabZoneRebalanceFrames.has(main)) return;
+    const frame = window.requestAnimationFrame(() => {
+      tabZoneRebalanceFrames.delete(main);
+      if (main.isConnected) rebalanceTabZoneColumns(main);
+    });
+    tabZoneRebalanceFrames.set(main, frame);
+  }
+
+  function renderTabZoneColumns(main, zones) {
+    if (!zones.length) return;
+    const elements = zones.map(renderZone);
+    const columnCount = tabZoneColumnCount(main, elements.length);
+    distributeTabZoneElements(main, elements, columnCount);
+  }
+
   function reconcileActiveGroup() {
     const previous = state.activeGroupId;
     if (!state.groups.length) {
@@ -3069,6 +4070,12 @@ window.addEventListener('pagehide',()=>{for(const url of objectURLs)URL.revokeOb
   }
 
   function renderAll() {
+    const thumbScrollTops = captureThumbScrollTops();
+    const tabSidebarScroll = captureTabSidebarScroll();
+    const focus = captureGridFocus();
+    const externalFocus = captureExternalFocus();
+    captureCommentDrafts();
+    releaseTabZoneObservers(grid);
     grid.replaceChildren();
     const visibleZones = getVisibleZones();
     const visibleIds = new Set(visibleZones.map(zone => zone.id));
@@ -3089,6 +4096,11 @@ window.addEventListener('pagehide',()=>{for(const url of objectURLs)URL.revokeOb
     if (!group || !tabLayout) {
       state.tabSelectionAnchorId = null;
       for (const zone of visibleZones) grid.appendChild(renderZone(zone));
+      restoreCommentDrafts();
+      restoreThumbScrollTops(thumbScrollTops);
+      restoreGridFocus(focus);
+      restoreTabSidebarScroll(tabSidebarScroll);
+      restoreExternalFocus(externalFocus);
       return;
     }
 
@@ -3126,9 +4138,14 @@ window.addEventListener('pagehide',()=>{for(const url of objectURLs)URL.revokeOb
     main.id = "tab-zone-main";
     main.setAttribute("aria-label", "Open zones");
     const openZones = visibleZones.filter(zone => state.openZoneIds.includes(zone.id));
-    for (const zone of openZones) main.appendChild(renderZone(zone));
     if (showTabSidebar) grid.append(list, main);
     else grid.append(main);
+    renderTabZoneColumns(main, openZones);
+    restoreCommentDrafts();
+    restoreThumbScrollTops(thumbScrollTops);
+    restoreGridFocus(focus);
+    restoreTabSidebarScroll(tabSidebarScroll);
+    restoreExternalFocus(externalFocus);
   }
 
   function toggleOpenZone(zoneId, event = {}) {
@@ -3184,7 +4201,7 @@ window.addEventListener('pagehide',()=>{for(const url of objectURLs)URL.revokeOb
   }
 
   function applicationDialogOpen() {
-    return isDialogOpen(pv) || isDialogOpen(replacementDialog);
+    return isDialogOpen(pv) || isDialogOpen(replacementDialog) || isDialogOpen(accessDialog);
   }
 
   function dialogInvokerSelector(candidate) {
@@ -3288,10 +4305,25 @@ window.addEventListener('pagehide',()=>{for(const url of objectURLs)URL.revokeOb
     return true;
   }
 
-  function rerenderZone(zoneId) {
+  function rerenderZone(zoneId, { preserveCommentDraft = true } = {}) {
     const zone = state.zones.find(z => z.id === zoneId);
     const old = grid.querySelector(`.zone[data-zone="${CSS.escape(zoneId)}"]`);
-    if (zone && old) old.replaceWith(renderZone(zone));
+    if (zone && old) {
+      const focus = captureGridFocus();
+      const externalFocus = captureExternalFocus();
+      if (preserveCommentDraft) captureCommentDrafts();
+      const oldThumbs = old.querySelector(".thumbs");
+      const next = renderZone(zone);
+      const nextThumbs = next.querySelector(".thumbs");
+      if (oldThumbs && nextThumbs) nextThumbs.scrollTop = oldThumbs.scrollTop;
+      tabZoneResizeObserver?.unobserve(old);
+      old.replaceWith(next);
+      restoreCommentDrafts();
+      restoreGridFocus(focus);
+      restoreExternalFocus(externalFocus);
+      const main = next.closest(".tab-zone-main");
+      if (main) rebalanceTabZoneColumns(main);
+    }
   }
 
   function refreshUploadedZone(zoneId) {
@@ -3589,6 +4621,13 @@ window.addEventListener('pagehide',()=>{for(const url of objectURLs)URL.revokeOb
       state.showFullPath = overview.show_full_path !== false;
       state.maxArchiveFiles = overview.max_archive_files ?? null;
       logoutForm.hidden = !state.authEnabled;
+      if (!state.authEnabled) {
+        state.accessAdmin = false;
+        state.accessAdminLoaded = true;
+        if (accessButton) accessButton.hidden = true;
+      } else if (!state.accessAdminLoaded || isDialogOpen(accessDialog)) {
+        await loadTokenAdmin();
+      }
       state.zones = nextZones;
       state.groups = overview.groups || [];
       for (const zoneId of Object.keys(state.selectedByZone)) {
@@ -4000,7 +5039,11 @@ window.addEventListener('pagehide',()=>{for(const url of objectURLs)URL.revokeOb
 
   function openDialog(dialog, invoker = document.activeElement) {
     rememberDialogInvoker(dialog, invoker);
-    const backdrop = dialog === pv ? previewBackdrop : replacementBackdrop;
+    const backdrop = dialog === pv
+      ? previewBackdrop
+      : dialog === replacementDialog
+        ? replacementBackdrop
+        : accessBackdrop;
     if (typeof dialog.showModal === "function") {
       dialog.classList.remove("dialog-fallback");
       if (backdrop) backdrop.hidden = true;
@@ -4015,7 +5058,11 @@ window.addEventListener('pagehide',()=>{for(const url of objectURLs)URL.revokeOb
   }
 
   function closeDialog(dialog, returnValue = "") {
-    const backdrop = dialog === pv ? previewBackdrop : replacementBackdrop;
+    const backdrop = dialog === pv
+      ? previewBackdrop
+      : dialog === replacementDialog
+        ? replacementBackdrop
+        : accessBackdrop;
     if (dialog.classList.contains("dialog-fallback")) {
       dialog.classList.remove("dialog-fallback");
       dialog.removeAttribute("open");
@@ -4416,13 +5463,14 @@ window.addEventListener('pagehide',()=>{for(const url of objectURLs)URL.revokeOb
   });
 
   document.addEventListener("keydown", (event) => {
-    const fallbackDialog = [pv, replacementDialog]
+    const fallbackDialog = [pv, replacementDialog, accessDialog]
       .find(dialog => dialog.classList.contains("dialog-fallback"));
     if (fallbackDialog) {
       if (event.key === "Escape") {
         event.preventDefault();
         if (fallbackDialog === pv) closePreview();
-        else closeReplacementPrompt(false);
+        else if (fallbackDialog === replacementDialog) closeReplacementPrompt(false);
+        else closeAccessPanel();
       } else if (event.key === "Tab") {
         trapFallbackDialog(event, fallbackDialog);
       }
@@ -4671,6 +5719,16 @@ window.addEventListener('pagehide',()=>{for(const url of objectURLs)URL.revokeOb
 
   document.addEventListener("visibilitychange", () => {
     if (document.visibilityState === "visible") boot(true);
+  });
+
+  window.addEventListener("resize", () => {
+    if (!grid.classList.contains("tab-layout")) return;
+    clearTimeout(tabLayoutResizeTimer);
+    tabLayoutResizeTimer = window.setTimeout(() => {
+      tabLayoutResizeTimer = null;
+      const main = grid.querySelector(".tab-zone-main");
+      if (main) rebalanceTabZoneColumns(main);
+    }, 100);
   });
 
   // Lightweight synchronization across tabs and machines.

@@ -61,6 +61,51 @@ async function addTertiaryTabZone(page) {
   });
 }
 
+async function addMasonryTabZones(page) {
+  await page.route("**/api/zones?schema=items", async (route) => {
+    if (route.request().method() !== "GET") {
+      await route.continue();
+      return;
+    }
+    const response = await route.fetch();
+    const overview = await response.json();
+    const makeItem = (zoneId, comment = "", kind = "binary") => ({
+      id: `${zoneId}-item`,
+      filename: `${zoneId}.txt`,
+      kind,
+      mime: kind === "image" ? "image/png" : "text/plain",
+      size: 4,
+      reference: `@${zoneId}.txt`,
+      content_url: `data:image/png;base64,${ONE_PIXEL_PNG}`,
+      created_at: "2026-01-01T12:00:00Z",
+      comment,
+      ...(kind === "image" ? { width: 320, height: 180 } : {}),
+    });
+    const defaultZone = overview.zones.find(zone => zone.id === "default");
+    const secondaryZone = overview.zones.find(zone => zone.id === "secondary");
+    defaultZone.items = [makeItem("default"), makeItem("default-history")];
+    secondaryZone.items = [makeItem(
+      "secondary",
+      "A long comment keeps this zone taller than its neighbors. ".repeat(40),
+    )];
+    const extras = Array.from({ length: 40 }, (_, index) => ({
+      ...defaultZone,
+      id: `tab-${index}`,
+      label: `Tab zone ${index}`,
+      items: [],
+    }));
+    extras[0].items = [makeItem("tab-0", "", "image")];
+    overview.zones.push(...extras);
+    const zoneIds = overview.zones.map(zone => zone.id);
+    for (const groupName of ["All", "Tabbed"]) {
+      const group = overview.groups.find(item => item.name === groupName);
+      group.zone_ids = zoneIds;
+      group.zone_count = zoneIds.length;
+    }
+    await route.fulfill({ response, json: overview });
+  });
+}
+
 async function dispatchPaste(page) {
   await page.evaluate((base64) => {
     const bytes = Uint8Array.from(atob(base64), (char) => char.charCodeAt(0));
@@ -736,6 +781,159 @@ test("le layout tab ouvre une zone et permet une sélection multiple au Shift-cl
   await expect(page.locator(".tab-zone-list")).toBeVisible();
   await expect(page.locator('.tab-zone-main .zone[data-zone="secondary"]')).toHaveCount(1);
   await expect(page.locator(".tab-zone-main .zone")).toHaveCount(1);
+});
+
+test("le layout tab empile les colonnes et fait défiler la liste des zones", async ({ page }) => {
+  await page.setViewportSize({ width: 1200, height: 800 });
+  await addMasonryTabZones(page);
+  await page.goto("/", { waitUntil: "domcontentloaded" });
+  await expect(page.locator("#status-text")).toHaveText("online");
+  await page.locator('.group-tab[data-group="Tabbed"]').click();
+
+  const sidebar = page.locator(".tab-zone-list");
+  await expect(sidebar).toHaveCSS("min-height", "240px");
+  await expect(sidebar).toHaveCSS("overflow-y", "auto");
+  const sidebarDimensions = await sidebar.evaluate(element => ({
+    clientHeight: element.clientHeight,
+    scrollHeight: element.scrollHeight,
+    viewportHeight: window.innerHeight,
+  }));
+  expect(sidebarDimensions.scrollHeight).toBeGreaterThan(sidebarDimensions.clientHeight);
+  expect(sidebarDimensions.clientHeight).toBeLessThanOrEqual(sidebarDimensions.viewportHeight);
+  const sidebarFocusLink = sidebar.locator('.tab-zone-link[data-zone="default"]');
+  await sidebarFocusLink.focus();
+  const sidebarScrollTop = await sidebar.evaluate(element => {
+    element.scrollTop = element.scrollHeight;
+    return element.scrollTop;
+  });
+  expect(sidebarScrollTop).toBeGreaterThan(0);
+  const refresh = page.waitForResponse(
+    response => response.url().endsWith("/api/zones?schema=items"),
+  );
+  await page.evaluate(() => document.dispatchEvent(new Event("visibilitychange")));
+  await refresh;
+  await expect.poll(() => sidebar.evaluate(element => element.scrollTop)).toBe(sidebarScrollTop);
+  await expect(sidebarFocusLink).toBeFocused();
+
+  const defaultLink = page.locator('.tab-zone-link[data-zone="default"]');
+  const secondaryLink = page.locator('.tab-zone-link[data-zone="secondary"]');
+  const tertiaryLink = page.locator('.tab-zone-link[data-zone="tab-0"]');
+  await defaultLink.click();
+  await secondaryLink.click({ modifiers: ["Control"] });
+  await tertiaryLink.click({ modifiers: ["Control"] });
+  await expect(page.locator(".tab-zone-main .zone")).toHaveCount(3);
+  await expect(page.locator('.tab-zone-main .zone[data-zone="tab-0"] .thumb-big'))
+    .toHaveAttribute("width", "320");
+
+  const dimensions = await page.locator(".tab-zone-main .zone").evaluateAll(elements => (
+    Object.fromEntries(elements.map(element => [element.dataset.zone, {
+      top: element.getBoundingClientRect().top,
+      bottom: element.getBoundingClientRect().bottom,
+      height: element.getBoundingClientRect().height,
+    }]))
+  ));
+  expect(dimensions.secondary.height).toBeGreaterThan(dimensions.default.height);
+  expect(dimensions["tab-0"].top).toBeGreaterThan(dimensions.default.bottom);
+  expect(dimensions["tab-0"].top).toBeLessThan(dimensions.secondary.bottom);
+
+  await defaultLink.focus();
+  await page.setViewportSize({ width: 500, height: 800 });
+  await expect.poll(() => page.locator(".tab-zone-main").getAttribute("data-column-count")).toBe("1");
+  await expect(defaultLink).toBeFocused();
+  await page.setViewportSize({ width: 1200, height: 300 });
+  await expect.poll(() => page.locator(".tab-zone-main").getAttribute("data-column-count")).toBe("2");
+  await expect.poll(() => page.locator(".tab-zone-list").evaluate(element => (
+    element.getBoundingClientRect().bottom <= window.innerHeight
+  ))).toBe(true);
+  const domOrder = await page.locator(".tab-zone-main > .zone").evaluateAll(elements => (
+    elements.map(element => element.dataset.zone)
+  ));
+  expect(domOrder).toEqual(["default", "secondary", "tab-0"]);
+});
+
+test("préserve le focus et l’éditeur pendant les rerendus du layout tab", async ({ page }) => {
+  await page.setViewportSize({ width: 1200, height: 800 });
+  await addMasonryTabZones(page);
+  await page.route("**/api/zones/default/items/default-item/comment", async route => {
+    if (route.request().method() !== "PATCH") {
+      await route.continue();
+      return;
+    }
+    const payload = route.request().postDataJSON();
+    await route.fulfill({ json: { comment: payload.comment } });
+  });
+  await page.goto("/", { waitUntil: "domcontentloaded" });
+  await expect(page.locator("#status-text")).toHaveText("online");
+  await page.locator('.group-tab[data-group="Tabbed"]').click();
+
+  const defaultLink = page.locator('.tab-zone-link[data-zone="default"]');
+  const secondaryLink = page.locator('.tab-zone-link[data-zone="secondary"]');
+  const tertiaryLink = page.locator('.tab-zone-link[data-zone="tab-0"]');
+  await defaultLink.click();
+  await secondaryLink.click({ modifiers: ["Control"] });
+  await tertiaryLink.click({ modifiers: ["Control"] });
+
+  const defaultZone = page.locator('.tab-zone-main .zone[data-zone="default"]');
+  await defaultZone.locator(".comment-btn").click();
+  const editor = defaultZone.locator(".comment-editor");
+  const input = editor.locator("textarea");
+  const unsavedComment = "Unsaved comment survives responsive reflow";
+  await input.fill(unsavedComment);
+  await input.evaluate(element => { element.style.height = "220px"; });
+  await expect.poll(() => page.evaluate(() => {
+    const zone = document.querySelector('.tab-zone-main .zone[data-zone="default"]');
+    const next = document.querySelector('.tab-zone-main .zone[data-zone="tab-0"]');
+    if (!zone || !next) return true;
+    const zoneRect = zone.getBoundingClientRect();
+    const nextRect = next.getBoundingClientRect();
+    return nextRect.right <= zoneRect.left
+      || nextRect.left >= zoneRect.right
+      || nextRect.top >= zoneRect.bottom;
+  })).toBe(true);
+
+  await page.setViewportSize({ width: 500, height: 800 });
+  await expect.poll(() => page.locator(".tab-zone-main").getAttribute("data-column-count")).toBe("1");
+  await expect(input).toHaveValue(unsavedComment);
+  await expect(input).toBeFocused();
+
+  await page.setViewportSize({ width: 1200, height: 800 });
+  await expect.poll(() => page.locator(".tab-zone-main").getAttribute("data-column-count")).toBe("2");
+  await expect(input).toHaveValue(unsavedComment);
+  await expect(input).toBeFocused();
+
+  const refreshWithDraft = page.waitForResponse(
+    response => response.url().endsWith("/api/zones?schema=items"),
+  );
+  await page.evaluate(() => document.dispatchEvent(new Event("visibilitychange")));
+  await refreshWithDraft;
+  await expect(input).toHaveValue(unsavedComment);
+  await expect(input).toBeFocused();
+
+  const historyThumbnail = defaultZone.locator(".thumb-wrap").nth(1);
+  await historyThumbnail.click();
+  await expect(defaultZone.locator('.latest[data-item-id="default-history-item"]')).toHaveCount(1);
+  await defaultZone.locator(".thumb-wrap").nth(0).click();
+  await expect(defaultZone.locator('.latest[data-item-id="default-item"] .comment-editor textarea'))
+    .toHaveValue(unsavedComment);
+
+  const saveResponse = page.waitForResponse(
+    response => response.request().method() === "PATCH" && response.url().includes("/comment"),
+  );
+  await editor.getByRole("button", { name: "Save" }).click();
+  await saveResponse;
+  await expect(defaultZone.locator(".comment-editor")).toHaveCount(0);
+  const commentButton = defaultZone.locator(".comment-btn");
+  await commentButton.focus();
+  const refresh = page.waitForResponse(
+    response => response.url().endsWith("/api/zones?schema=items"),
+  );
+  await page.evaluate(() => document.dispatchEvent(new Event("visibilitychange")));
+  await refresh;
+  await expect(commentButton).toBeFocused();
+
+  const thumbnail = defaultZone.locator(".thumb-wrap").nth(0);
+  await thumbnail.click();
+  await expect(thumbnail).toBeFocused();
 });
 
 test("migre la zone active historique vers les zones ouvertes", async ({ page }) => {

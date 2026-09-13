@@ -13,6 +13,9 @@
   const URL_PREFIX = document.body.dataset.urlPrefix || "";
   const REFRESH_INTERVAL_MS = 10_000;
   const INTERNAL_TRANSFER_MIME = "application/x-pasteberth-transfer";
+  const TRANSIENT_FOCUS_CLASSES = new Set([
+    "active", "open", "selected", "bulk-selected", "dragging", "dragging-item", "attention",
+  ]);
 
   function appPath(path) {
     return `${URL_PREFIX}${path}`;
@@ -32,6 +35,7 @@
     selectedByZone: Object.create(null),
     knownItemSignaturesByZone: Object.create(null),
     newItemIdsByZone: Object.create(null),
+    commentDraftsByZone: Object.create(null),
     copyFeedbackByItem: Object.create(null),
     copyFeedbackTimers: Object.create(null),
     copyAttemptByItem: Object.create(null),
@@ -60,6 +64,18 @@
   let copyAttemptSequence = 0;
   let activePreviewController = null;
   let groupOptionsClose = null;
+  let tabLayoutResizeTimer = null;
+  const tabZoneRebalanceFrames = new WeakMap();
+  const tabZoneResizeObserver = typeof window.ResizeObserver === "function"
+    ? new window.ResizeObserver(entries => {
+      const mains = new Set();
+      for (const entry of entries) {
+        const main = entry.target.closest(".tab-zone-main");
+        if (main) mains.add(main);
+      }
+      for (const main of mains) scheduleTabZoneRebalance(main);
+    })
+    : null;
 
   const grid = document.getElementById("grid");
   const groupTabs = document.getElementById("group-tabs");
@@ -1865,7 +1881,8 @@
       const zone = state.zones.find(item => item.id === zoneId);
       const index = zone ? zone.items.findIndex(item => item.id === itemId) : -1;
       if (zone && index >= 0) zone.items[index] = Object.assign({}, zone.items[index], updated);
-      rerenderZone(zoneId);
+      discardCommentDraft(zoneId, itemId);
+      rerenderZone(zoneId, { preserveCommentDraft: false });
       toast("Comment saved");
     }).catch(err => {
       toast(err.message, "error");
@@ -1898,7 +1915,10 @@
       cancel.type = "button";
       cancel.className = "ghost-btn";
       cancel.textContent = "Cancel";
-      cancel.addEventListener("click", () => rerenderZone(zoneId));
+      cancel.addEventListener("click", () => {
+        discardCommentDraft(zoneId, item.id);
+        rerenderZone(zoneId, { preserveCommentDraft: false });
+      });
       input.addEventListener("keydown", event => {
         if (event.key !== "Enter") return;
         event.stopPropagation();
@@ -1913,6 +1933,8 @@
       form.append(input, save, cancel);
       control.replaceChildren(form);
       input.focus();
+      const main = control.closest(".tab-zone-main");
+      if (main) rebalanceTabZoneColumns(main);
     });
     control.appendChild(button);
     return control;
@@ -2036,6 +2058,11 @@
       setPreviewSource(img, item.content_url);
       img.alt = `Latest image ${item.filename}`;
       img.title = itemDetails(zoneId, item);
+      const hasDimensions = item.width > 0 && item.height > 0;
+      if (hasDimensions) {
+        img.width = item.width;
+        img.height = item.height;
+      }
       img.loading = "lazy";
       img.tabIndex = 0;
       img.setAttribute("role", "button");
@@ -2043,6 +2070,12 @@
         "aria-label",
         `Open preview of ${item.filename}${newAccessibleSuffix(zoneId, item.id)}`,
       );
+      if (!hasDimensions) {
+        img.addEventListener("load", () => {
+          const main = card.closest(".tab-zone-main");
+          if (main) scheduleTabZoneRebalance(main);
+        });
+      }
       card.append(img, right);
     } else {
       const box = document.createElement("div");
@@ -2219,6 +2252,209 @@
     }
   }
 
+  function captureTabSidebarScroll() {
+    const sidebar = grid.querySelector(".tab-zone-list");
+    return sidebar ? { left: sidebar.scrollLeft, top: sidebar.scrollTop } : null;
+  }
+
+  function restoreTabSidebarScroll(position) {
+    if (!position) return;
+    const sidebar = grid.querySelector(".tab-zone-list");
+    if (!sidebar) return;
+    sidebar.scrollLeft = position.left;
+    sidebar.scrollTop = position.top;
+  }
+
+  function captureGridFocus() {
+    const active = document.activeElement;
+    if (!active || active === document.body || !grid.contains(active)) return null;
+    const owner = active.closest(".zone[data-zone], .tab-zone-link");
+    if (!owner) return null;
+    const item = active.closest("[data-item-id]");
+    return {
+      classes: [...active.classList].filter(name => !TRANSIENT_FOCUS_CLASSES.has(name)),
+      focusType: active.closest(".comment-control") ? "comment" : null,
+      itemId: item?.dataset.itemId || null,
+      tagName: active.tagName,
+      zoneId: owner.dataset.zone,
+    };
+  }
+
+  function captureExternalFocus() {
+    const active = document.activeElement;
+    return active && active !== document.body && !grid.contains(active) ? active : null;
+  }
+
+  function restoreExternalFocus(active) {
+    if (active?.isConnected && typeof active.focus === "function") active.focus();
+  }
+
+  function restoreGridFocus(descriptor) {
+    if (!descriptor) return;
+    const candidates = grid.querySelectorAll("button, select, textarea, input, [tabindex]");
+    for (const candidate of candidates) {
+      if (candidate.tagName !== descriptor.tagName) continue;
+      if (!descriptor.classes.every(name => candidate.classList.contains(name))) continue;
+      const owner = candidate.closest(".zone[data-zone], .tab-zone-link");
+      if (!owner || owner.dataset.zone !== descriptor.zoneId) continue;
+      const item = candidate.closest("[data-item-id]");
+      if ((item?.dataset.itemId || null) !== descriptor.itemId) continue;
+      candidate.focus();
+      return;
+    }
+    if (descriptor.focusType === "comment") {
+      const button = grid.querySelector(
+        `.zone[data-zone="${CSS.escape(descriptor.zoneId)}"] `
+          + `.latest[data-item-id="${CSS.escape(descriptor.itemId)}"] .comment-btn`,
+      );
+      if (button) button.focus();
+    }
+  }
+
+  function captureCommentDrafts() {
+    for (const editor of grid.querySelectorAll(".comment-editor")) {
+      const zone = editor.closest(".zone[data-zone]");
+      const item = editor.closest(".latest[data-item-id]");
+      const input = editor.querySelector("textarea");
+      if (!zone || !item || !input) continue;
+      const drafts = state.commentDraftsByZone[zone.dataset.zone]
+        || (state.commentDraftsByZone[zone.dataset.zone] = Object.create(null));
+      drafts[item.dataset.itemId] = input.value;
+    }
+  }
+
+  function discardCommentDraft(zoneId, itemId) {
+    const drafts = state.commentDraftsByZone[zoneId];
+    if (!drafts) return;
+    delete drafts[itemId];
+    if (!Object.keys(drafts).length) delete state.commentDraftsByZone[zoneId];
+  }
+
+  function restoreCommentDrafts() {
+    for (const [zoneId, drafts] of Object.entries(state.commentDraftsByZone)) {
+      for (const [itemId, value] of Object.entries(drafts)) {
+        const button = grid.querySelector(
+          `.zone[data-zone="${CSS.escape(zoneId)}"] `
+            + `.latest[data-item-id="${CSS.escape(itemId)}"] .comment-btn`,
+        );
+        if (!button) continue;
+        const control = button.closest(".comment-control");
+        button.click();
+        const editor = control?.querySelector(".comment-editor");
+        const input = editor?.querySelector("textarea");
+        if (input) input.value = value;
+      }
+    }
+  }
+
+  function tabZoneColumnCount(main, zoneCount) {
+    if (!zoneCount) return 0;
+    const styles = getComputedStyle(main);
+    const rootFontSize = Number.parseFloat(getComputedStyle(document.documentElement).fontSize) || 16;
+    const minimumZoneWidth = 27 * rootFontSize;
+    const gap = Number.parseFloat(styles.columnGap) || 14;
+    const horizontalPadding = (Number.parseFloat(styles.paddingLeft) || 0)
+      + (Number.parseFloat(styles.paddingRight) || 0);
+    const availableWidth = Math.max(0, main.clientWidth - horizontalPadding);
+    return Math.max(
+      1,
+      Math.min(
+        zoneCount,
+        Math.floor((availableWidth + gap) / (minimumZoneWidth + gap)),
+      ),
+    );
+  }
+
+  function cancelScheduledTabZoneRebalance(main) {
+    if (!tabZoneRebalanceFrames.has(main)) return;
+    window.cancelAnimationFrame(tabZoneRebalanceFrames.get(main));
+    tabZoneRebalanceFrames.delete(main);
+  }
+
+  function releaseTabZoneObservers(root) {
+    const mains = root.matches?.(".tab-zone-main")
+      ? [root]
+      : [...root.querySelectorAll(".tab-zone-main")];
+    for (const main of mains) {
+      cancelScheduledTabZoneRebalance(main);
+      if (!tabZoneResizeObserver) continue;
+      tabZoneResizeObserver.unobserve(main);
+      for (const zone of main.querySelectorAll(":scope > .zone[data-zone]")) {
+        tabZoneResizeObserver.unobserve(zone);
+      }
+    }
+  }
+
+  function distributeTabZoneElements(main, elements, columnCount) {
+    const styles = getComputedStyle(main);
+    const gap = Number.parseFloat(styles.columnGap) || 14;
+    const paddingLeft = Number.parseFloat(styles.paddingLeft) || 0;
+    const paddingRight = Number.parseFloat(styles.paddingRight) || 0;
+    const paddingTop = Number.parseFloat(styles.paddingTop) || 0;
+    const paddingBottom = Number.parseFloat(styles.paddingBottom) || 0;
+    const availableWidth = Math.max(0, main.clientWidth - paddingLeft - paddingRight);
+    const columnWidth = Math.max(
+      0,
+      (availableWidth - gap * (columnCount - 1)) / columnCount,
+    );
+    const columnHeights = Array.from({ length: columnCount }, () => 0);
+    main.style.removeProperty("grid-template-columns");
+    main.replaceChildren(...elements);
+    for (const zone of elements) {
+      const columnIndex = columnHeights.indexOf(Math.min(...columnHeights));
+      zone.style.position = "absolute";
+      zone.style.width = `${columnWidth}px`;
+      zone.style.left = `${paddingLeft + columnIndex * (columnWidth + gap)}px`;
+      zone.style.top = `${paddingTop + columnHeights[columnIndex]}px`;
+      columnHeights[columnIndex] += zone.getBoundingClientRect().height + gap;
+      tabZoneResizeObserver?.observe(zone);
+    }
+    const contentHeight = Math.max(...columnHeights, 0) - (elements.length ? gap : 0);
+    main.style.height = `${paddingTop + contentHeight + paddingBottom}px`;
+    main.dataset.columnCount = String(columnCount);
+    tabZoneResizeObserver?.observe(main);
+  }
+
+  function rebalanceTabZoneColumns(main) {
+    cancelScheduledTabZoneRebalance(main);
+    const elements = new Map(
+      [...main.querySelectorAll(":scope > .zone[data-zone]")]
+        .map(element => [element.dataset.zone, element]),
+    );
+    const zones = getVisibleZones()
+      .map(zone => elements.get(zone.id))
+      .filter(Boolean);
+    if (zones.length !== elements.size) return;
+    if (!zones.length) {
+      releaseTabZoneObservers(main);
+      main.replaceChildren();
+      main.style.removeProperty("grid-template-columns");
+      main.style.removeProperty("height");
+      delete main.dataset.columnCount;
+      return;
+    }
+    const focus = captureGridFocus();
+    const columns = tabZoneColumnCount(main, zones.length);
+    distributeTabZoneElements(main, zones, columns);
+    restoreGridFocus(focus);
+  }
+
+  function scheduleTabZoneRebalance(main) {
+    if (tabZoneRebalanceFrames.has(main)) return;
+    const frame = window.requestAnimationFrame(() => {
+      tabZoneRebalanceFrames.delete(main);
+      if (main.isConnected) rebalanceTabZoneColumns(main);
+    });
+    tabZoneRebalanceFrames.set(main, frame);
+  }
+
+  function renderTabZoneColumns(main, zones) {
+    if (!zones.length) return;
+    const elements = zones.map(renderZone);
+    const columnCount = tabZoneColumnCount(main, elements.length);
+    distributeTabZoneElements(main, elements, columnCount);
+  }
+
   function reconcileActiveGroup() {
     const previous = state.activeGroupId;
     if (!state.groups.length) {
@@ -2241,6 +2477,11 @@
 
   function renderAll() {
     const thumbScrollTops = captureThumbScrollTops();
+    const tabSidebarScroll = captureTabSidebarScroll();
+    const focus = captureGridFocus();
+    const externalFocus = captureExternalFocus();
+    captureCommentDrafts();
+    releaseTabZoneObservers(grid);
     grid.replaceChildren();
     const visibleZones = getVisibleZones();
     const visibleIds = new Set(visibleZones.map(zone => zone.id));
@@ -2261,7 +2502,11 @@
     if (!group || !tabLayout) {
       state.tabSelectionAnchorId = null;
       for (const zone of visibleZones) grid.appendChild(renderZone(zone));
+      restoreCommentDrafts();
       restoreThumbScrollTops(thumbScrollTops);
+      restoreGridFocus(focus);
+      restoreTabSidebarScroll(tabSidebarScroll);
+      restoreExternalFocus(externalFocus);
       return;
     }
 
@@ -2299,10 +2544,14 @@
     main.id = "tab-zone-main";
     main.setAttribute("aria-label", "Open zones");
     const openZones = visibleZones.filter(zone => state.openZoneIds.includes(zone.id));
-    for (const zone of openZones) main.appendChild(renderZone(zone));
     if (showTabSidebar) grid.append(list, main);
     else grid.append(main);
+    renderTabZoneColumns(main, openZones);
+    restoreCommentDrafts();
     restoreThumbScrollTops(thumbScrollTops);
+    restoreGridFocus(focus);
+    restoreTabSidebarScroll(tabSidebarScroll);
+    restoreExternalFocus(externalFocus);
   }
 
   function toggleOpenZone(zoneId, event = {}) {
@@ -2462,15 +2711,24 @@
     return true;
   }
 
-  function rerenderZone(zoneId) {
+  function rerenderZone(zoneId, { preserveCommentDraft = true } = {}) {
     const zone = state.zones.find(z => z.id === zoneId);
     const old = grid.querySelector(`.zone[data-zone="${CSS.escape(zoneId)}"]`);
     if (zone && old) {
+      const focus = captureGridFocus();
+      const externalFocus = captureExternalFocus();
+      if (preserveCommentDraft) captureCommentDrafts();
       const oldThumbs = old.querySelector(".thumbs");
       const next = renderZone(zone);
       const nextThumbs = next.querySelector(".thumbs");
       if (oldThumbs && nextThumbs) nextThumbs.scrollTop = oldThumbs.scrollTop;
+      tabZoneResizeObserver?.unobserve(old);
       old.replaceWith(next);
+      restoreCommentDrafts();
+      restoreGridFocus(focus);
+      restoreExternalFocus(externalFocus);
+      const main = next.closest(".tab-zone-main");
+      if (main) rebalanceTabZoneColumns(main);
     }
   }
 
@@ -3867,6 +4125,16 @@
 
   document.addEventListener("visibilitychange", () => {
     if (document.visibilityState === "visible") boot(true);
+  });
+
+  window.addEventListener("resize", () => {
+    if (!grid.classList.contains("tab-layout")) return;
+    clearTimeout(tabLayoutResizeTimer);
+    tabLayoutResizeTimer = window.setTimeout(() => {
+      tabLayoutResizeTimer = null;
+      const main = grid.querySelector(".tab-zone-main");
+      if (main) rebalanceTabZoneColumns(main);
+    }, 100);
   });
 
   // Lightweight synchronization across tabs and machines.

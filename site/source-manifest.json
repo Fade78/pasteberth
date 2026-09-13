@@ -1,18 +1,18 @@
 {
   "site_version": "2.1",
-  "runtime_version": "2.1.21",
-  "source_commit": "2cf4713e5bbbbf6e068220d2396cfaabc381cf9f",
+  "runtime_version": "2.1.25",
+  "source_commit": "73d37e346c96aca5230939521d0a45ab6ff2770f",
   "note": "Commit is context; file hashes pin the actual working-tree bytes.",
   "frontend": [
     {
       "file": "assets/product/app.js",
       "source": "PasteBerth/runtime/static/app.js",
-      "sha256": "135ddd1e2d9f5a6607f372e792b3222d417ffe980b66496a9eedd818cdc99444"
+      "sha256": "59798c6d52f084049fa6bf29bdbdcaec77d3fc4f6df9d471c03adebdc847d083"
     },
     {
       "file": "assets/product/style.css",
       "source": "PasteBerth/runtime/static/style.css",
-      "sha256": "a038a69538ee74bf7c1766088bc26b4b089be7037a8ecdaa773c0be5b8989240"
+      "sha256": "61df44d304c3e3b645671e1de9d4b49dd8d6d0958f4817b4f325e0d982683faf"
     },
     {
       "file": "assets/product/favicon.svg",
@@ -22,7 +22,7 @@
     {
       "file": "assets/product/index.template.html",
       "source": "PasteBerth/runtime/templates/index.html",
-      "sha256": "f2a60d725f891e8db7933832679099813f4af4b188a87b2b811b1c310b1bd7f7"
+      "sha256": "8f399d8d996a72397adf14d0b473b46163ff555ed193f8a13bec8cb514794b2e"
     }
   ]
 }
