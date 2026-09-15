@@ -1858,6 +1858,31 @@ test("supprime une image depuis la carte", async ({ page }) => {  await openApp(
   expect(payload.images.some(i => i.filename === filename)).toBe(false);
 });
 
+test("ne restaure pas un brouillon après suppression et recréation du même nom", async ({ page }) => {
+  await openApp(page);
+  const defaultZone = page.locator('[data-zone="default"]');
+  await defaultZone.getByRole("button", { name: "Select zone Default" }).click();
+
+  await uploadExternalFile(page, "reused.txt");
+  await page.evaluate(() => document.dispatchEvent(new Event("visibilitychange")));
+  const item = defaultZone.locator('.latest[data-item-id="reused.txt"]');
+  await expect(item).toBeVisible();
+  await item.getByRole("button", { name: "Comment for reused.txt" }).click();
+  await item.locator("textarea").fill("Do not restore this draft");
+
+  page.on("dialog", (dialog) => dialog.accept());
+  await item.getByRole("button", { name: "Delete reused.txt from the disk" }).click();
+  await expect(item).toHaveCount(0);
+
+  await uploadExternalFile(page, "reused.txt");
+  await page.evaluate(() => document.dispatchEvent(new Event("visibilitychange")));
+  const recreated = defaultZone.locator('.latest[data-item-id="reused.txt"]');
+  await expect(recreated).toBeVisible();
+  await expect(recreated.locator(".comment-editor")).toHaveCount(0);
+  await recreated.getByRole("button", { name: "Comment for reused.txt" }).click();
+  await expect(recreated.locator("textarea")).toHaveValue("");
+});
+
 test("ne réaffiche pas une image supprimée après un refresh périmé", async ({ page }) => {
   await openApp(page);
   const defaultZone = page.locator('[data-zone="default"]');

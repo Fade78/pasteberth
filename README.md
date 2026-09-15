@@ -35,12 +35,12 @@ retention can remove older items: this is a working area, not a backup service.
 **Unreleased:** downloads use already published zones without waiting for
 discovery. Once files are acquired, even long ZIP transfers release zone locks
 so managed writes can continue. Acquisition can still wait on storage or a writer;
-see the [download contract](docs/reference/api.md#downloads-unreleased).
+see the [download contract](docs/reference/api.md#downloads).
 New external consumers can use the generic `items` API, stored SHA-256, and
 `If-Match` to request a listed payload and verify its bytes before local
 publication. Legacy routes remain supported throughout 2.x; see the
 [external-consumer recipe](docs/recipes/external-consumer.md) and
-[compatibility policy](docs/reference/api.md#compatibility-unreleased).
+[compatibility policy](docs/reference/api.md#compatibility).
 
 ## Make It Yours
 

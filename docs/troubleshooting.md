@@ -77,12 +77,12 @@ Another operation is holding a conflicting zone lock. Wait for the
 file manually.
 
 The overview can still return `200` with `busy: true`, `count: null`, and
-an empty history for that zone. **Unreleased:** this is `items: []` with
+an empty history for that zone. **Since `2.1.22`:** this is `items: []` with
 `schema=items`, or `images: []` in the default legacy schema. It means history
 is unavailable, not that files were deleted. Generic per-zone listing returns
 `423` while a conflicting lock remains held; legacy listing can wait.
 
-**Unreleased (after `2.1.21`):** ZIP holds shared filesystem locks only during
+**Since `2.1.22`:** ZIP holds shared filesystem locks only during
 acquisition, then streams retained handles without zone locks. It returns `423`
 if an exclusive writer prevents nonblocking acquisition, not because another
 ZIP is streaming. Generic content GET/HEAD also requests nonblocking acquisition;
@@ -91,7 +91,7 @@ reads can coexist with download acquisition.
 
 ### A conditional download returns `400` or `412`
 
-**Unreleased:** send the exact quoted `etag` from the item listing as
+**Since `2.1.22`:** send the exact quoted `etag` from the item listing as
 `If-Match`. A malformed condition returns `400 invalid_request`; weak tags are
 valid grammar but cannot satisfy strong comparison. An unmet condition returns
 `412 precondition_failed` without file bytes, commonly because another managed
@@ -106,7 +106,7 @@ that publication failed or that the old output was restored.
 
 ### A ZIP returns `413` or `503`, or a download stops
 
-**Unreleased:** `max_archive_files` defaults to 64 selected files; exceeding it
+**Since `2.1.22`:** `max_archive_files` defaults to 64 selected files; exceeding it
 returns `413 too_large` before source opens. The existing source-byte limit is
 256 MiB, separate from ZIP output size and batch body/name budgets. Reduce the
 selection or ask the operator to review the relevant limit.
@@ -123,7 +123,7 @@ Timeout, disconnect, or a source read failure closes the response and releases
 handles and archive slots as the handler unwinds; a blocked filesystem call can
 delay this cleanup. A failure after headers does not append a JSON error to the
 file. Treat partial downloads as incomplete, and check logs and proxy timeouts.
-See [HTTP downloads](reference/api.md#downloads-unreleased).
+See [HTTP downloads](reference/api.md#downloads).
 
 ### A filename replacement is refused
 
@@ -190,7 +190,7 @@ agree. A group pattern selects IDs, not labels, and is not a discovery rule.
 
 New candidates appear after a background scan observes them and a subsequent
 visible-browser poll reads the completed registry; a hidden tab refreshes on
-becoming visible. **Unreleased (runtime version still `2.1.21`):** not every
+becoming visible. **Since `2.1.22`:** not every
 overview starts a scan. Zone and group overviews share a cooldown of
 `max(10 seconds, last full refresh duration)` from completion, including
 startup, foreground, and failed refresh attempts. The duration includes
@@ -207,13 +207,13 @@ published. Do not use repeated download requests to force discovery. See the
 
 Measure before changing collection rules. `pasteberth audit` reports discovery
 duration, but not the service's registry-installation or overview storage cost.
-**Unreleased:** debug logs separate scan and installation timings and include
+**Since `2.1.22`:** debug logs separate scan and installation timings and include
 per-rule timing, matches, and newly cached paths. Filesystem observations are
 shared across rules only within that pass; later scans read the filesystem
 again. Narrow bases and appropriate `max_depth` values can reduce traversal;
 the optimization does not change regex semantics.
 
-**Unreleased:** mutations, directory resolution, and legacy `/images` history reads
+**Since `2.1.22`:** mutations, directory resolution, and legacy `/images` history reads
 bypass the background cooldown or wait for the in-flight refresh, with one
 refresh or join per service action.
 This avoids duplicate scans within an action, not waits on slow filesystem

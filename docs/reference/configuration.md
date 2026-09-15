@@ -90,7 +90,7 @@ request, including framing and auxiliary fields. It is independent from
 limits default to `256MiB` of uncompressed selected files and `300` seconds of
 total streaming time; ZIP output remains streamed without a temporary archive.
 
-**Unreleased (after `2.1.21`):** `max_archive_files = 64` bounds retained source
+**Since `2.1.22`:** `max_archive_files = 64` bounds retained source
 handles per ZIP; `max_active_archives = 4` bounds concurrent ZIP acquisitions and
 transfers across all zones in one process. Both accept positive integers or
 `"unlimited"`. They do not change `max_batch_names` or the byte/duration budgets.
@@ -100,7 +100,7 @@ an exclusive writer blocking ZIP acquisition. Restart after changing limits.
 
 #### Operational budget defaults
 
-The table covers 37 TOML keys, including the two **Unreleased** archive limits.
+The table covers 37 TOML keys, including the two archive limits.
 These are not private Python attribute names. Size values accept a byte count
 or a size string such as `"8KiB"` or `"20MiB"`.
 
@@ -122,8 +122,8 @@ or a size string such as `"8KiB"` or `"20MiB"`.
 | `max_batch_names` | `10000` | Filenames in one batch selection. |
 | `max_batch_body_size` | `"2MiB"` | Batch/transfer and direct-drop JSON request body. |
 | `max_archive_size` | `"256MiB"` | Total uncompressed selected files. |
-| `max_archive_files` | `64` | **Unreleased:** selected source files retained open per ZIP. |
-| `max_active_archives` | `4` | **Unreleased:** concurrent ZIP acquisitions/transfers per process, across all zones. |
+| `max_archive_files` | `64` | Selected source files retained open per ZIP. |
+| `max_active_archives` | `4` | Concurrent ZIP acquisitions/transfers per process, across all zones. |
 | `max_archive_duration_seconds` | `300` | Total archive streaming duration. |
 | `max_comment_body_size` | `"8KiB"` | Comment request body. |
 | `max_http_header_size` | `"64KiB"` | HTTP request header budget. |
@@ -144,7 +144,7 @@ or a size string such as `"8KiB"` or `"20MiB"`.
 | `http_header_timeout_seconds` | `5` | Pending-header timeout. |
 | `http_request_timeout_seconds` | `60` | Request timeout; streaming responses also have activity and archive deadlines. |
 
-**Unreleased:** previews now stream as well as ZIPs. The request timeout applies
+Since `2.1.22`, previews stream as well as ZIPs. The request timeout applies
 to the initial request/acquisition phase, then measures inactivity while a
 download emits content, rather than total elapsed transfer time. ZIP's separate
 300-second default deadline starts with the streaming phase. Expiry or client
@@ -220,7 +220,7 @@ Each `[[zones]]` table defines one independent project area:
 |---|---:|---|
 | `id` | required | Lowercase API/UI identifier, up to 64 characters. |
 | `label` | `id` | Human-readable UI label. |
-| `type` | `local` | Only `local` is implemented in v2.1.21. |
+| `type` | `local` | Only `local` is implemented in v2.1.26. |
 | `directory` | required | Absolute path as seen by the server and the harness. |
 | `retain` | `10` | Number of managed items retained in the zone. |
 | `reference_prefix` | `@` | Text prepended to one returned reference. |
@@ -343,7 +343,7 @@ it runs. A new matching directory appears after a scan observes it and a later
 poll reads that registry, without a daemon restart. `/api/groups` uses the same
 background discovery path.
 
-**Unreleased (runtime version still `2.1.21`):** both endpoints share a
+**Since `2.1.22`:** both endpoints share a
 background cooldown of `max(10 seconds, last full refresh duration)`, measured
 from completion and including registry installation. Startup, foreground, and
 failed refresh attempts also set the cooldown. The next eligible poll can
@@ -352,7 +352,7 @@ the cooldown or wait for an in-flight refresh, without a second refresh within
 the same action. These are not configurable timing settings or hard deadlines.
 Overview history and free-space reads remain synchronous and can still block.
 
-**Unreleased:** scanner caches share filesystem observations across rules only
+Scanner caches share filesystem observations across rules only
 within a discovery pass; later passes read the filesystem again. Collection
 and group regex semantics are unchanged. The complete discovery contract,
 including cache boundaries, aliases, diagnostics, permissions, group

@@ -107,12 +107,12 @@ directory access or update process membership. See [operations](operations.md).
 
 1. Check that the daemon can traverse the parents and read the base and exchange directory. Read/execute access can be enough for discovery, but write access is also needed for publication, sidecars, locks, and retention.
 2. Run `pasteberth audit --config /absolute/path/config.toml` in the daemon's account/context and inspect collection candidate diagnostics. Account for service sandbox restrictions as well as Unix permissions.
-3. Open the Web UI's `Workspaces` group. A visible page polls every 10 seconds; overview requests use background discovery and return the last completed registry while it runs. Wait for a scan that observes the new directory and a later poll that reads its result. The Unreleased cooldown below can delay scan startup.
+3. Open the Web UI's `Workspaces` group. A visible page polls every 10 seconds; overview requests use background discovery and return the last completed registry while it runs. Wait for a scan that observes the new directory and a later poll that reads its result. The cooldown below can delay scan startup.
 4. Confirm the `alpha` label. The API zone ID for this example is `alpha-work-exchange`, not `alpha` or `@workspaces`.
 5. Upload a small allowed test artifact and confirm its history entry and downloadable bytes. A directory appearing in a group alone does not prove it is writable or that a separately registered file is readable by the daemon.
 
-No watcher continuously announces filesystem events. **Unreleased (runtime
-version still `2.1.21`):** `/api/zones` and `/api/groups` share a background
+No watcher continuously announces filesystem events. **Since `2.1.22`:**
+`/api/zones` and `/api/groups` share a background
 cooldown of `max(10 seconds, last full refresh duration)` from completion,
 including startup, foreground, and failed refresh attempts. Duration includes
 registry installation. The next eligible poll can launch one job; not every

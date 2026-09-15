@@ -145,7 +145,7 @@ The direct-drop endpoints use the immediate peer for their loopback exception.
 A public request forwarded by a loopback proxy therefore qualifies even without
 a session. The examples below block `/api/drop/resolve` and both
 `/api/zones/{id}/images/regularize` and `/api/zones/{id}/items/regularize` at the
-public proxy. The `items` alias is **Unreleased, after 2.1.26**; blocking only
+public proxy. The `items` alias shipped in **2.1.22**; blocking only
 `images` would leave the same direct-drop handler exposed through `items`.
 Local CLI clients can
 still reach the backend directly; remote clients use `drop --zone ID` or the

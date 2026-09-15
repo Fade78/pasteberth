@@ -2,8 +2,8 @@
 
 Status: implemented contract. This document describes `[[zone_collection]]`
 and the sidecar storage used by the zones it discovers. Changes marked
-**Unreleased** describe the working tree, not the `2.1.21` release; the runtime
-version remains `2.1.21`.
+Changes since `2.1.26` are marked **Unreleased**; the runtime version is
+`2.1.26`.
 
 For a setup walkthrough, see [provisioning](provisioning.md) and the
 [project-zones recipe](recipes/project-zones.md). This page is the detailed
@@ -42,10 +42,10 @@ registry while it runs. The Web UI polls every 10 seconds while visible and
 refreshes when a hidden tab becomes visible. A new matching directory appears
 after a scan observes it and a later poll reads the completed registry, without
 a service restart. `/api/groups` uses the same background refresh path.
-**Unreleased:** not every overview request starts a scan; both endpoints share
+**Since `2.1.22`:** not every overview request starts a scan; both endpoints share
 the cooldown described in [refresh and lifecycle](#7-refresh-and-lifecycle).
 Directory resolution, mutations, and legacy `/images` history use the refresh
-path synchronously. **Unreleased:** generic `/items` listing, content GET/HEAD
+path synchronously. **Since `2.1.22`:** generic `/items` listing, content GET/HEAD
 on either route, and ZIP use the published registry without starting discovery
 or waiting for a scan.
 
@@ -153,7 +153,7 @@ Each collection's matching and traversal decisions are evaluated independently.
 6. A candidate must be an existing, accessible directory. Discovery never creates it.
 7. A candidate is accepted only when its subtree contains no subdirectory.
 
-**Unreleased:** one discovery pass shares filesystem observations across all
+**Since `2.1.22`:** one discovery pass shares filesystem observations across all
 collection rules: strict full-path resolutions, stat results, directory
 enumerations and their errors, and leaf-check results. Directory observations
 are keyed by canonical resolved path, not just inode; each rule still has its
@@ -241,7 +241,7 @@ snapshot, not necessarily on each overview request:
 2. a directory that no longer matches, becomes inaccessible, or gains a subdirectory is removed;
 3. a static zone keeps precedence over a candidate at the same resolved path.
 
-**Unreleased scheduling:** background requests share a cooldown of
+**Since `2.1.22`, scheduling:** background requests share a cooldown of
 `max(10 seconds, last full refresh duration)`, starting when the refresh
 finishes. Duration includes discovery and registry installation, not just the
 tree walk. Every refresh attempt sets this cooldown on completion, including
@@ -249,7 +249,7 @@ startup, foreground, background, and failed attempts. Its expiry does not
 itself schedule work: the next eligible overview poll can launch one job, and
 requests arriving while a refresh runs do not launch another.
 
-**Unreleased:** mutations, directory resolution, and legacy `/images` history
+**Since `2.1.22`:** mutations, directory resolution, and legacy `/images` history
 reads bypass the background cooldown. They perform a synchronous refresh or
 wait for the in-flight refresh instead of
 starting a second one. Actions that already refreshed during zone validation do not
@@ -258,7 +258,7 @@ service action, not one scan per helper call. A multi-request client workflow
 can still invoke several service actions. This is request coalescing and
 throttling, not a watcher, a hard timeout, or a discovery deadline.
 
-**Unreleased reads:** generic `/items` listing, content GET/HEAD on either route,
+**Since `2.1.22`:** generic `/items` listing, content GET/HEAD on either route,
 and ZIP use only the last published registry. They do not start or wait for
 discovery, even if the
 cooldown has expired or the requested ID is unknown. A new zone returns
@@ -277,11 +277,11 @@ I/O can block regardless of the lock mode.
 The service replaces the dynamic zone configuration, destinations, locks, and
 group memberships as one in-memory snapshot. A later request sees the current
 snapshot; a request already holding a zone lock completes against its current
-operation state. **Unreleased:** a download captures its destination from that
+operation state. **Since `2.1.22`:** a download captures its destination from that
 snapshot and retains selected metadata and payload handles after shared
 filesystem acquisition; it holds no zone lock while streaming. A later registry
 publication does not revoke those handles. See
-[managed reads](reference/storage.md#managed-reads-unreleased).
+[managed reads](reference/storage.md#managed-reads).
 
 This is a registry snapshot, not an atomic snapshot of all zone contents.
 Overview requests still read each history and check free space synchronously;

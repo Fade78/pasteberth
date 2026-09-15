@@ -46,7 +46,7 @@ convention. For example, `/srv/workspaces/<project>/work/exchange` can give each
 new project its own zone without a per-project configuration edit. Discovery
 does not create the directory or register files inside it. Discovery is
 request-triggered, with background scans for Web overviews, rather than a
-filesystem watcher. **Unreleased (runtime version still `2.1.21`):** overview
+filesystem watcher. **Since `2.1.22`:** overview
 polls reuse the completed registry during a cooldown; the next eligible poll
 can start one scan. Mutations, directory resolution, and legacy `/images` history
 reads bypass the cooldown or wait for an in-flight refresh. Generic `/items`
@@ -97,7 +97,7 @@ no order, participant roles, or approvals. Multiple selected files remain
 separate items; there is no atomic workflow bundle or job queue.
 
 Transfers preserve the stored `created_at`, so an item's creation date is not
-its arrival date in a zone. **Unreleased:** the selected-item panel adds a date
+its arrival date in a zone. **Since `2.1.22`:** the selected-item panel adds a date
 when that timestamp is more than 24 elapsed hours old, using the browser's
 local timezone and the unchanged `en` locale. Tooltips and multiple-selection
 rows already show full dates; no arrival timestamp is added.

@@ -1944,6 +1944,7 @@
     const card = document.createElement("div");
     card.className = "latest";
     card.dataset.itemId = item.id;
+    card.dataset.itemSignature = itemSignature(item);
 
     if (selectedItemsInZone.length > 1) {
       card.classList.add("selection-latest");
@@ -2317,9 +2318,18 @@
       const item = editor.closest(".latest[data-item-id]");
       const input = editor.querySelector("textarea");
       if (!zone || !item || !input) continue;
+      const currentZone = state.zones.find(candidate => candidate.id === zone.dataset.zone);
+      const currentItem = currentZone?.items.find(
+        candidate => candidate.id === item.dataset.itemId,
+      );
+      const signature = item.dataset.itemSignature;
+      if (!currentItem || signature !== itemSignature(currentItem)) {
+        discardCommentDraft(zone.dataset.zone, item.dataset.itemId);
+        continue;
+      }
       const drafts = state.commentDraftsByZone[zone.dataset.zone]
         || (state.commentDraftsByZone[zone.dataset.zone] = Object.create(null));
-      drafts[item.dataset.itemId] = input.value;
+      drafts[item.dataset.itemId] = { value: input.value, signature };
     }
   }
 
@@ -2333,6 +2343,12 @@
   function restoreCommentDrafts() {
     for (const [zoneId, drafts] of Object.entries(state.commentDraftsByZone)) {
       for (const [itemId, value] of Object.entries(drafts)) {
+        const zone = state.zones.find(candidate => candidate.id === zoneId);
+        const item = zone?.items.find(candidate => candidate.id === itemId);
+        if (!item || value.signature !== itemSignature(item)) {
+          discardCommentDraft(zoneId, itemId);
+          continue;
+        }
         const button = grid.querySelector(
           `.zone[data-zone="${CSS.escape(zoneId)}"] `
             + `.latest[data-item-id="${CSS.escape(itemId)}"] .comment-btn`,
@@ -2342,7 +2358,7 @@
         button.click();
         const editor = control?.querySelector(".comment-editor");
         const input = editor?.querySelector("textarea");
-        if (input) input.value = value;
+        if (input) input.value = value.value;
       }
     }
   }
@@ -3175,6 +3191,7 @@
     const zone = state.zones.find(z => z.id === zoneId);
     if (!zone) return;
     // A named drop can replace an existing stored name. Keep one history entry.
+    discardCommentDraft(zoneId, item.id);
     zone.items = zone.items.filter(existing => existing.id !== item.id);
     zone.items.unshift(item);
     if (zone.items.length > zone.retain) {
@@ -3508,6 +3525,7 @@
       const zone = state.zones.find(z => z.id === zoneId);
       if (zone) {
         zone.items = zone.items.filter(item => item.id !== filename);
+        discardCommentDraft(zoneId, filename);
         clearNewItems(zoneId, [filename]);
         if (state.selectedByZone[zoneId] === filename) delete state.selectedByZone[zoneId];
         const selected = selectedItemIds(zoneId);

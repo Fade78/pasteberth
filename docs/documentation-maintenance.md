@@ -1,6 +1,6 @@
 # Documentation Maintenance
 
-This documentation uses runtime **2.1.21** as its released baseline; changes
+This documentation uses runtime **2.1.26** as its released baseline; changes
 after that tag must be marked **Unreleased**. A useful recipe is a promise
 that its stated prerequisites, commands, and observable outcome match the
 implementation. Verify that promise before shortening it into site copy.
@@ -37,8 +37,8 @@ running a focused probe, not by trusting an older paragraph.
 | `drop` always calls daemon; `register` is local and leaves data unchanged | `runtime/cli.py`: `_cmd_drop`, `_cmd_register_path`; `runtime/storage.py`: `_register_named` | `tests/test_cli.py`, `tests/test_storage.py` |
 | Collection eligibility, IDs, labels, and groups | `runtime/zone_collection.py`, `runtime/config.py` | `tests/test_zone_collection.py`, `tests/test_config.py` |
 | Request-triggered scans and busy overview behavior | `runtime/service.py`: `_refresh_zone_collections`, `overview`, `history` | `tests/test_zone_collection.py`, `tests/test_webapp.py` |
-| Unreleased published-registry downloads, retained handles, lock scope, limits, and cleanup | `runtime/service.py`: `open_preview`, `archive_files`; `runtime/storage.py`: `acquire_reads`; `runtime/webapp.py`, `runtime/config.py` | `tests/test_downloads.py`, `tests/test_managed_reads.py`, `tests/test_discovery_refresh.py`, `tests/test_config.py` |
-| Unreleased item vocabulary, legacy schemas, upload aliases, and nonblocking generic listing | `runtime/webapp.py`: `_ROUTES`, `_item_api_payload`, `_select_item_schema`, `_h_zone_images`, `_h_zone_upload`; `runtime/client.py`, `runtime/multipart.py` | `tests/test_item_api.py`, `tests/test_client_items.py`, `tests/test_multipart.py` |
+| Published-registry downloads, retained handles, lock scope, limits, and cleanup | `runtime/service.py`: `open_preview`, `archive_files`; `runtime/storage.py`: `acquire_reads`; `runtime/webapp.py`, `runtime/config.py` | `tests/test_downloads.py`, `tests/test_managed_reads.py`, `tests/test_discovery_refresh.py`, `tests/test_config.py` |
+| Item vocabulary, legacy schemas, upload aliases, and nonblocking generic listing | `runtime/webapp.py`: `_ROUTES`, `_item_api_payload`, `_select_item_schema`, `_h_zone_images`, `_h_zone_upload`; `runtime/client.py`, `runtime/multipart.py` | `tests/test_item_api.py`, `tests/test_client_items.py`, `tests/test_multipart.py` |
 | Stored identity, null legacy metadata, Python compatibility aliases, and conditional reads | `runtime/storage.py`: `StoredItem`, `StoredImage`, `UnknownItemError`, `UnknownImageError`, `_validated_item`, `_owned_item`; `runtime/service.py`: `item_payload`, `open_preview`; `runtime/webapp.py`: `_if_match_satisfied`, `_h_preview` | `tests/test_conditional_downloads.py`, `tests/test_item_api.py`, `tests/test_managed_reads.py` |
 | External consumer URL/auth boundaries, pre-publication verification, and post-publication report failure | `contrib/fetch_pasteberth_item.py`: `Consumer`, `main` (repository-relative) | `tests/test_item_consumer.py` |
 | Transfer metadata, partial outcomes, and retention | `runtime/service.py`: `transfer`; `runtime/storage.py`: `apply_retention` | `tests/test_transfer.py`, `tests/test_storage.py` |
@@ -56,7 +56,7 @@ editorial direction, but are not required to build or test documentation.
 - **Discovery versus registration:** collections expose eligible directories; they do not publish every file in them or create project directories.
 - **Local versus daemon policy:** `register` uses its selected local validation. It does not enforce the daemon's zone retention or per-zone free-space reserve.
 - **Snapshot:** the overview uses a registry snapshot and per-zone history reads, not an atomic content snapshot across zones. A busy zone's empty history is not proof of deletion.
-- **Unreleased reads:** generic listing and both content routes use eventual registry membership without discovery refresh/join. Generic listing/content and HTTP ZIP request nonblocking locks; legacy listing still refreshes and legacy previews wait for writers. Filesystem I/O can block in either mode. Downloads retain selected metadata and handles, then stream without zone locks; this is not a snapshot against external in-place edits.
+- **Published reads:** generic listing and both content routes use eventual registry membership without discovery refresh/join. Generic listing/content and HTTP ZIP request nonblocking locks; legacy listing still refreshes and legacy previews wait for writers. Filesystem I/O can block in either mode. Downloads retain selected metadata and handles, then stream without zone locks; this is not a snapshot against external in-place edits.
 - **Retention:** the current publication is protected during its own retention pass. Later publications may evict earlier items, including transfers in the same batch.
 - **Metadata:** `sha256`/`etag` are stored payload identity or null, not a read-time hash, signature, or metadata revision. Comments preserve ETag, A-to-B-to-A restores A's tag, and `changed_at` remains null. No listing/download hashes all legacy files to fill unknown identities; source metadata is not authenticated identity.
 - **Consumer publication:** verify length and known digest before local replacement. Legacy unknown identity cannot pin a listing version. Exit 3 means publication succeeded but stdout reporting failed; no rollback is promised. This example does not implement SFTP, builds, or a zone snapshot.
@@ -118,7 +118,7 @@ site sources distinct from generated `demo.html`, `preview.html`, and
 `assets/example-data.js`.
 
 Screenshots have separate provenance. The imported 2.1.18 captures are labelled
-historical; the interactive demo uses the 2.1.21 frontend and a memory backend.
+historical; the interactive demo uses the 2.1.26 frontend and a memory backend.
 Do not relabel screenshots when rebuilding JavaScript. New genuine-product
 captures need an isolated daemon, synthetic data, and recorded source/method.
 

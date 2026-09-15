@@ -1,6 +1,6 @@
 # Discovery Performance
 
-The optimizations below are **Unreleased** changes after 2.1.21. They reduce
+The optimizations below shipped in **2.1.22**. They reduce
 duplicate work, background scan frequency, and work needed to download known
 files; they do not impose a hard filesystem deadline or make network filesystems
 officially supported.
@@ -125,8 +125,8 @@ or ZIP output is emitted it measures inactivity. ZIP additionally retains its
 total streaming deadline. These timers cannot interrupt a blocked filesystem
 call or guarantee immediate resource release from one. Retained versions are
 stable against cooperating managed writes, not arbitrary external in-place
-edits. See [HTTP downloads](reference/api.md#downloads-unreleased) and
-[storage](reference/storage.md#managed-reads-unreleased).
+edits. See [HTTP downloads](reference/api.md#downloads) and
+[storage](reference/storage.md#managed-reads).
 
 ## Why Not a 100 ms Cutoff?
 

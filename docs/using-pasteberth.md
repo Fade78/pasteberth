@@ -44,7 +44,7 @@ appear in the managed history.
 
 Select an item in the history to inspect it and see its available actions.
 
-**Unreleased (runtime version still `2.1.21`):** the selected item's time gains
+**Since `2.1.22`:** the selected item's time gains
 a date once its stored `created_at` is more than 24 elapsed hours old, not just
 because midnight has passed. Dates and times use the browser's local timezone
 and the unchanged `en` locale. Tooltips and multiple-selection rows already
@@ -102,7 +102,7 @@ ZIP download must be enabled for the zone and is subject to archive limits. It
 retrieves selected data files, not a managed-pair backup with sidecars. Deleting
 managed items removes the data and sidecar, so download anything you need first.
 
-**Unreleased (after `2.1.21`):** ZIP defaults cap each selection at 64 files and
+**Since `2.1.22`:** ZIP defaults cap each selection at 64 files and
 the server at four active archives per process, alongside the existing 256 MiB
 source-byte and 300-second streaming limits. Once acquired, downloads serve
 open versions without zone locks, allowing managed writes, including replacement
@@ -119,7 +119,7 @@ appear. `NEW` markers belong to the current browser tab, clear as items are
 selected, and reset on reload. They are not delivery receipts.
 
 Collection zones appear after a scan observes them and a subsequent refresh
-reads the completed registry. **Unreleased:** overview polls reuse that registry
+reads the completed registry. **Since `2.1.22`:** overview polls reuse that registry
 during a cooldown of the greater of 10 seconds or the last full refresh
 duration, measured from completion. The next eligible poll can start one
 background job. Mutations, directory resolution, and legacy `/images` history

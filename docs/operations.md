@@ -26,7 +26,7 @@ zone for a write probe unless its retention effects are acceptable.
 
 The overview reads zone histories separately, not as one atomic cross-zone
 content snapshot. A zone with `busy: true`, `count: null`, and an empty history
-has unavailable history, not a confirmed empty directory. **Unreleased:** that
+has unavailable history, not a confirmed empty directory. **Since `2.1.22`:** that
 array is `items: []` with `schema=items`, or `images: []` in the default legacy
 schema. Refresh after the busy operation finishes before treating missing items
 as deleted.
@@ -40,7 +40,7 @@ counts managed items, not bytes; foreign files still consume disk space.
 `max_upload_size` and multipart/request budgets limit requests, not total
 storage. See [retention](reference/storage.md#retention).
 
-**Unreleased:** ZIP transfers retain source handles without zone locks, so even
+**Since `2.1.22`:** ZIP transfers retain source handles without zone locks, so even
 selected files can be replaced or deleted by managed operations during output.
 Plan for up to 64 source files per archive and four concurrent archives per
 process by default, bounded separately from request admission. Retained open
@@ -63,7 +63,7 @@ discover new matching directories without restart or config edits. A visible
 browser polls every 10 seconds, with new candidates appearing after a scan
 completes; this is not a filesystem watcher or a fixed discovery deadline.
 
-**Unreleased (runtime version still `2.1.21`):** zone and group overviews share
+**Since `2.1.22`:** zone and group overviews share
 a background cooldown of `max(10 seconds, last full refresh duration)` from
 completion. The duration includes scanning and registry installation; startup,
 foreground, and failed refresh attempts also set the cooldown. Its expiry
@@ -79,7 +79,7 @@ Generic listing/content and HTTP ZIP request nonblocking locks and can return
 `423`; legacy previews can wait for an exclusive writer. This change does not add
 a hard response-time guarantee.
 
-**Unreleased diagnostics:** debug logs separate scan and registry-install
+**Since `2.1.22` diagnostics:** debug logs separate scan and registry-install
 durations and report per-rule scan timing, matches, and newly cached paths.
 The scanner shares observations across rules within one pass only; caches do
 not persist into the next scan. Use these measurements to distinguish scan

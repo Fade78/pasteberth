@@ -1,20 +1,20 @@
 # Pasteberth Presentation Site
 
 Static presentation **site 2.1**, integrated with the repository's **working-tree
-frontend, including Unreleased changes**. The declared runtime version and latest
-published release remain **2.1.21**; the demo is not the exact published frontend.
+frontend**. The declared runtime version and latest published release are
+**2.1.26**; the demo is not the exact published frontend.
 English by default, French selectable; the actual product UI remains English.
-No framework, backend changes, release bump, telemetry, remote fonts or deployment.
+No framework, backend changes, telemetry, remote fonts or deployment.
 
-The Unreleased product frontend adds a date to card times when stored `created_at`
+The 2.1.22 product frontend added a date to card times when stored `created_at`
 is more than 24 hours old. Copies and moves preserve that timestamp; it is not
 arrival time in the current zone. Missing or invalid timestamps show `Unknown time`.
 The demo receives the fix through unchanged source copies, not a preview-only hack.
-The Unreleased frontend also reads `overview.max_archive_files` and shows an error
+The frontend also reads `overview.max_archive_files` and shows an error
 toast before submitting an oversized ZIP selection. The demo advertises and
 enforces 64 files per ZIP; this is not a simulation of backend concurrency budgets.
 
-The generic item API is **Unreleased after 2.1.21**, not a version bump. The copied
+The generic item API shipped in **2.1.22**. The copied
 UI requests `/api/zones?schema=items`, `/api/transfers?schema=items` and
 `/api/zones/{id}/items` with its child routes, reads `items` and `content_url`, and
 uploads multipart `file`. The demo seed and adapter use those names for every file
@@ -199,23 +199,21 @@ and **simulated demo**, not a genuine daemon installation.
 
 ## Verification Scope
 
-The site refresh reran the following checks sequentially on 10 September 2026; machine-readable
+The site refresh reran the following checks on 15 September 2026; machine-readable
 reports include UTC timestamps and tested artifact hashes. No archive test count
 is evidence for this revision.
 
 | Check | Actual outcome | Evidence |
 | --- | --- | --- |
 | Rebuild and JavaScript syntax | Passed | `rebuild.py`, `node --check` on site and adapter JS |
-| Sources, scratch/write confinement, MIME, captures, links, export allowlist and copy guard | 9 passed, 0 failed | `qa/source-report.json` |
+| Sources, scratch/write confinement, MIME, captures, links, export allowlist and copy guard | 10 passed, 0 failed | `qa/source-report.json` |
 | In-memory interaction QA, EN/FR at nine widths (320-1920px) | 70 passed, 0 failed | `qa/report.json` |
 | Locale, palette and current frontend equality | 72 passed, 0 failed | `qa/brand-language-report.json` |
 | Demo generic items, absent validators, clipboard, MIME, quota and ZIP count | 10 passed, 0 failed | `qa/demo-report.json` |
 | Browser-generated TOML and real temporary discovery | 18 passed, 0 failed | `qa/native-config-report.json` |
 | Actual static HTTP, Markdown/Python source bytes, URL/Storage, root and mount | 38 passed, 0 failed | `qa/http-report.json` |
 
-Total: **217 passed, 0 failed**: the previous 211 checks plus two generic-item
-demo regressions and four HTTP checks for the recipe and Python source at root
-and mounted paths. JavaScript syntax checks also include the synced product
+Total: **218 passed, 0 failed** in these reports. JavaScript syntax checks also include the synced product
 `assets/product/app.js`. All commands used repository `work/tmp` as `TMPDIR`
 and `PYTHONDONTWRITEBYTECODE=1`; explicit QA fixtures used `work/tmp/site`.
 
@@ -274,16 +272,16 @@ examples, license and three small historical captures were retained. No old
 preview images, old QA success reports or private screenshots were imported.
 
 **The screenshots remain historical 2.1.18 captures from the archive dated
-8 September 2026**, not screenshots of runtime 2.1.21. Their inherited capture
+8 September 2026**, not screenshots of runtime 2.1.26. Their inherited capture
 method and exact hashes are documented separately. The interactive demo, by
-contrast, uses the working-tree frontend with Unreleased changes and a memory-only
-adapter. Its displayed runtime version remains 2.1.21, not a release claim.
+contrast, uses the working-tree frontend and a memory-only adapter. Its displayed
+runtime version is 2.1.26, not a daemon certification.
 
 Demo uploads are limited to 8 MiB per file and 32 MiB of files in total; this is
 not a strict JavaScript memory ceiling or the server's configured upload limit
 (20 MiB default). Reset/reload discards additions. Demo behavior does not reproduce
 server authentication, locking, transactions or storage guarantees.
-The demo's 64-file ZIP limit mirrors the Unreleased default, not every server
+The demo's 64-file ZIP limit mirrors the 2.1.22 default, not every server
 configuration. It does not simulate the per-process active-archive slot pool.
 After asynchronous reads/decoding, the adapter rechecks filename conflicts and
 net stored-byte growth immediately before a synchronous commit. Replacements
@@ -295,18 +293,18 @@ collection/group snippet, not a complete secure service configuration. Its
 `retain = 100` is an explicit example choice, not the default of 10. Verify
 collection-ID uniqueness and actual filesystem permissions with `pasteberth audit`.
 Discovery is request-triggered asynchronous scanning with visible-browser polling
-every 10 seconds, not a standalone perpetual watcher. In the Unreleased working
+every 10 seconds, not a standalone perpetual watcher. In the current working
 tree, background polls become eligible to start another scan only after completion
 plus `max(10 seconds, last full refresh duration)`, including scan and registry
 installation. Failed and foreground refreshes also establish the cooldown;
 foreground requests can refresh without waiting for it. Filesystem observations
 are reused within a discovery pass, not across refreshes. There is no hard
 filesystem-call timeout or guaranteed discovery deadline. These scanner and
-cooldown changes are not published 2.1.21 behavior and are not exercised by the
+cooldown behavior shipped in 2.1.22 is not exercised by the
 memory-only discovery animation. Groups are views, not ACLs. The optional
 review-workflow example adds no process enforcement, messaging or notifications.
 
-Unreleased preview/download GET and HEAD and ZIP requests use the already
+Published preview/download GET and HEAD and ZIP requests use the already
 published zone registry, without starting discovery or waiting for a scan. New
 zones remain unavailable until publication. Acquisition captures selected metadata
 and open payload handles under shared filesystem locks; it does not load the whole
@@ -316,7 +314,7 @@ remain available for streaming alongside cooperating managed replacement/deletio
 This is not direct O(1) lookup, a hard response deadline, protection from arbitrary
 external in-place writes, or a new native-platform guarantee.
 
-Unreleased archive defaults add 64 files per ZIP and four active archives per
+The 2.1.22 archive defaults add 64 files per ZIP and four active archives per
 process. Writer contention can return `423 zone_busy` for HTTP ZIP acquisition;
 an exhausted archive slot pool returns `503 server_busy` with `Retry-After: 1`.
 Legacy preview acquisition still waits for a writer by default; generic item

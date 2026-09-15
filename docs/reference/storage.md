@@ -123,9 +123,9 @@ Network mounts and concurrent file synchronization are not made safe merely by
 using this directory layout. For a consistent backup, stop the daemon and all
 CLI or external writers; see [operations](../operations.md).
 
-### Managed Reads (Unreleased)
+### Managed Reads
 
-After `2.1.21`, preview/download GET and HEAD and selected-file ZIP use the
+Since `2.1.22`, preview/download GET and HEAD and selected-file ZIP use the
 published zone registry without triggering discovery or waiting for a scan.
 Membership is eventual: a newly eligible zone is unknown until published, and
 loss of eligibility takes effect for new reads when a later registry publishes
@@ -176,14 +176,14 @@ null. Both HTTP content paths evaluate `If-Match` against the acquired metadata
 and retained handle before sending file bytes, and close the handle on a failed
 condition. An external same-length in-place edit can evade server-side coherence
 checks; consumers must verify length and digest locally. A missing digest cannot
-pin listing identity. See [API identity](api.md#item-metadata-unreleased).
+pin listing identity. See [API identity](api.md#item-metadata).
 
 ZIP keeps selected handles and one per-process archive slot, not zone locks,
 through compression and network output. New default limits are 64 source files
 per archive and four active archives per process; existing source-byte and
 streaming-duration limits remain. Completion, timeout, disconnect, and failure
 release all acquired handles and the slot as the operation unwinds. A blocked
-filesystem call can delay cleanup. See [download errors and headers](api.md#downloads-unreleased)
+filesystem call can delay cleanup. See [download errors and headers](api.md#downloads)
 and [configuration budgets](configuration.md#operational-budget-defaults).
 
 This does not expand platform support. Windows backend testing under Wine is
@@ -320,7 +320,7 @@ are not shown in that state.
 
 ### Displayed dates
 
-**Unreleased (runtime version still `2.1.21`):** the selected-item panel shows
+**Since `2.1.22`:** the selected-item panel shows
 both date and time when the stored `created_at` is more than 24 elapsed hours
 old according to the browser clock. At exactly 24 hours or less it shows only
 the time; crossing midnight alone does not add a date. Formatting uses the

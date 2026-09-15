@@ -3,13 +3,13 @@
 ## Current Source
 
 This is the repository integration of the approved **presentation site 2.1**,
-not a new Pasteberth release. Its interactive demo uses the repository's
-**working-tree frontend, including Unreleased changes**, not the exact published
-2.1.21 frontend. Runtime `__version__` and `pyproject.toml` still agree on
-**2.1.21**, the latest published version; no release bump is part of this work.
+not an independent Pasteberth release. Its interactive demo uses the repository's
+**working-tree frontend**, not the exact published 2.1.26 frontend. Runtime
+`__version__` and `pyproject.toml` agree on **2.1.26**, the latest published
+version.
 Transfers, asynchronous discovery and `first-directory` labels shipped in 2.1.19.
 
-The Unreleased frontend adds a date to card timestamps when stored `created_at`
+The 2.1.22 frontend added a date to card timestamps when stored `created_at`
 is more than 24 hours old, and handles missing or invalid timestamps as
 `Unknown time`. `created_at` is preserved across copies and moves between zones;
 it is not arrival time in the current zone. This is actual product frontend code,
@@ -18,7 +18,7 @@ It also consumes `overview.max_archive_files`, refusing an oversized ZIP selecti
 with an error toast before form submission. The separate demo seed advertises 64
 files per ZIP, and the adapter rejects a larger request before reading file blobs.
 
-The generic API migration is also **Unreleased after 2.1.21**. The unchanged UI
+The generic API migration shipped in **2.1.22**. The unchanged UI
 uses `/api/zones?schema=items`, `/api/transfers?schema=items`, and
 `/api/zones/{id}/items` plus child routes, with `items`, `content_url` and multipart
 `file`. The seed, transport adapter and QA fixtures now follow that schema.
@@ -41,7 +41,7 @@ The [external-consumer recipe](../docs/recipes/external-consumer.md) and
 repository documentation/source and added by exact path to the export allowlist.
 The site does not execute that consumer or certify its backend behavior.
 
-The Unreleased scanner reuses filesystem observations within one discovery pass,
+The 2.1.22 scanner reuses filesystem observations within one discovery pass,
 not across refreshes. Background discovery remains request-triggered. Visible-tab
 polls still run every 10 seconds, but a poll becomes eligible to start a new scan
 only after completion plus `max(10 seconds, last full refresh duration)`, including
@@ -49,9 +49,9 @@ scan and registry installation. Failed and foreground refreshes also establish
 that cooldown; foreground requests can refresh without waiting for it. No hard
 filesystem-call timeout or autonomous watcher is added. The memory demo does not
 run this scanner or certify its timing; these claims come from the current source,
-not published 2.1.21 behavior or daemon screenshots.
+published in 2.1.22, not daemon screenshots.
 
-Unreleased preview/download GET and HEAD and ZIP requests use the published zone
+Published preview/download GET and HEAD and ZIP requests use the published zone
 registry without starting discovery or joining a scan. A short shared filesystem
 lock phase captures selected metadata and open payload handles, not whole-history
 payloads or unrelated ordinary sidecars. It still enumerates names and reads
@@ -66,8 +66,8 @@ acquisition may return `423 zone_busy` on writer contention, whereas a full arch
 slot pool returns `503 server_busy` with `Retry-After: 1`. Legacy preview acquisition
 still waits for a writer by default; generic item content acquisition is nonblocking
 and can return `423 zone_busy`. The demo enforces only its advertised file-count
-limit, not this slot pool, locking or streaming lifecycle. These are current-source
-Unreleased backend changes, not published 2.1.21 behavior or site QA certifications.
+limit, not this slot pool, locking or streaming lifecycle. These are published
+2.1.22 backend behaviors, not site QA certifications.
 
 `source-manifest.json` pins four byte-for-byte frontend copies and records the
 source commit as context. The hashes, rather than a clean-tree assertion, identify
@@ -84,11 +84,11 @@ assets are fixed in the builder rather than taken from the host registry.
 | Files, sidecars, registration and publication | `../GUIDE.md`, `../PasteBerth/runtime/storage.py`, `service.py`, `cli.py` |
 | Original English product UI | `../PasteBerth/runtime/static/{app.js,style.css,favicon.svg}`, `templates/index.html` |
 | Collections, eligibility, labels and IDs | `../PasteBerth/runtime/config.py`, `zone_collection.py`, `../docs/zone-collection-contract.md` |
-| Unreleased scanner reuse and completion-based cooldown | `../PasteBerth/runtime/zone_collection.py`, `service.py`; unchanged visible-tab poll interval in `static/app.js` |
-| Unreleased card date display | `../PasteBerth/runtime/static/app.js`: `fmtTime(item.created_at)` |
-| Unreleased published-registry reads and unlocked streaming | `../PasteBerth/runtime/service.py`, `storage.py`, `webapp.py`, `platformfs/` |
-| Unreleased archive budgets and UI count preflight | `../PasteBerth/runtime/config.py`, `service.py`, `static/app.js`; demo limit in `tools/demo-seed.json`, `assets/demo-adapter.js` |
-| Unreleased generic item schema, client routes and conditional reads | `../PasteBerth/runtime/webapp.py`: `_item_api_payload`, `_h_preview`; `service.py`: `item_payload`; `storage.py`: `StoredItem.etag`; `client.py`, `static/app.js` |
+| Scanner reuse and completion-based cooldown | `../PasteBerth/runtime/zone_collection.py`, `service.py`; unchanged visible-tab poll interval in `static/app.js` |
+| Card date display | `../PasteBerth/runtime/static/app.js`: `fmtTime(item.created_at)` |
+| Published-registry reads and unlocked streaming | `../PasteBerth/runtime/service.py`, `storage.py`, `webapp.py`, `platformfs/` |
+| Archive budgets and UI count preflight | `../PasteBerth/runtime/config.py`, `service.py`, `static/app.js`; demo limit in `tools/demo-seed.json`, `assets/demo-adapter.js` |
+| Generic item schema, client routes and conditional reads | `../PasteBerth/runtime/webapp.py`: `_item_api_payload`, `_h_preview`; `service.py`: `item_payload`; `storage.py`: `StoredItem.etag`; `client.py`, `static/app.js` |
 | Upload and retention defaults | `../PasteBerth/runtime/config.py`: 20 MiB upload, collection retain 10 |
 | Product status | `../CHANGELOG.md`, runtime `__init__.py`, `../pyproject.toml` |
 
@@ -118,7 +118,7 @@ fallback, not dynamically fetched or converted to a portal.
 
 ## Historical Screenshots
 
-**The three `assets/interface-*.png` files are historical, not current 2.1.21
+**The three `assets/interface-*.png` files are historical, not current 2.1.26
 screenshots.** Their bytes are pinned in `capture-manifest.json`. They were retained
 unchanged from the archive dated **8 September 2026**. That date comes from ZIP
 entries; an exact original capture timestamp was not independently established.

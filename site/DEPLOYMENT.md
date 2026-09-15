@@ -69,8 +69,8 @@ the same relative locations within the export. Site links such as
 may display or download Markdown; it does not become an HTML portal. GitHub's
 repository view can render the documents. Configure your host's content types
 deliberately; do not advertise generated HTML routes that do not exist.
-The external-consumer recipe and Python example describe Unreleased work after
-2.1.21. Serve the script as downloadable source, never as server-executed code.
+The external-consumer recipe and Python example describe the published 2.1.22
+contract. Serve the script as downloadable source, never as server-executed code.
 
 This is a documentation export, not a full source checkout. Relative links in
 technical documents to implementation files outside the allowlist are not shipped;

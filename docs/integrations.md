@@ -140,12 +140,12 @@ bearer token without a cookie, and send a matching `Origin` or
 also accepted under the documented API checks. There is no CORS interface for
 arbitrary cross-origin browser applications.
 
-**Unreleased, after 2.1.21:** use `/api/zones/{id}/items`, multipart `file`, and
+**Since 2.1.22:** use `/api/zones/{id}/items`, multipart `file`, and
 the returned `content_url` for new HTTP integrations. Select `?schema=items` on
 `GET /api/zones` and `POST /api/transfers`; their defaults remain legacy for
 existing clients. Legacy routes, fields, and Python aliases remain supported
 throughout 2.x, with removal no earlier than 3.0 and announced in advance.
-See [compatibility](reference/api.md#compatibility-unreleased).
+See [compatibility](reference/api.md#compatibility).
 
 For retrieval without filesystem access, follow
 [fetch a version-aware item](recipes/external-consumer.md). The standalone

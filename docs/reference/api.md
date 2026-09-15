@@ -4,7 +4,7 @@
 
 ## HTTP API
 
-**Unreleased:** the overview also reports the effective top-level
+The overview also reports the effective top-level
 `max_archive_files` (an integer, or `null` for no configured count limit).
 The Web UI checks this limit before submitting a ZIP selection; the server
 remains authoritative. Archive capacity failures still return HTTP 503.
@@ -14,10 +14,11 @@ can use HTTP login and cookies, or an operator-issued bearer token with the
 scope documented below. There is no CORS API. The supplied Web UI and bundled
 HTTP client are implementation examples.
 
-**Unreleased, after 2.1.21:** new clients should use the generic `items` routes
+**Since 2.1.22:** new clients should use the generic `items` routes
 below, multipart `file`, and `schema=items` on aggregate routes. Content identity
-and conditional downloads are also unreleased; they are not features of 2.1.21.
-See [compatibility](#compatibility-unreleased) for the retained legacy contract
+and conditional downloads are part of this published contract; they were not
+features of 2.1.21.
+See [compatibility](#compatibility) for the retained legacy contract
 and [the external-consumer recipe](../recipes/external-consumer.md) for a runnable
 authenticated download example.
 
@@ -175,7 +176,7 @@ require a staging file. See [proxy deployment](../deployment.md#foreground-opera
 Block both `/items/regularize` and `/images/regularize`; blocking only the legacy
 path leaves the same loopback exception reachable through the new alias.
 
-### Compatibility (Unreleased)
+### Compatibility
 
 Legacy routes delegate to shared handlers, without redirects or a forked storage
 implementation. They remain fully supported throughout 2.x. Removal will be no
@@ -312,7 +313,7 @@ malformed HTTP, or login pages. Header-budget failures can return `431`.
 An HTTP failure does not always mean no mutation: inspect history after
 `retention_error`, and inspect per-file transfer/batch results before retrying.
 
-### Item Metadata (Unreleased)
+### Item Metadata
 
 A generic item response includes fields such as the following. The identity
 values are illustrative; real clients must use the values returned by the server.
@@ -359,9 +360,9 @@ verify downloaded length and SHA-256 locally before publishing. With legacy
 the download to the version in the listing. Use `content_url`, including its
 mount prefix and percent-encoded filename, not the filesystem `reference`.
 
-### Downloads (Unreleased)
+### Downloads
 
-These changes are after `2.1.21`. Preview/download `GET` and `HEAD`, and ZIP
+Since `2.1.22`, preview/download `GET` and `HEAD`, and ZIP
 `POST`, look up the zone in the last published registry. They neither start
 discovery nor wait for an in-flight scan, even for an unknown ID. A new zone
 returns `404 unknown_zone` until a refresh publishes it; an ineligible zone is
@@ -424,7 +425,7 @@ before its captured length aborts the transfer; HTTP 200 alone does not prove
 completion. The server does not detect a same-length external mutation by
 hashing during streaming; local digest verification must reject those bytes.
 There is no atomic listing/download pair, whole-zone snapshot, or build-generation
-contract. See [managed reads](storage.md#managed-reads-unreleased) for visibility
+contract. See [managed reads](storage.md#managed-reads) for visibility
 and lock scope.
 
 The `http_request_timeout_seconds` deadline still covers the initial request
@@ -439,7 +440,7 @@ Batch deletion accepts repeated `filename` form fields or a JSON `filenames`
 array. Archive accepts the same selection as a repeated form field or JSON
 array and streams the ZIP without a temporary server archive.
 
-**Unreleased:** ZIP retains all selected handles for the transfer, but holds no
+**Since `2.1.22`:** ZIP retains all selected handles for the transfer, but holds no
 zone locks while compressing or sending. `[limits].max_archive_files` defaults
 to `64`; a larger selection returns `413 too_large` before opening sources.
 `[limits].max_active_archives` defaults to `4` concurrent acquisitions/transfers
@@ -492,7 +493,7 @@ the locks coordinate Pasteberth operations, not external writers. See
 [transaction scope](storage.md#transaction-scope) and [retention](storage.md#retention).
 
 Long-running batch deletion holds an exclusive zone lock. In `2.1.21`, archives
-also hold that lock; **Unreleased** ZIP transfers instead use the short shared
+also hold that lock; **since 2.1.22** ZIP transfers instead use the short shared
 acquisition described above. Conflicting nonblocking lock requests return:
 
 ```text

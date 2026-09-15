@@ -4,8 +4,8 @@
 consumer such as Siftport, without mounting the server's zone or reading its
 sidecars and lock files.
 
-**Unreleased, after 2.1.21:** this recipe needs the generic item API and
-conditional downloads in the current working tree. A 2.1.21 server does not
+**Available since 2.1.22:** this recipe uses the generic item API and
+conditional downloads. A 2.1.21 server does not
 provide this contract. It uses the existing shared-password login and cookie
 session, not a new token service.
 
@@ -70,8 +70,8 @@ item generation. A managed A-to-B replacement before acquisition causes 412
 when A was requested; A-to-B-to-A yields A's original identity. The server does
 not hash on read. Local verification therefore remains necessary to reject
 truncation or bytes changed by an unsupported external in-place writer. See
-[item metadata](../reference/api.md#item-metadata-unreleased) and
-[conditional reads](../reference/api.md#downloads-unreleased).
+[item metadata](../reference/api.md#item-metadata) and
+[conditional reads](../reference/api.md#downloads).
 
 ## Outcomes and Limits
 
