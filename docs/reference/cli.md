@@ -200,7 +200,11 @@ operation applies retention.
 On POSIX, the sidecar uses the data file's group if the registering account
 belongs to it. This does not apply the daemon's zone `file_group` or change the
 data file's ownership. The daemon must also have the required group and
-directory traversal permission. See [shared-zone checks](../troubleshooting.md#a-file-is-not-visible-in-the-history)
+directory traversal permission. After a successful POSIX registration, the CLI
+warns on stderr when the data file or sidecar has no group/other read permission;
+this is a warning because the CLI cannot know the daemon's actual credentials and
+does not change an existing file's permissions. Grant read access to the daemon
+account or group explicitly. See [shared-zone checks](../troubleshooting.md#a-file-is-not-visible-in-the-history)
 and the [register-file recipe](../recipes/register-file.md).
 
 ### Filesystem copy and move

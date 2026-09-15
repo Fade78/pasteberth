@@ -102,6 +102,12 @@ class TestVersion(unittest.TestCase):
         for old_command in ("filesystem-drop", "filesystem-rename", "filesystem-delete"):
             self.assertNotIn(old_command, proc.stdout)
 
+    def test_aide_register_signale_la_limite_de_visibilite_du_demon(self):
+        proc = run_cli(["register", "--help"])
+        self.assertEqual(proc.returncode, 0)
+        self.assertIn("warning", proc.stdout)
+        self.assertIn("group/other read permission", proc.stdout)
+
     def test_anciens_noms_de_sous_commande_sont_rejetes(self):
         for command in ("filesystem-drop", "filesystem-rename", "filesystem-delete"):
             with self.subTest(command=command):
@@ -1165,6 +1171,30 @@ class TestFilesystemDrop(unittest.TestCase):
         self.assertFalse(metadata["replaced"])
         if platform_fs().backend_name != "windows":
             self.assertEqual(sidecar.stat().st_mode & 0o777, 0o660)
+
+    def test_register_avertit_si_le_demon_peut_ne_pas_lire_le_fichier(self):
+        if platform_fs().backend_name == "windows":
+            self.skipTest("les permissions POSIX ne sont pas disponibles")
+        target = self.zone / "private-register.txt"
+        self.zone.mkdir(parents=True, exist_ok=True)
+        target.write_text("private registration\n", encoding="utf-8")
+        target.chmod(0o600)
+
+        proc = run_cli(
+            [
+                "register",
+                "--config",
+                str(self.cfg),
+                str(target),
+            ]
+        )
+
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(proc.stdout.strip(), str(target.resolve()))
+        self.assertIn("pasteberth: warning:", proc.stderr)
+        self.assertIn("daemon", proc.stderr)
+        self.assertIn("chmod g+r", proc.stderr)
+        self.assertEqual(target.stat().st_mode & 0o777, 0o600)
 
     def test_register_actualise_un_sidecar_existant(self):
         target = self.zone / "refresh-register.txt"

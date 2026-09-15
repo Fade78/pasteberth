@@ -481,6 +481,27 @@ def _local_register_file_group(path: Path) -> str | None:
     return str(group_id) if group_id in group_ids else None
 
 
+def _local_register_visibility_warning(path: Path) -> str | None:
+    if os.name == "nt":
+        return None
+    unreadable: list[Path] = []
+    sidecar = path.with_name(path.name + ".json")
+    for candidate in (path, sidecar):
+        try:
+            mode = stat.S_IMODE(candidate.stat().st_mode)
+        except OSError as exc:
+            return f"cannot inspect registered pair for daemon access: {exc}"
+        if not (mode & (stat.S_IRGRP | stat.S_IROTH)):
+            unreadable.append(candidate)
+    if not unreadable:
+        return None
+    names = ", ".join(str(candidate) for candidate in unreadable)
+    return (
+        f"registered pair may be unreadable by a daemon running as another account: {names}; "
+        "grant the daemon account or group read access (for example, `chmod g+r -- FILE`)."
+    )
+
+
 def _local_register_info(data: bytes, path: Path, declared_mime: str, cfg):
     if not data:
         raise ValueError("no data received")
@@ -554,6 +575,9 @@ def _cmd_register_path(args: argparse.Namespace, raw_path: str) -> int:
     except (DestinationError, OSError, UnsupportedFilesystemError, ValueError) as exc:
         print(f"pasteberth: {raw_path}: {exc}", file=sys.stderr)
         return 1
+    warning = _local_register_visibility_warning(path)
+    if warning:
+        print(f"pasteberth: warning: {warning}", file=sys.stderr)
     print(path)
     return 0
 
@@ -1767,7 +1791,8 @@ def build_parser() -> argparse.ArgumentParser:
         epilog=(
             "Registration never changes the file data. An existing sidecar is\n"
             "refreshed from the current file, while a valid comment is retained.\n"
-            "The daemon must be able to read the resulting sidecar."
+            "The daemon must be able to read the resulting pair; a warning is\n"
+            "printed when group/other read permission is absent."
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
