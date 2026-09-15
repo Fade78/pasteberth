@@ -1,8 +1,8 @@
 {
   "scope": "Memory demo: generic item transport, absent validators, synthetic clipboard, quota and ZIP limits; not backend conditional-read verification.",
-  "checked_at": "2026-09-13T15:25:15.575304+00:00",
+  "checked_at": "2026-09-15T08:25:27.987734+00:00",
   "browser": "145.0.7632.6",
-  "demo_sha256": "9bb9c551284f816fac427e0d31c6f445e5ac3b41f4a6d17a6aba79182ba8f861",
+  "demo_sha256": "f2753f6d2098e5133a021d18d176b18b97402a5df357e94ab7986344a8270265",
   "summary": {
     "passed": 10,
     "failed": 0
