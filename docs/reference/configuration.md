@@ -246,9 +246,11 @@ For a shared POSIX zone, use one common group, a `setgid` directory, and group
 membership for every writer and for the daemon process. A `file_group` setting
 does not grant access to the directory or add a group to a running process. The
 group must be present in the credentials of the actual daemon process, not only
-in the shell that ran `register`. Prefer ordinary group membership and
-filesystem `setgid` permissions over filesystem-specific ACLs when the zone must
-work across several filesystems.
+in the shell that ran `register`. With the systemd user-service template, set
+`PrivateTmp=false` for such a zone; its private user namespace masks
+supplementary groups. Prefer ordinary group membership and filesystem `setgid`
+permissions over filesystem-specific ACLs when the zone must work across several
+filesystems.
 
 If a user is added to the shared group after a `systemd --user` manager has
 started, log out and in again (or reboot) before restarting Pasteberth. A

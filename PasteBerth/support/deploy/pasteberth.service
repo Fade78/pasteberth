@@ -13,8 +13,10 @@ RestartSec=2
 TimeoutStopSec=90
 UMask=0077
 
-# Safe hardening for a user service:
+# Safe hardening for a private-zone user service:
 NoNewPrivileges=true
+# Set this to false when a zone uses file_group for shared POSIX access:
+# PrivateTmp masks supplementary groups in the service's user namespace.
 PrivateTmp=true
 RestrictSUIDSGID=true
 

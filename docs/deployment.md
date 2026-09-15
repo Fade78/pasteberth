@@ -175,8 +175,11 @@ systemctl --user enable --now pasteberth.service
 journalctl --user -u pasteberth -f
 ```
 
-The template uses `PrivateTmp=true`; zones below `/tmp` or `/var/tmp` are not
-usable by other host processes in that mode. If optional `ProtectSystem`,
+The template uses `PrivateTmp=true` for private zones; zones below `/tmp` or
+`/var/tmp` are not usable by other host processes in that mode. For a shared
+POSIX zone using `file_group`, set `PrivateTmp=false`: the private user namespace
+otherwise masks supplementary groups and prevents Pasteberth from assigning the
+configured file group. If optional `ProtectSystem`,
 `ProtectHome`, or `ReadWritePaths` hardening is enabled, include every zone,
 parent directory that may be created, the password path, and the token registry
 directory when they must be written. The service opens the token registry at
