@@ -1,13 +1,13 @@
 {
   "site_version": "2.1",
   "runtime_version": "2.1.26",
-  "source_commit": "0e8a5416be3ef2e1baa4017fc4b4061b6eb875a9",
+  "source_commit": "60693cfb53dc3f55e8b1e1bdd69d4b3f48772022",
   "note": "Commit is context; file hashes pin the actual working-tree bytes.",
   "frontend": [
     {
       "file": "assets/product/app.js",
       "source": "PasteBerth/runtime/static/app.js",
-      "sha256": "8a9a0e62a33d855af711317967d4d57691dc6eb1248e8a92268a7133a84862d8"
+      "sha256": "2a59be392dcf5cf3dcc0796b1f27eacabdd846ce32d631965f4a885196645e86"
     },
     {
       "file": "assets/product/style.css",

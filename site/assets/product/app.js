@@ -3191,7 +3191,11 @@
     const zone = state.zones.find(z => z.id === zoneId);
     if (!zone) return;
     // A named drop can replace an existing stored name. Keep one history entry.
-    discardCommentDraft(zoneId, item.id);
+    const existing = zone.items.find(candidate => candidate.id === item.id);
+    const sameDuplicate = item.duplicate
+      && existing
+      && itemSignature(existing) === itemSignature(item);
+    if (!sameDuplicate) discardCommentDraft(zoneId, item.id);
     zone.items = zone.items.filter(existing => existing.id !== item.id);
     zone.items.unshift(item);
     if (zone.items.length > zone.retain) {

@@ -32,7 +32,7 @@ retrieved without Pasteberth interpreting their formats. Preview and clipboard
 actions depend on the content and browser. Storage persists on disk, but zone
 retention can remove older items: this is a working area, not a backup service.
 
-**Unreleased:** downloads use already published zones without waiting for
+**Since 2.1.22:** downloads use already published zones without waiting for
 discovery. Once files are acquired, even long ZIP transfers release zone locks
 so managed writes can continue. Acquisition can still wait on storage or a writer;
 see the [download contract](docs/reference/api.md#downloads).
@@ -118,7 +118,7 @@ duplicating their files.
 
 Discovery is request-triggered, with background scans for Web overviews. A
 visible browser polls every 10 seconds and shows new zones after a scan
-completes; this is not an instantaneous filesystem watcher. **Unreleased:**
+completes; this is not an instantaneous filesystem watcher. **Since 2.1.22:**
 overview polls reuse the completed registry during a cooldown of the greater
 of 10 seconds or the last full refresh duration, measured from completion.
 The next eligible poll can start one background job; mutations and explicit
@@ -137,12 +137,11 @@ The documented runtime is **2.1.26**, officially supported on **Linux** with
 **Python 3.11+** and a supported local filesystem. It has no third-party Python
 runtime dependency.
 
-Changes labelled **Unreleased** describe the working tree, not the `2.1.26`
-release. They include generic item routes and conditional downloads, streamed
-downloads, archive budgets, discovery
-optimizations, and a date alongside the time for items older than 24 elapsed
-hours in the selected-item panel; see the
-[changelog](CHANGELOG.md#unreleased).
+Changes labelled **Unreleased** describe the working tree after the `2.1.26`
+release. Generic item routes and conditional downloads, streamed downloads,
+archive budgets, discovery optimizations, and dates alongside the time for
+items older than 24 elapsed hours in the selected-item panel were shipped in
+`2.1.22`; see the [changelog](CHANGELOG.md#2122---2026-09-11).
 
 For an instance already installed, go straight to
 [Using Pasteberth](docs/using-pasteberth.md). To explore without starting a

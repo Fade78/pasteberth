@@ -85,7 +85,7 @@ poll reads the completed registry. No configuration edit or service restart
 is needed; the directory must still be readable, writable, and
 traversable and satisfy the rule's depth and subtree constraints.
 
-**Unreleased (runtime version still `2.1.26`):** zone and group overviews share
+**Since `2.1.22` (runtime version `2.1.26`):** zone and group overviews share
 a background cooldown of `max(10 seconds, last full refresh duration)` from
 completion, including registry installation. Startup, foreground, and failed
 refresh attempts also set it. The next eligible poll can launch one job;
@@ -94,10 +94,9 @@ not every overview starts a scan. Mutations, directory resolution, and legacy
 without a duplicate refresh in the same action. Scanner caches are shared across rules
 within one pass only. Overview
 history and free-space checks remain synchronous and can block; there is no
-hard discovery or response deadline. These changes are not in the `2.1.26`
-release.
+hard discovery or response deadline.
 
-**Unreleased reads:** generic `/items` listings, GET/HEAD content on either
+**Reads available since `2.1.22`:** generic `/items` listings, GET/HEAD content on either
 route, and ZIP use the published registry without starting discovery or waiting
 for a scan. New zone IDs return `404`
 until published; removals take effect through later registry publication.
@@ -121,7 +120,7 @@ request deadline covers initial acquisition and becomes inactivity-based during
 emission. Handles and slots are released on completion, timeout, disconnect,
 or failure as the handler unwinds, not by forcibly interrupting filesystem I/O.
 
-**Unreleased generic API:** use `/api/zones/{id}/items` for listing and upload,
+**Generic API available since `2.1.22`:** use `/api/zones/{id}/items` for listing and upload,
 its comment/delete/batch-delete/archive/regularize children, and
 `/api/zones/{id}/items/{filename}/content` for GET/HEAD downloads. Upload uses
 `file`; both routes accept either `file` or `image`, exactly one payload.
@@ -167,7 +166,7 @@ In a checkout, start at `GUIDE.md`; otherwise use these repository links:
 - [Documentation map](https://github.com/Fade78/pasteberth/blob/main/GUIDE.md)
 - [CLI reference](https://github.com/Fade78/pasteberth/blob/main/docs/reference/cli.md)
 - [HTTP API](https://github.com/Fade78/pasteberth/blob/main/docs/reference/api.md)
-- [External consumer (Unreleased)](https://github.com/Fade78/pasteberth/blob/main/docs/recipes/external-consumer.md)
+- [External consumer](https://github.com/Fade78/pasteberth/blob/main/docs/recipes/external-consumer.md)
 - [Configuration](https://github.com/Fade78/pasteberth/blob/main/docs/reference/configuration.md)
 - [Deployment](https://github.com/Fade78/pasteberth/blob/main/docs/deployment.md)
 - [Operations and recovery](https://github.com/Fade78/pasteberth/blob/main/docs/operations.md)

@@ -15,6 +15,8 @@ This file records user-visible changes to Pasteberth.
 
 - keep open zones in independent masonry columns while preserving DOM order,
   sidebar scrolling, focus, and unsaved comment drafts during responsive reflow.
+- preserve an unsaved comment draft when a duplicate upload reuses the existing
+  item, while discarding it after replacement or deletion.
 
 ## [2.1.25] - 2026-09-13
 

@@ -1695,6 +1695,9 @@ test("conserve le nom et confirme le remplacement d'un binaire déposé", async 
   const download = await downloadPromise;
   expect(download.suggestedFilename()).toBe("archive.zip");
 
+  await defaultZone.getByRole("button", { name: "Comment for archive.zip" }).click();
+  await defaultZone.locator("textarea").fill("Replace this draft");
+
   await dispatchBinaryDrop(page, '.zone[data-zone="default"]');
   await expect(page.locator("#replace")).toBeVisible();
   await expect(page.locator("#replace-filename")).toHaveText("archive.zip");
@@ -1705,6 +1708,24 @@ test("conserve le nom et confirme le remplacement d'un binaire déposé", async 
   await expect(page.locator("#replace")).toBeVisible();
   await page.locator("#replace-confirm").click();
   await expect(defaultZone.locator(".thumb-wrap")).toHaveCount(1);
+  await expect(defaultZone.locator(".comment-editor")).toHaveCount(0);
+  await defaultZone.getByRole("button", { name: "Comment for archive.zip" }).click();
+  await expect(defaultZone.locator("textarea")).toHaveValue("");
+});
+
+test("conserve un brouillon lors d'un upload dédupliqué", async ({ page }) => {
+  await openApp(page);
+  const defaultZone = page.locator('[data-zone="default"]');
+  await defaultZone.getByRole("button", { name: "Select zone Default" }).click();
+  await dispatchPaste(page);
+
+  await expect(defaultZone.locator(".latest")).toBeVisible();
+  await defaultZone.getByRole("button", { name: /Comment for / }).click();
+  const draft = "Keep this draft on a duplicate upload";
+  await defaultZone.locator("textarea").fill(draft);
+
+  await dispatchPaste(page);
+  await expect(defaultZone.locator("textarea")).toHaveValue(draft);
 });
 
 test("affiche l'extension d'un binaire dans la carte principale", async ({ page }) => {

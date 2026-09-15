@@ -3,8 +3,9 @@
 Stage and retrieve files across browsers, filesystems, tools, and working
 contexts. Choose a path below for the documented **2.1.26** runtime. Start with
 the task you need, then follow its links for exact options and guarantees.
-Changes marked **Unreleased** describe the working tree after 2.1.26, including
-the generic item API and version-aware external-consumer recipe.
+Changes marked **Unreleased** describe the working tree after 2.1.26. The
+generic item API and version-aware external-consumer recipe are available since
+2.1.22.
 
 ## Contents
 
@@ -13,7 +14,7 @@ the generic item API and version-aware external-consumer recipe.
 | Discover | [Project overview](README.md) | [Concepts](docs/concepts.md), [presentation and local demo](site/README.md) |
 | Use | [Using Pasteberth](docs/using-pasteberth.md) | [Personal staging](docs/recipes/personal-staging.md), [documents](docs/recipes/documents.md), [selection bundles](docs/recipes/selection-bundle.md) |
 | Multi-project | [Project zones](docs/recipes/project-zones.md) | [Provisioning](docs/provisioning.md), [collection contract](docs/zone-collection-contract.md) |
-| Integrate | [Integrations](docs/integrations.md) | [CLI](docs/reference/cli.md), [HTTP API](docs/reference/api.md), [MCP](docs/reference/mcp.md), [external consumer (Unreleased)](docs/recipes/external-consumer.md), [register a file](docs/recipes/register-file.md), [script output](docs/recipes/script-output.md), [agent output](docs/recipes/agent-output.md), [current result](docs/recipes/current-result.md) |
+| Integrate | [Integrations](docs/integrations.md) | [CLI](docs/reference/cli.md), [HTTP API](docs/reference/api.md), [MCP](docs/reference/mcp.md), [external consumer](docs/recipes/external-consumer.md), [register a file](docs/recipes/register-file.md), [script output](docs/recipes/script-output.md), [agent output](docs/recipes/agent-output.md), [current result](docs/recipes/current-result.md) |
 | Deploy | [Deployment](docs/deployment.md) | [Configuration](docs/reference/configuration.md), [storage](docs/reference/storage.md), [operations](docs/operations.md), [troubleshooting](docs/troubleshooting.md) |
 | Contribute | [Contributing](docs/contributing.md) | [Documentation maintenance](docs/documentation-maintenance.md), [release process](docs/release-process.md), [changelog](CHANGELOG.md), [license](LICENSE) |
 

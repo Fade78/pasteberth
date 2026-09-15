@@ -287,7 +287,7 @@ This is a registry snapshot, not an atomic snapshot of all zone contents.
 Overview requests still read each history and check free space synchronously;
 slow filesystem I/O can block the response even with background discovery.
 A busy or temporarily unavailable dynamic zone can have `busy: true`,
-`count: null`, and `items: []` with the unreleased `schema=items` selector, or
+`count: null`, and `items: []` with the `schema=items` selector, or
 `images: []` in the default legacy schema.
 Do not interpret that placeholder history as file deletion. See the
 [API response contract](reference/api.md#routes).
