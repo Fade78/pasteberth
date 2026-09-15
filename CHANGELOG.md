@@ -4,6 +4,18 @@ This file records user-visible changes to Pasteberth.
 
 ## [Unreleased]
 
+## [2.1.26] - 2026-09-15
+
+### Registration Visibility
+
+- warn after filesystem registration when the data file or sidecar lacks group
+  or other read permission, without changing permissions on the existing file;
+
+### Tab Layout Reflow
+
+- keep open zones in independent masonry columns while preserving DOM order,
+  sidebar scrolling, focus, and unsaved comment drafts during responsive reflow.
+
 ## [2.1.25] - 2026-09-13
 
 ### Compact Zone Layout
