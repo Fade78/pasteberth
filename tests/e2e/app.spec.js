@@ -1050,6 +1050,39 @@ test("les options filtrent les groupes vides et les compteurs", async ({ page })
   await expect(page.getByRole("button", { name: "Group options" })).toBeFocused();
 });
 
+test("configure la confirmation de retention par zone ou par groupe", async ({ page }) => {
+  await openApp(page);
+  const defaultZone = page.locator('[data-zone="default"]');
+  const secondaryZone = page.locator('[data-zone="secondary"]');
+  const zoneToggle = defaultZone.locator(".zone-confirm-btn");
+
+  await expect(zoneToggle).toHaveAttribute("aria-pressed", "true");
+  await expect(zoneToggle).toHaveAttribute("title", "Confirm before deleting items");
+  await expect(zoneToggle).toBeEnabled();
+  await zoneToggle.click();
+  await expect(zoneToggle).toHaveAttribute("aria-pressed", "false");
+  await expect(zoneToggle).toHaveAttribute("title", "Do not confirm before deleting items");
+
+  await page.reload({ waitUntil: "domcontentloaded" });
+  await expect(page.locator("#status-text")).toHaveText("online");
+  await expect(page.locator('[data-zone="default"] .zone-confirm-btn'))
+    .toHaveAttribute("aria-pressed", "false");
+
+  await page.getByRole("button", { name: "Group options" }).click();
+  await expect(page.getByRole("radio", { name: "Use zone setting" })).toBeChecked();
+  await page.getByRole("radio", { name: "Never ask before cleanup" }).click();
+  await expect(defaultZone.locator(".zone-confirm-btn"))
+    .toHaveAttribute("aria-pressed", "false");
+  await expect(defaultZone.locator(".zone-confirm-btn")).toBeDisabled();
+  await expect(secondaryZone.locator(".zone-confirm-btn")).toBeDisabled();
+
+  await page.getByRole("button", { name: "Group options" }).click();
+  await page.getByRole("radio", { name: "Use zone setting" }).click();
+  await expect(page.locator('[data-zone="default"] .zone-confirm-btn')).toBeEnabled();
+  await expect(page.locator('[data-zone="default"] .zone-confirm-btn'))
+    .toHaveAttribute("aria-pressed", "false");
+});
+
 test("sélectionne automatiquement l'unique zone visible", async ({ page }) => {
   await page.route("**/api/zones?schema=items", async (route) => {
     const response = await route.fetch();
@@ -1349,6 +1382,18 @@ test("avertit avant de dépasser la rétention d'une zone", async ({ page }) => 
   await expect(defaultZone.locator(".thumb-wrap")).toHaveCount(5);
   await expect(page.locator("#toast")).toContainText("Zone is full");
   expect(confirmation).toContain("will remove 2 oldest managed items");
+
+  await defaultZone.locator(".zone-confirm-btn").click();
+  await expect(defaultZone.locator(".zone-confirm-btn"))
+    .toHaveAttribute("aria-pressed", "false");
+  let unexpectedConfirmation = false;
+  page.once("dialog", async dialog => {
+    unexpectedConfirmation = true;
+    await dialog.dismiss();
+  });
+  await dispatchMultiDrop(page, '.zone[data-zone="default"]');
+  await expect(defaultZone.locator(".thumb-wrap")).toHaveCount(5);
+  expect(unexpectedConfirmation).toBe(false);
 });
 
 test("reste utilisable avec des cibles tactiles sur petit écran", async ({ page }) => {
@@ -1361,7 +1406,7 @@ test("reste utilisable avec des cibles tactiles sur petit écran", async ({ page
       return { width: rect.width, height: rect.height };
     })
   ));
-  expect(targets.length).toBe(3);
+  expect(targets.length).toBe(4);
   expect(targets.every(({ width, height }) => width >= 44 && height >= 44)).toBe(true);
 
   const widths = await page.evaluate(() => ({

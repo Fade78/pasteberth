@@ -4,8 +4,8 @@
 
 This is the repository integration of the approved **presentation site 2.1**,
 not an independent Pasteberth release. Its interactive demo uses the repository's
-**working-tree frontend**, not the exact published 2.1.26 frontend. Runtime
-`__version__` and `pyproject.toml` agree on **2.1.26**, the latest published
+**working-tree frontend**, not the exact published 2.1.27 frontend. Runtime
+`__version__` and `pyproject.toml` agree on **2.1.27**, the latest published
 version.
 Transfers, asynchronous discovery and `first-directory` labels shipped in 2.1.19.
 
@@ -118,7 +118,7 @@ fallback, not dynamically fetched or converted to a portal.
 
 ## Historical Screenshots
 
-**The three `assets/interface-*.png` files are historical, not current 2.1.26
+**The three `assets/interface-*.png` files are historical, not current 2.1.27
 screenshots.** Their bytes are pinned in `capture-manifest.json`. They were retained
 unchanged from the archive dated **8 September 2026**. That date comes from ZIP
 entries; an exact original capture timestamp was not independently established.

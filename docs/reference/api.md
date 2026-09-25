@@ -122,7 +122,7 @@ must be included in protected backups.
 `/api/zones/{id}/items` returns `{"zone":"id","items":[...]}` and covers images,
 UTF-8 text, and opaque binary content such as PDFs. Each overview zone reports
 `busy`, copied-list formatting settings, whether ZIP download is enabled, its
-sidecar `retain` setting, and an
+sidecar `retain` setting, its `confirm_retention` default, and an
 effective `upload_limit_bytes` value. That value is the smaller of the hard
 upload limit and the bytes that can be accepted without crossing the configured
 free-space safeguards; raw disk capacity is not returned.

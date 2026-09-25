@@ -49,6 +49,8 @@
     tabSelectionAnchorId: null,
     groupLayouts: Object.create(null),
     tabSidebarVisibility: Object.create(null),
+    zoneRetentionConfirmation: Object.create(null),
+    groupRetentionConfirmation: Object.create(null),
     selectedItemsByZone: Object.create(null),
     selectionAnchorByZone: Object.create(null),
     batchBusyZoneIds: new Set(),
@@ -1789,7 +1791,7 @@
       setActive(zone.id);
       chooseFiles(zone.id);
     });
-    head.append(select, renderZoneCapacity(zone), uploadButton);
+    head.append(select, renderZoneCapacity(zone), renderZoneRetentionToggle(zone), uploadButton);
     el.appendChild(head);
 
     if (zone.busy) {
@@ -2150,6 +2152,91 @@
 
   function isGroupLayout(value) {
     return value === "area" || value === "tab";
+  }
+
+  function isRetentionConfirmationOverride(value) {
+    return value === "always" || value === "never";
+  }
+
+  function groupRetentionConfirmation(group) {
+    const value = group && state.groupRetentionConfirmation[group.name];
+    return isRetentionConfirmationOverride(value) ? value : null;
+  }
+
+  function activeGroupRetentionConfirmation() {
+    return groupRetentionConfirmation(
+      state.groups.find(group => group.name === state.activeGroupId),
+    );
+  }
+
+  function retentionConfirmationEnabled(zoneId) {
+    const groupOverride = activeGroupRetentionConfirmation();
+    if (groupOverride) return groupOverride === "always";
+    if (typeof state.zoneRetentionConfirmation[zoneId] === "boolean") {
+      return state.zoneRetentionConfirmation[zoneId];
+    }
+    const zone = state.zones.find(item => item.id === zoneId);
+    return zone?.confirm_retention !== false;
+  }
+
+  function loadRetentionConfirmationPreferences() {
+    try {
+      const zones = JSON.parse(localStorage.getItem("pb.zoneRetentionConfirmation") || "{}");
+      if (zones && typeof zones === "object" && !Array.isArray(zones)) {
+        for (const [zoneId, value] of Object.entries(zones)) {
+          if (typeof value === "boolean") state.zoneRetentionConfirmation[zoneId] = value;
+        }
+      }
+      const groups = JSON.parse(localStorage.getItem("pb.groupRetentionConfirmation") || "{}");
+      if (groups && typeof groups === "object" && !Array.isArray(groups)) {
+        for (const [groupName, value] of Object.entries(groups)) {
+          if (isRetentionConfirmationOverride(value)) {
+            state.groupRetentionConfirmation[groupName] = value;
+          }
+        }
+      }
+    } catch (_) {}
+  }
+
+  function saveRetentionConfirmationPreferences() {
+    try {
+      localStorage.setItem(
+        "pb.zoneRetentionConfirmation",
+        JSON.stringify(state.zoneRetentionConfirmation),
+      );
+      localStorage.setItem(
+        "pb.groupRetentionConfirmation",
+        JSON.stringify(state.groupRetentionConfirmation),
+      );
+    } catch (_) {}
+  }
+
+  function renderZoneRetentionToggle(zone) {
+    const button = document.createElement("button");
+    const enabled = retentionConfirmationEnabled(zone.id);
+    const groupOverride = activeGroupRetentionConfirmation();
+    button.type = "button";
+    button.className = "zone-confirm-btn";
+    button.textContent = "Confirm";
+    button.setAttribute("aria-pressed", String(enabled));
+    button.setAttribute(
+      "aria-label",
+      `${enabled ? "Ask before cleanup" : "Clean up automatically"} in ${zone.label}`,
+    );
+    button.title = groupOverride
+      ? `Retention confirmation controlled by the active group (${groupOverride === "always" ? "always" : "never"})`
+      : enabled
+        ? "Confirm before deleting items"
+        : "Do not confirm before deleting items";
+    button.disabled = Boolean(groupOverride);
+    button.addEventListener("click", event => {
+      event.stopPropagation();
+      if (activeGroupRetentionConfirmation()) return;
+      state.zoneRetentionConfirmation[zone.id] = !retentionConfirmationEnabled(zone.id);
+      saveRetentionConfirmationPreferences();
+      rerenderZone(zone.id);
+    });
+    return button;
   }
 
   function groupLayout(group) {
@@ -2878,6 +2965,33 @@
     const hideEmpty = addToggle("opt-hide-empty", "Hide empty groups", state.hideEmptyGroups);
     const showCount = addToggle("opt-show-count", "Show zone counts", state.showZoneCounts);
     const activeGroup = state.groups.find(group => group.name === state.activeGroupId);
+    const retentionRadios = [];
+    if (activeGroup) {
+      const fieldset = document.createElement("fieldset");
+      fieldset.className = "group-retention-options";
+      const legend = document.createElement("legend");
+      legend.textContent = "Retention confirmation";
+      fieldset.appendChild(legend);
+      const selected = groupRetentionConfirmation(activeGroup) || "zone";
+      for (const [value, labelText] of [
+        ["zone", "Use zone setting"],
+        ["always", "Always confirm cleanup"],
+        ["never", "Never ask before cleanup"],
+      ]) {
+        const label = document.createElement("label");
+        const input = document.createElement("input");
+        input.type = "radio";
+        input.name = "group-retention-confirmation";
+        input.value = value;
+        input.checked = selected === value;
+        const text = document.createElement("span");
+        text.textContent = labelText;
+        label.append(input, text);
+        fieldset.appendChild(label);
+        retentionRadios.push(input);
+      }
+      dropdown.appendChild(fieldset);
+    }
     let layoutSelect = null;
     let sidebarToggle = null;
     if (activeGroup) {
@@ -2971,6 +3085,18 @@
         state.tabSidebarVisibility[activeGroup.name] = e.target.checked;
         saveTabSidebarVisibility();
         close();
+        renderAll();
+        groupTabs.querySelector(".group-options-btn")?.focus();
+      });
+    }
+    for (const radio of retentionRadios) {
+      radio.addEventListener("change", event => {
+        const value = event.target.value;
+        if (value === "zone") delete state.groupRetentionConfirmation[activeGroup.name];
+        else state.groupRetentionConfirmation[activeGroup.name] = value;
+        saveRetentionConfirmationPreferences();
+        close();
+        renderGroups();
         renderAll();
         groupTabs.querySelector(".group-options-btn")?.focus();
       });
@@ -3090,6 +3216,7 @@
       } catch (_) {}
       loadGroupLayouts();
       loadTabSidebarVisibility();
+      loadRetentionConfirmationPreferences();
 
       reconcileActiveGroup();
       if (!state.initialized) loadOpenZones();
@@ -3223,6 +3350,7 @@
     if (!zone || incomingCount <= 0) return true;
     const excess = zone.items.length + incomingCount - zone.retain;
     if (excess <= 0) return true;
+    if (!retentionConfirmationEnabled(zoneId)) return true;
     const itemLabel = excess === 1 ? "item" : "items";
     const uploadLabel = incomingCount === 1 ? "this upload" : `${incomingCount} uploads`;
     return window.confirm(

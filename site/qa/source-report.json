@@ -1,7 +1,7 @@
 {
   "scope": "Source equality, deterministic MIME-independent rebuild, work/tmp/site scratch validation, no writes before symlink validation, historical capture hashes, local links, explicit public allowlist and GNU cp data/sidecar guard (register stubbed)",
-  "checked_at": "2026-09-15T19:29:43.540693+00:00",
-  "preview_sha256": "c111e8fec78260cde6578017ed0ca0cee83e811c92a535f299b1a8e22f370d4c",
+  "checked_at": "2026-09-25T15:11:54.359229+00:00",
+  "preview_sha256": "de1d3e4d2a251c95970dccbbedb78da6d116752973a7e5216bf504e54b5ef018",
   "summary": {
     "passed": 10,
     "failed": 0

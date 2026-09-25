@@ -103,6 +103,7 @@ max_sessions = 4096               # use "unlimited" to disable FIFO eviction
 # directory         : ABSOLUTE path as seen by the SERVER; used by the harness
 #                      and as the target path for filesystem operations
 # retain            : number of stored contents kept per zone (oldest removed first)
+# confirm_retention : ask before an upload removes old contents (default true)
 # reference_prefix  : text prepended to the returned reference (empty allowed)
 # reference_suffix  : text appended to the returned reference (empty by default)
 # reference_list_prefix/suffix : delimit a copied list of references (empty default)
@@ -125,6 +126,7 @@ type = "local"
 # The generator replaces this path with the external XDG data directory.
 directory = "/absolute/path/to/pasteberth-data/storage/default"
 retain = 10
+confirm_retention = true
 reference_prefix = "@"
 reference_suffix = ""
 reference_list_prefix = ""
@@ -145,6 +147,7 @@ min_free_percent = 2.0
 # max_depth = 4
 # label_mode = "git-or-relative"
 # retain = 10
+# confirm_retention = true
 # file_group = "pasteberth"
 # min_free_percent = 2.0
 

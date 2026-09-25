@@ -4,6 +4,14 @@ This file records user-visible changes to Pasteberth.
 
 ## [Unreleased]
 
+## [2.1.27] - 2026-09-25
+
+### Retention Confirmation
+
+- configure the default cleanup confirmation per static or discovered zone;
+- toggle confirmation per zone and override it for the active group from the
+  Web UI without prompting repeatedly for full zones.
+
 ## [2.1.26] - 2026-09-15
 
 ### Registration Visibility

@@ -4,14 +4,14 @@
 
 ## Requirements and Support
 
-The 2.1.26 implementation requires:
+The 2.1.27 implementation requires:
 
 - Python 3.11 or newer;
 - a local filesystem supported by the active platform backend;
 - a modern browser for the Web UI;
 - no third-party Python runtime dependency.
 
-Linux is the current official and tested server platform for v2.1.26. The
+Linux is the current official and tested server platform for v2.1.27. The
 Windows backend has broad Wine coverage, but native Windows/NTFS validation is
 still outstanding. A Darwin backend exists, but native macOS validation and
 official support are also outstanding. Only supported local filesystems are
@@ -31,12 +31,12 @@ manual validation on the target desktop.
 
 ### Deployable copy
 
-The supported v2.1.26 installation is the tracked `PasteBerth/` directory. It is
+The supported v2.1.27 installation is the tracked `PasteBerth/` directory. It is
 the complete code-only deployment unit: it needs no root access, installation
 script, Python package installation, or build step.
 
 ```sh
-git clone --branch v2.1.26 --depth 1 https://github.com/Fade78/pasteberth.git
+git clone --branch v2.1.27 --depth 1 https://github.com/Fade78/pasteberth.git
 cd pasteberth
 cp -a PasteBerth "$HOME/PasteBerth"
 mkdir -p "$HOME/.local/bin"
@@ -347,7 +347,7 @@ that all clipboard or downloaded content is sanitized.
 
 The next major platform goal is native Windows and macOS support with the same
 transaction and security guarantees. That work is intentionally separate from
-the v2.1.26 support matrix and must not be represented as already supported.
+the v2.1.27 support matrix and must not be represented as already supported.
 The repository contains opt-in `platform_windows` and `platform_macos` CI jobs;
 enable them only after registering native runners with
 `PASTEBERTH_NATIVE_WINDOWS_CI=1` or `PASTEBERTH_NATIVE_MACOS_CI=1`.

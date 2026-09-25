@@ -146,6 +146,7 @@ class ZoneConfig:
     min_free_percent: float = DEFAULT_MIN_FREE_PERCENT
     storage_mode: str = "sidecar"
     file_group: str | None = None
+    confirm_retention: bool = True
 
 
 @dataclass(frozen=True)
@@ -169,6 +170,7 @@ class ZoneCollectionConfig:
     group_layout: str = "area"
     group_hide_empty: bool = False
     group_show_count: bool = True
+    confirm_retention: bool = True
 
 
 @dataclass(frozen=True)
@@ -530,7 +532,7 @@ def _parse_zone(raw_zone: object, index: int, warnings: list[str]) -> ZoneConfig
     table = _expect_table(raw_zone, where)
     _warn_unknown(
         table,
-        {"id", "label", "type", "directory", "retain", "storage_mode", "max_items", "file_group",
+        {"id", "label", "type", "directory", "retain", "confirm_retention", "storage_mode", "max_items", "file_group",
          "reference_prefix", "reference_suffix",
          "reference_list_prefix", "reference_list_suffix", "reference_separator",
          "allow_zip_download", "color", "create_directory", "min_free_percent"},
@@ -564,6 +566,7 @@ def _parse_zone(raw_zone: object, index: int, warnings: list[str]) -> ZoneConfig
     retain = table.get("retain", 10)
     if isinstance(retain, bool) or not isinstance(retain, int) or retain < 1:
         raise ConfigError(f"{where}: 'retain' must be a positive integer")
+    confirm_retention = _get_bool(table, "confirm_retention", where, default=True)
     requested_storage_mode = _get_str(table, "storage_mode", where, default="sidecar").lower()
     if requested_storage_mode not in _STORAGE_MODES:
         raise ConfigError(
@@ -615,6 +618,7 @@ def _parse_zone(raw_zone: object, index: int, warnings: list[str]) -> ZoneConfig
         label=label,
         directory=directory,
         retain=retain,
+        confirm_retention=confirm_retention,
         reference_prefix=prefix,
         reference_suffix=suffix,
         reference_list_prefix=list_prefix,
@@ -638,7 +642,7 @@ def _parse_zone_collection(
         table,
         {
             "id", "base_directory", "pattern", "max_depth", "label_mode",
-            "storage_mode", "max_items", "min_free_percent", "retain", "file_group",
+            "storage_mode", "max_items", "min_free_percent", "retain", "confirm_retention", "file_group",
             "reference_prefix", "reference_suffix", "reference_list_prefix",
             "reference_list_suffix", "reference_separator", "allow_zip_download",
             "color",
@@ -708,6 +712,7 @@ def _parse_zone_collection(
         raise ConfigError(f"{where}: 'retain' must be a positive integer")
     if retain_value is not None and "retain" in table and legacy_max_items is not None:
         warnings.append(f"{where}: 'max_items' is ignored because 'retain' is set")
+    confirm_retention = _get_bool(table, "confirm_retention", where, default=True)
 
     min_free_percent = _get_percent(
         table, "min_free_percent", where, DEFAULT_MIN_FREE_PERCENT
@@ -742,6 +747,7 @@ def _parse_zone_collection(
         label_mode=label_mode,
         storage_mode=storage_mode,
         retain=retain,
+        confirm_retention=confirm_retention,
         file_group=file_group,
         min_free_percent=min_free_percent,
         reference_prefix=prefix,

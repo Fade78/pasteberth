@@ -768,6 +768,7 @@ class PasteService:
                     "label": zone.label,
                     "color": zone.color,
                     "retain": zone.retain,
+                    "confirm_retention": zone.confirm_retention,
                     "count": None if busy else len(items),
                     "images": [] if busy else items,
                     "upload_limit_bytes": upload_limit_bytes,

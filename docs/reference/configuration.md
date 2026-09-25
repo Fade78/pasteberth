@@ -220,9 +220,10 @@ Each `[[zones]]` table defines one independent project area:
 |---|---:|---|
 | `id` | required | Lowercase API/UI identifier, up to 64 characters. |
 | `label` | `id` | Human-readable UI label. |
-| `type` | `local` | Only `local` is implemented in v2.1.26. |
+| `type` | `local` | Only `local` is implemented in v2.1.27. |
 | `directory` | required | Absolute path as seen by the server and the harness. |
 | `retain` | `10` | Number of managed items retained in the zone. |
+| `confirm_retention` | `true` | Ask before an upload removes older managed items. |
 | `reference_prefix` | `@` | Text prepended to one returned reference. |
 | `reference_suffix` | empty | Text appended to one returned reference. |
 | `reference_list_prefix` | empty | Prefix for a copied list of references. |
@@ -266,6 +267,7 @@ label = "Project Alpha"
 type = "local"
 directory = "/srv/pasteberth-data/project-alpha"
 retain = 10
+confirm_retention = true
 reference_prefix = "@"
 reference_suffix = ""
 reference_list_prefix = ""
@@ -310,7 +312,11 @@ that calculation.
 Groups are loaded at startup. `pasteberth audit` reports redundant groups,
 ignored patterns on `all`/`other`, and equivalent effective selections.
 The Group options menu can show or hide the left zone column for a `tab` group;
-that preference is kept separately for each group in the browser.
+that preference is kept separately for each group in the browser. The same menu
+can force retention confirmation on or off for every zone in the active group,
+or leave each zone in control; the latter is the default. The `Confirm` button
+also stores a zone-specific browser preference, which takes precedence over the
+server default when the group leaves the zone in control.
 
 ### Zone collections
 
@@ -320,6 +326,10 @@ Each collection has an ID such as `@repositories`; it does not own or generate
 a group. A `selection = "pattern"` group can match that ID and selects every
 zone discovered by the collection. A configuration may use collections without
 any static `[[zones]]` entries.
+
+Zone collections accept the same `retain` and `confirm_retention` settings as
+static zones. When several collections contain one directory, all effective
+zone settings, including `confirm_retention`, must agree.
 
 `label_mode` defaults to `"git-or-relative"`; `"relative"` uses the complete
 path below `base_directory`, while `"first-directory"` uses its first

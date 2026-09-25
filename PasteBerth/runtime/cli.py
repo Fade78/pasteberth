@@ -983,6 +983,7 @@ label = "Default"
 type = "local"
 directory = "{storage}"
 retain = 10
+confirm_retention = true
 reference_prefix = "@"
 reference_suffix = ""
 reference_list_prefix = ""
@@ -1002,6 +1003,7 @@ min_free_percent = 2.0
 # max_depth = 4
 # label_mode = "git-or-relative"  # also: "relative" or "first-directory"
 # retain = 10
+# confirm_retention = true
 # file_group = "pasteberth"
 # min_free_percent = 2.0
 

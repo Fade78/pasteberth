@@ -550,6 +550,16 @@ class TestZoneCollectionDiscovery(unittest.TestCase):
         self.assertEqual(candidates, [])
         self.assertTrue(any("conflicting zone settings" in message for message in diagnostics))
 
+    def test_candidate_inherits_confirmation_retention(self):
+        candidate_path = self.tmp / "repo" / "work" / "exchange"
+        candidate_path.mkdir(parents=True)
+
+        candidates, _ = discover_zone_collections(
+            (replace(rule(self.tmp), confirm_retention=False),)
+        )
+
+        self.assertFalse(candidates[0].zone.confirm_retention)
+
     def test_generated_zone_id_collision_between_collections_is_rejected(self):
         first_base = self.tmp / "first"
         second_base = self.tmp / "second"

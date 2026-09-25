@@ -338,6 +338,10 @@ class TestContratsFrontend(unittest.TestCase):
     def test_zone_sidecar_applique_la_retention(self):
         self.assertIn("const limit = zone.retain", self.app_js)
         self.assertIn("zone.items.length > zone.retain", self.app_js)
+        self.assertIn("confirm_retention", self.app_js)
+        self.assertIn("zone-confirm-btn", self.app_js)
+        self.assertIn("groupRetentionConfirmation", self.app_js)
+        self.assertIn("Always confirm cleanup", self.app_js)
         self.assertNotIn('zone.storage_mode === "directory"', self.app_js)
         self.assertNotIn("zone.max_items", self.app_js)
         self.assertNotIn('err.code === "storage_limit"', self.app_js)

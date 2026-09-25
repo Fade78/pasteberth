@@ -217,8 +217,10 @@ target. A direct drop always targets the zone under the pointer. Several files
 are uploaded sequentially as independent operations; one failed file does not
 cancel the others.
 
-The web UI asks for confirmation before an upload would exceed `retain`, because
-retention may remove existing managed items. The server's
+By default, the web UI asks for confirmation before an upload would exceed
+`retain`, because retention may remove existing managed items. The `Confirm`
+control in each zone can change that preference; the active group's options can
+apply the same choice to all of its zones. The server's
 [retention rules](#retention), including protection of the current publication,
 remain authoritative.
 A successful upload that removed items includes their filenames in the

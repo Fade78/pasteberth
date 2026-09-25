@@ -314,15 +314,31 @@ class TestParsing(unittest.TestCase):
 
     def test_zones_chargees(self):
         zones = [
-            {"id": "default", "label": "Default", "retain": 7, "color": "#304237",
+            {"id": "default", "label": "Default", "retain": 7, "confirm_retention": False, "color": "#304237",
              "directory": str(self.tmp / "p")},
             {"id": "secondary", "directory": str(self.tmp / "l")},
         ]
         cfg = make_cfg(self.tmp, zones=zones)
         self.assertEqual(set(cfg.zones), {"default", "secondary"})
         self.assertEqual(cfg.zones["default"].retain, 7)
+        self.assertFalse(cfg.zones["default"].confirm_retention)
         self.assertEqual(cfg.zones["default"].color, "#304237")
         self.assertEqual(cfg.zones["secondary"].label, "secondary")
+        self.assertTrue(cfg.zones["secondary"].confirm_retention)
+
+    def test_confirmation_retention_des_collections(self):
+        cfg = make_cfg(
+            self.tmp,
+            zones=[],
+            extra=(
+                "\n[[zone_collection]]\n"
+                "id = \"@projects\"\n"
+                f"base_directory = {json.dumps(str(self.tmp))}\n"
+                "pattern = \".*\"\n"
+                "confirm_retention = false\n"
+            ),
+        )
+        self.assertFalse(cfg.zone_collections[0].confirm_retention)
 
     def test_groupe_systeme_des_fichiers_charge(self):
         cfg = make_cfg(

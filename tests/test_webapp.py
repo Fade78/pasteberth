@@ -50,6 +50,7 @@ class Base(unittest.TestCase):
         zones = [
             {"id": zid, "label": zid.upper(),
              "retain": self.config_kwargs.get("retain", retain),
+             "confirm_retention": self.config_kwargs.get("confirm_retention"),
              "color": color, "directory": str(path),
              "reference_prefix": self.config_kwargs.get("reference_prefix", "@"),
              "reference_suffix": self.config_kwargs.get("reference_suffix", ""),
@@ -332,6 +333,17 @@ class TestUploadLimit(Base):
         self.assertEqual(status, 200)
         zone = next(item for item in json_of(response)["zones"] if item["id"] == "default")
         self.assertEqual(zone["upload_limit_bytes"], 10 * 1024**2)
+
+
+class TestRetentionConfirmationOverview(Base):
+    config_kwargs = {"confirm_retention": False}
+
+    def test_overview_expose_la_confirmation_de_retention(self):
+        status, _, response = self.req("GET", "/api/zones")
+        self.assertEqual(status, 200)
+        zones = {zone["id"]: zone for zone in json_of(response)["zones"]}
+        self.assertFalse(zones["default"]["confirm_retention"])
+        self.assertFalse(zones["secondary"]["confirm_retention"])
 
 
 class TestComments(Base):
