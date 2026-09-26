@@ -2816,25 +2816,29 @@ class LocalDestination(Destination):
         if isinstance(size, bool) or not isinstance(size, int):
             raise ValueError("invalid numeric types")
         if kind == "image":
-            if any(isinstance(v, bool) or not isinstance(v, int) for v in (width, height)):
-                raise ValueError("invalid numeric types")
-            if width < 1 or height < 1 or (
-                self.limits.max_image_dimension is not None
-                and (
-                    width > self.limits.max_image_dimension
-                    or height > self.limits.max_image_dimension
-                )
-            ):
-                raise ValueError("invalid dimensions")
-            if (
-                self.max_image_pixels is not None
-                and width * height > self.max_image_pixels
-            ):
-                raise ValueError("inconsistent metadata")
             if fmt not in FORMATS:
                 raise ValueError("invalid format")
             if mime != mime_for(fmt):
                 raise ValueError("inconsistent image MIME type")
+            if fmt == "svg":
+                if width is not None or height is not None:
+                    raise ValueError("unexpected SVG dimensions")
+            else:
+                if any(isinstance(v, bool) or not isinstance(v, int) for v in (width, height)):
+                    raise ValueError("invalid numeric types")
+                if width < 1 or height < 1 or (
+                    self.limits.max_image_dimension is not None
+                    and (
+                        width > self.limits.max_image_dimension
+                        or height > self.limits.max_image_dimension
+                    )
+                ):
+                    raise ValueError("invalid dimensions")
+                if (
+                    self.max_image_pixels is not None
+                    and width * height > self.max_image_pixels
+                ):
+                    raise ValueError("inconsistent metadata")
         elif kind == "text":
             if width is not None or height is not None or fmt is not None:
                 raise ValueError("unexpected dimensions or format")

@@ -109,6 +109,73 @@ def make_webp_vp8x(width: int = 300, height: int = 200, with_payload: bool = Tru
     return b"RIFF" + struct.pack("<I", 4 + len(chunks)) + b"WEBP" + chunks
 
 
+def make_gif(width: int = 1, height: int = 1) -> bytes:
+    # A tiny one-frame GIF. The structural validator deliberately does not
+    # decode the LZW payload, so the same bounded payload is enough for tests
+    # of dimensions and container handling.
+    return (
+        b"GIF89a"
+        + struct.pack("<HHBBB", width, height, 0x80, 0, 0)
+        + b"\x00\x00\x00\xff\xff\xff"
+        + b"\x2c"
+        + struct.pack("<HHHHB", 0, 0, width, height, 0)
+        + b"\x02\x02\x44\x01\x00"
+        + b"\x3b"
+    )
+
+
+def make_bmp(width: int = 1, height: int = 1) -> bytes:
+    row_size = ((24 * width + 31) // 32) * 4
+    pixels = b"\x00" * (row_size * height)
+    dib = struct.pack(
+        "<IiiHHIIiiII",
+        40,
+        width,
+        height,
+        1,
+        24,
+        0,
+        len(pixels),
+        2835,
+        2835,
+        0,
+        0,
+    )
+    return b"BM" + struct.pack("<IHHI", 54 + len(pixels), 0, 0, 54) + dib + pixels
+
+
+def make_ico(width: int = 1, height: int = 1) -> bytes:
+    payload = make_png(width, height)
+    entry = struct.pack(
+        "<BBBBHHII",
+        width if width < 256 else 0,
+        height if height < 256 else 0,
+        0,
+        0,
+        1,
+        32,
+        len(payload),
+        22,
+    )
+    return struct.pack("<HHH", 0, 1, 1) + entry + payload
+
+
+def make_avif(width: int = 1, height: int = 1) -> bytes:
+    def box(kind: bytes, payload: bytes) -> bytes:
+        return struct.pack(">I4s", 8 + len(payload), kind) + payload
+
+    ispe = box(b"ispe", b"\x00\x00\x00\x00" + struct.pack(">II", width, height))
+    ipco = box(b"ipco", ispe)
+    iprp = box(b"iprp", ipco)
+    meta = box(b"meta", b"\x00\x00\x00\x00" + iprp)
+    ftyp = box(b"ftyp", b"avif\x00\x00\x00\x00mif1avif")
+    return ftyp + meta + box(b"mdat", b"\x00")
+
+
+def make_svg() -> bytes:
+    return b'<svg xmlns="http://www.w3.org/2000/svg" width="2" height="3"><rect width="2" height="3" fill="red"/></svg>'
+
+
 # ------------------------------------------------------------- multipart
 
 

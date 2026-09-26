@@ -1,8 +1,10 @@
-"""Configurable structural validation for PNG, JPEG, and WebP images.
+"""Configurable structural validation for browser-renderable images.
 
 The server does not decode pixels or codec bitstreams. It checks containers,
-dimensions, and required budgets before a browser/harness preview; the
-classifier then decides whether to fall back to binary content.
+dimensions, and required budgets before a browser preview; the classifier then
+decides whether to fall back to binary content. Browser-native formats that do
+not expose a useful bounded decoder in the standard library are checked only
+as containers, never decoded by the server.
 
 Contract: validation is structural, not complete codec decoding. A structurally
 valid but undecodable file (truncated WebP, minimal JPEG) may be stored and
@@ -23,16 +25,24 @@ _DEFAULT_LIMITS = LimitsConfig()
 
 _PNG_CHANNELS = {0: 1, 2: 3, 3: 1, 4: 2, 6: 4}
 
-# Accepted formats -> (extension, MIME type).
+# Accepted formats -> (extension, MIME type).  These are formats that the web
+# client can render in an <img> element in current mainstream browsers.
 FORMATS: dict[str, tuple[str, str]] = {
     "png": (".png", "image/png"),
     "jpeg": (".jpg", "image/jpeg"),
     "webp": (".webp", "image/webp"),
+    "gif": (".gif", "image/gif"),
+    "bmp": (".bmp", "image/bmp"),
+    "ico": (".ico", "image/x-icon"),
+    "avif": (".avif", "image/avif"),
+    "svg": (".svg", "image/svg+xml"),
 }
 
 # Declared MIME types accepted for upload (advisory: content is authoritative).
 ALLOWED_DECLARED_MIMES = {
-    "image/png", "image/jpeg", "image/webp", "application/octet-stream",
+    "image/png", "image/jpeg", "image/webp", "image/gif", "image/bmp",
+    "image/x-icon", "image/vnd.microsoft.icon", "image/avif", "image/apng",
+    "image/svg+xml", "application/octet-stream",
     "text/plain", "text/markdown", "text/html", "text/css",
     "text/javascript", "application/json", "application/xml", "text/csv",
     "application/x-yaml", "application/x-sh", "text/x-python",
@@ -51,8 +61,8 @@ class InvalidImageError(Exception):
 @dataclass(frozen=True)
 class ImageInfo:
     fmt: str  # FORMATS key.
-    width: int
-    height: int
+    width: int | None
+    height: int | None
     kind: str = "image"
     mime: str = "image/png"
     ext: str = ".png"
@@ -380,12 +390,309 @@ def _parse_webp(
     return _check_dims(*dimensions, "webp", max_pixels, max_dimension)
 
 
-_PARSERS = {"png": _parse_png, "jpeg": _parse_jpeg, "webp": _parse_webp}
+def _skip_gif_sub_blocks(data: bytes, pos: int) -> int:
+    """Skip GIF data sub-blocks and return the position after the terminator."""
+    while True:
+        if pos >= len(data):
+            raise InvalidImageError("invalid_image", "truncated GIF data sub-block")
+        size = data[pos]
+        pos += 1
+        if size == 0:
+            return pos
+        if pos + size > len(data):
+            raise InvalidImageError("invalid_image", "truncated GIF data sub-block")
+        pos += size
+
+
+def _parse_gif(
+    data: bytes,
+    max_pixels: int | None,
+    max_dimension: int | None,
+) -> ImageInfo:
+    if len(data) < 13 or data[:6] not in (b"GIF87a", b"GIF89a"):
+        raise InvalidImageError("invalid_image", "GIF signature is missing")
+    width, height = struct.unpack("<HH", data[6:10])
+    info = _check_dims(width, height, "gif", max_pixels, max_dimension)
+    packed = data[10]
+    pos = 13
+    if packed & 0x80:
+        pos += 3 * (1 << ((packed & 0x07) + 1))
+        if pos > len(data):
+            raise InvalidImageError("invalid_image", "truncated GIF color table")
+
+    frames = 0
+    while pos < len(data):
+        marker = data[pos]
+        if marker == 0x3B:  # trailer
+            if frames == 0 or pos + 1 != len(data):
+                raise InvalidImageError("invalid_image", "incomplete GIF")
+            return info
+        if marker == 0x2C:  # image descriptor
+            if pos + 10 > len(data):
+                raise InvalidImageError("invalid_image", "truncated GIF image descriptor")
+            left, top, frame_width, frame_height = struct.unpack(
+                "<HHHH", data[pos + 1:pos + 9]
+            )
+            descriptor_flags = data[pos + 9]
+            if (
+                frame_width < 1
+                or frame_height < 1
+                or left + frame_width > width
+                or top + frame_height > height
+            ):
+                raise InvalidImageError("invalid_image", "invalid GIF frame dimensions")
+            _check_dims(frame_width, frame_height, "gif", max_pixels, max_dimension)
+            pos += 10
+            if descriptor_flags & 0x80:
+                pos += 3 * (1 << ((descriptor_flags & 0x07) + 1))
+                if pos > len(data):
+                    raise InvalidImageError("invalid_image", "truncated GIF color table")
+            if pos >= len(data) or not 2 <= data[pos] <= 8:
+                raise InvalidImageError("invalid_image", "invalid GIF LZW code size")
+            pos = _skip_gif_sub_blocks(data, pos + 1)
+            frames += 1
+            continue
+        if marker == 0x21:  # extension
+            if pos + 2 > len(data):
+                raise InvalidImageError("invalid_image", "truncated GIF extension")
+            label = data[pos + 1]
+            pos += 2
+            if label == 0xF9:  # graphic control extension
+                if pos + 6 > len(data) or data[pos] != 4 or data[pos + 5] != 0:
+                    raise InvalidImageError("invalid_image", "invalid GIF graphic control extension")
+                pos += 6
+            elif label == 0x01:  # plain text extension
+                if pos >= len(data) or data[pos] != 12 or pos + 13 > len(data):
+                    raise InvalidImageError("invalid_image", "invalid GIF plain text extension")
+                pos = _skip_gif_sub_blocks(data, pos + 13)
+            else:
+                pos = _skip_gif_sub_blocks(data, pos)
+            continue
+        raise InvalidImageError("invalid_image", "invalid GIF block")
+    raise InvalidImageError("invalid_image", "GIF trailer is missing")
+
+
+def _parse_bmp(
+    data: bytes,
+    max_pixels: int | None,
+    max_dimension: int | None,
+) -> ImageInfo:
+    if len(data) < 26 or data[:2] != b"BM":
+        raise InvalidImageError("invalid_image", "BMP signature is missing")
+    pixel_offset = struct.unpack_from("<I", data, 10)[0]
+    dib_size = struct.unpack_from("<I", data, 14)[0]
+    if dib_size == 12:
+        if len(data) < 26:
+            raise InvalidImageError("invalid_image", "truncated BMP header")
+        width, height, planes, bits = struct.unpack_from("<HHHH", data, 18)
+        compression = 0
+        header_end = 26
+    elif dib_size >= 40:
+        header_end = 14 + dib_size
+        if header_end > len(data):
+            raise InvalidImageError("invalid_image", "truncated BMP header")
+        width, height, planes, bits, compression = struct.unpack_from(
+            "<iiHHI", data, 18
+        )
+        height = abs(height)
+    else:
+        raise InvalidImageError("invalid_image", "unsupported BMP header")
+    if (
+        width < 1
+        or height < 1
+        or planes != 1
+        or bits not in (1, 4, 8, 16, 24, 32)
+        or compression not in (0, 3, 6)
+        or pixel_offset < header_end
+        or pixel_offset >= len(data)
+    ):
+        raise InvalidImageError("invalid_image", "invalid BMP structure")
+    return _check_dims(width, height, "bmp", max_pixels, max_dimension)
+
+
+def _parse_ico(
+    data: bytes,
+    max_pixels: int | None,
+    max_dimension: int | None,
+) -> ImageInfo:
+    if len(data) < 6 or data[:2] != b"\x00\x00":
+        raise InvalidImageError("invalid_image", "ICO signature is missing")
+    icon_type, count = struct.unpack_from("<HH", data, 2)
+    if icon_type not in (1, 2) or count < 1 or 6 + count * 16 > len(data):
+        raise InvalidImageError("invalid_image", "invalid ICO directory")
+    largest: tuple[int, int] | None = None
+    for index in range(count):
+        pos = 6 + index * 16
+        raw_width, raw_height = data[pos], data[pos + 1]
+        width = raw_width or 256
+        height = raw_height or 256
+        image_size, image_offset = struct.unpack_from("<II", data, pos + 8)
+        if (
+            image_size < 1
+            or image_offset < 6 + count * 16
+            or image_offset + image_size > len(data)
+        ):
+            raise InvalidImageError("invalid_image", "invalid ICO image entry")
+        _check_dims(width, height, "ico", max_pixels, max_dimension)
+        if largest is None or width * height > largest[0] * largest[1]:
+            largest = (width, height)
+    assert largest is not None
+    return _check_dims(*largest, "ico", max_pixels, max_dimension)
+
+
+def _read_isobmff_boxes(
+    data: bytes,
+    start: int,
+    end: int,
+) -> list[tuple[bytes, int, int]]:
+    """Read bounded ISO-BMFF boxes as (type, body start, body end)."""
+    boxes: list[tuple[bytes, int, int]] = []
+    pos = start
+    while pos < end:
+        if pos + 8 > end:
+            raise InvalidImageError("invalid_image", "truncated ISO-BMFF box")
+        size = struct.unpack_from(">I", data, pos)[0]
+        box_type = data[pos + 4:pos + 8]
+        header = 8
+        if size == 1:
+            if pos + 16 > end:
+                raise InvalidImageError("invalid_image", "truncated ISO-BMFF extended size")
+            size = struct.unpack_from(">Q", data, pos + 8)[0]
+            header = 16
+        elif size == 0:
+            size = end - pos
+        if size < header or size > end - pos:
+            raise InvalidImageError("invalid_image", "invalid ISO-BMFF box size")
+        body_start = pos + header
+        boxes.append((box_type, body_start, pos + size))
+        pos += size
+    return boxes
+
+
+def _find_ispe(data: bytes, start: int, end: int) -> tuple[int, int] | None:
+    for box_type, body_start, body_end in _read_isobmff_boxes(data, start, end):
+        if box_type == b"ispe":
+            if body_end - body_start < 12:
+                raise InvalidImageError("invalid_image", "truncated AVIF dimensions")
+            return struct.unpack_from(">II", data, body_start + 4)
+        if box_type in (b"iprp", b"ipco"):
+            dimensions = _find_ispe(data, body_start, body_end)
+            if dimensions is not None:
+                return dimensions
+    return None
+
+
+def _avif_brand(data: bytes) -> bool:
+    try:
+        boxes = _read_isobmff_boxes(data, 0, len(data))
+    except InvalidImageError:
+        return False
+    if not boxes or boxes[0][0] != b"ftyp":
+        return False
+    _, body_start, body_end = boxes[0]
+    if body_end - body_start < 8:
+        return False
+    brands = [data[body_start:body_start + 4]]
+    brands.extend(
+        data[pos:pos + 4]
+        for pos in range(body_start + 8, body_end - 3, 4)
+    )
+    return any(brand in (b"avif", b"avis") for brand in brands)
+
+
+def _parse_avif(
+    data: bytes,
+    max_pixels: int | None,
+    max_dimension: int | None,
+) -> ImageInfo:
+    try:
+        boxes = _read_isobmff_boxes(data, 0, len(data))
+    except InvalidImageError:
+        raise
+    if not boxes or boxes[0][0] != b"ftyp" or not _avif_brand(data):
+        raise InvalidImageError("invalid_image", "AVIF file type is missing")
+    meta = next((box for box in boxes if box[0] == b"meta"), None)
+    if meta is None or meta[2] - meta[1] < 4:
+        raise InvalidImageError("invalid_image", "AVIF metadata is missing")
+    dimensions = _find_ispe(data, meta[1] + 4, meta[2])
+    if dimensions is None:
+        raise InvalidImageError("invalid_image", "AVIF dimensions are missing")
+    return _check_dims(*dimensions, "avif", max_pixels, max_dimension)
+
+
+def _looks_like_svg(data: bytes) -> bool:
+    prefix = data[:4096].lstrip(b"\xef\xbb\xbf \t\r\n")
+    if prefix.startswith(b"<?xml"):
+        declaration_end = prefix.find(b"?>")
+        if declaration_end < 0:
+            return False
+        prefix = prefix[declaration_end + 2:].lstrip(b" \t\r\n")
+    while True:
+        if prefix.startswith(b"<!--"):
+            comment_end = prefix.find(b"-->")
+            if comment_end < 0:
+                return False
+            prefix = prefix[comment_end + 3:].lstrip(b" \t\r\n")
+        elif prefix.startswith(b"<!DOCTYPE"):
+            doctype_end = prefix.find(b">")
+            if doctype_end < 0:
+                return False
+            prefix = prefix[doctype_end + 1:].lstrip(b" \t\r\n")
+        elif prefix.startswith(b"<?"):
+            instruction_end = prefix.find(b"?>")
+            if instruction_end < 0:
+                return False
+            prefix = prefix[instruction_end + 2:].lstrip(b" \t\r\n")
+        else:
+            break
+    return bool(re.match(rb"<svg(?:[\s>])", prefix, re.I))
+
+
+def _parse_svg(data: bytes) -> ImageInfo:
+    if not _looks_like_svg(data):
+        raise InvalidImageError("invalid_image", "SVG root is missing")
+    try:
+        text = data.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise InvalidImageError("invalid_image", "SVG is not UTF-8") from exc
+    lowered = text.lower()
+    if "</svg" not in lowered and not re.search(r"<svg\b[^>]*/>", lowered):
+        raise InvalidImageError("invalid_image", "SVG closing tag is missing")
+    # SVG dimensions are optional and its intrinsic size may come from a
+    # viewBox. The browser remains the authority for the rendered dimensions.
+    return ImageInfo(fmt="svg", width=None, height=None, mime=mime_for("svg"), ext=extension_for("svg"))
+
+
+_PARSERS = {
+    "png": _parse_png,
+    "jpeg": _parse_jpeg,
+    "webp": _parse_webp,
+    "gif": _parse_gif,
+    "bmp": _parse_bmp,
+    "ico": _parse_ico,
+    "avif": _parse_avif,
+}
 _SIGNATURES = (
     (b"\x89PNG\r\n\x1a\n", "png"),
     (b"\xff\xd8\xff", "jpeg"),
     (b"RIFF", "webp"),
+    (b"GIF87a", "gif"),
+    (b"GIF89a", "gif"),
+    (b"BM", "bmp"),
+    (b"\x00\x00\x01\x00", "ico"),
 )
+
+
+def detect_image_format(data: bytes) -> str | None:
+    """Return a recognized image format without validating its contents."""
+    for signature, fmt in _SIGNATURES:
+        if data.startswith(signature):
+            return fmt
+    if _avif_brand(data):
+        return "avif"
+    if _looks_like_svg(data):
+        return "svg"
+    return None
 
 
 def _png_row_layout(
@@ -581,15 +888,13 @@ def inspect_image(
     """Identify and validate an image from its content."""
     if not data:
         raise InvalidImageError("empty_upload", "upload is empty")
-    fmt = None
-    for sig, candidate in _SIGNATURES:
-        if data.startswith(sig):
-            fmt = candidate
-            break
+    fmt = detect_image_format(data)
     if fmt is None:
         raise InvalidImageError(
             "unsupported_format",
-            "unrecognized content (accepted formats: PNG, JPEG, WebP)",
+            "unrecognized content (accepted formats: "
+            + ", ".join(name.upper() for name in FORMATS)
+            + ")",
         )
     if fmt == "png":
         return _parse_png(
@@ -601,7 +906,17 @@ def inspect_image(
         )
     if fmt == "jpeg":
         return _parse_jpeg(data, max_pixels, max_dimension, max_jpeg_segments)
-    return _parse_webp(data, max_pixels, max_dimension, max_webp_chunks)
+    if fmt == "webp":
+        return _parse_webp(data, max_pixels, max_dimension, max_webp_chunks)
+    if fmt == "gif":
+        return _parse_gif(data, max_pixels, max_dimension)
+    if fmt == "bmp":
+        return _parse_bmp(data, max_pixels, max_dimension)
+    if fmt == "ico":
+        return _parse_ico(data, max_pixels, max_dimension)
+    if fmt == "avif":
+        return _parse_avif(data, max_pixels, max_dimension)
+    return _parse_svg(data)
 
 
 def mime_allowed(declared: str | None) -> bool:

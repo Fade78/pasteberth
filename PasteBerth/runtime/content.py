@@ -14,6 +14,7 @@ from .config import DEFAULT_MAX_IMAGE_PIXELS, LimitsConfig
 from .images import (
     FORMATS,
     InvalidImageError,
+    detect_image_format,
     inspect_image,
     mime_for,
 )
@@ -39,13 +40,6 @@ DEFAULT_TEXT_EXT = ".txt"
 DEFAULT_BINARY_EXT = ".bin"
 
 _SAFE_EXT_RE = re.compile(r"^[A-Za-z0-9]{1,10}$")
-
-_SIGNATURES = (
-    (b"\x89PNG\r\n\x1a\n", "png"),
-    (b"\xff\xd8\xff", "jpeg"),
-    (b"RIFF", "webp"),
-)
-
 
 @dataclass(frozen=True)
 class ContentInfo:
@@ -99,36 +93,36 @@ def classify(
 ) -> ContentInfo:
     """Classify content: image signature, UTF-8 text, or binary fallback."""
     # 1. Image: the content signature is authoritative.
-    for sig, fmt in _SIGNATURES:
-        if data.startswith(sig):
-            try:
-                info = inspect_image(
-                    data,
-                    max_pixels=max_pixels,
-                    max_dimension=max_dimension,
-                    max_raw_bytes=max_raw_bytes,
-                    max_png_chunks=max_png_chunks,
-                    max_jpeg_segments=max_jpeg_segments,
-                    max_webp_chunks=max_webp_chunks,
-                )
-            except InvalidImageError:
-                # An image-looking upload that cannot pass the bounded
-                # structural check is still safe to retain as an attachment.
-                image_ext = safe_extension(filename_hint) or ".bin"
-                return ContentInfo(
-                    kind="binary",
-                    ext=image_ext,
-                    mime="application/octet-stream",
-                )
-            else:
-                return ContentInfo(
-                    kind="image",
-                    ext=FORMATS[info.fmt][0],
-                    mime=mime_for(info.fmt),
-                    width=info.width,
-                    height=info.height,
-                    fmt=info.fmt,
-                )
+    fmt = detect_image_format(data)
+    if fmt is not None:
+        try:
+            info = inspect_image(
+                data,
+                max_pixels=max_pixels,
+                max_dimension=max_dimension,
+                max_raw_bytes=max_raw_bytes,
+                max_png_chunks=max_png_chunks,
+                max_jpeg_segments=max_jpeg_segments,
+                max_webp_chunks=max_webp_chunks,
+            )
+        except InvalidImageError:
+            # An image-looking upload that cannot pass the bounded structural
+            # check is still safe to retain as an attachment.
+            image_ext = safe_extension(filename_hint) or ".bin"
+            return ContentInfo(
+                kind="binary",
+                ext=image_ext,
+                mime="application/octet-stream",
+            )
+        else:
+            return ContentInfo(
+                kind="image",
+                ext=FORMATS[info.fmt][0],
+                mime=mime_for(info.fmt),
+                width=info.width,
+                height=info.height,
+                fmt=info.fmt,
+            )
     # 2. Text: declared text OR valid UTF-8 content.
     declared = (declared_mime or "").split(";")[0].strip().lower()
     if declared.startswith("text/") or declared in (

@@ -4,7 +4,17 @@ import unittest
 import zlib
 
 from PasteBerth.runtime.content import classify, safe_extension
-from tests.helpers import _png_chunk, make_png, make_jpeg, make_webp_lossy
+from tests.helpers import (
+    _png_chunk,
+    make_avif,
+    make_bmp,
+    make_gif,
+    make_ico,
+    make_jpeg,
+    make_png,
+    make_svg,
+    make_webp_lossy,
+)
 
 
 class TestClassify(unittest.TestCase):
@@ -18,6 +28,18 @@ class TestClassify(unittest.TestCase):
     def test_image_jpeg_et_webp(self):
         self.assertEqual(classify(make_jpeg(4, 4), None).kind, "image")
         self.assertEqual(classify(make_webp_lossy(4, 4), None).kind, "image")
+
+    def test_images_rendables_par_navigateur(self):
+        for data, mime, extension in (
+            (make_gif(), "image/gif", ".gif"),
+            (make_bmp(), "image/bmp", ".bmp"),
+            (make_ico(), "image/x-icon", ".ico"),
+            (make_avif(), "image/avif", ".avif"),
+            (make_svg(), "image/svg+xml", ".svg"),
+        ):
+            with self.subTest(mime=mime):
+                info = classify(data, mime)
+                self.assertEqual((info.kind, info.mime, info.ext), ("image", mime, extension))
 
     def test_image_invalide_devient_binaire(self):
         info = classify(make_webp_lossy()[:-1], "image/webp", "capture.webp")

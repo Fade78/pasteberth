@@ -4,6 +4,15 @@ This file records user-visible changes to Pasteberth.
 
 ## [Unreleased]
 
+## [2.1.28] - 2026-09-26
+
+### Browser-Native Image Previews
+
+- preview browser-renderable GIF, BMP, ICO, AVIF, and SVG files alongside
+  PNG, JPEG, and WebP;
+- validate the new image containers structurally and keep stored documents
+  and arbitrary binaries as downloads.
+
 ## [2.1.27] - 2026-09-25
 
 ### Retention Confirmation

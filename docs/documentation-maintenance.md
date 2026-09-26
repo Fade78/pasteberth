@@ -1,6 +1,6 @@
 # Documentation Maintenance
 
-This documentation uses runtime **2.1.27** as its released baseline; changes
+This documentation uses runtime **2.1.28** as its released baseline; changes
 after that tag must be marked **Unreleased**. A useful recipe is a promise
 that its stated prerequisites, commands, and observable outcome match the
 implementation. Verify that promise before shortening it into site copy.
@@ -118,7 +118,7 @@ site sources distinct from generated `demo.html`, `preview.html`, and
 `assets/example-data.js`.
 
 Screenshots have separate provenance. The imported 2.1.18 captures are labelled
-historical; the interactive demo uses the 2.1.27 frontend and a memory backend.
+historical; the interactive demo uses the 2.1.28 frontend and a memory backend.
 Do not relabel screenshots when rebuilding JavaScript. New genuine-product
 captures need an isolated daemon, synthetic data, and recorded source/method.
 

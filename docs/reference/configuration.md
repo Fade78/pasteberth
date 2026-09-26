@@ -52,7 +52,7 @@ attempt, so changing it does not require a restart.
 | `allow_unauthenticated_local` | `false` | Explicit opt-in for anonymous loopback or proxy mode. |
 | `allow_unauthenticated_remote` | `false` | Explicit opt-in for anonymous non-loopback mode; discouraged. |
 | `allow_insecure_http_remote` | `false` | Explicit opt-in for non-loopback HTTP on a controlled private network. |
-| `accept_img` | `true` | Accept structurally valid PNG, JPEG, and WebP images. |
+| `accept_img` | `true` | Accept structurally valid browser-renderable PNG, JPEG, WebP, GIF, BMP, ICO, AVIF, and SVG images. |
 | `accept_doc` | `true` | Accept valid UTF-8 text without NUL bytes. |
 | `accept_bin` | `true` | Accept opaque binary content. |
 | `log_level` | `INFO` | One of `DEBUG`, `INFO`, `WARNING`, or `ERROR`. |
@@ -220,7 +220,7 @@ Each `[[zones]]` table defines one independent project area:
 |---|---:|---|
 | `id` | required | Lowercase API/UI identifier, up to 64 characters. |
 | `label` | `id` | Human-readable UI label. |
-| `type` | `local` | Only `local` is implemented in v2.1.27. |
+| `type` | `local` | Only `local` is implemented in v2.1.28. |
 | `directory` | required | Absolute path as seen by the server and the harness. |
 | `retain` | `10` | Number of managed items retained in the zone. |
 | `confirm_retention` | `true` | Ask before an upload removes older managed items. |

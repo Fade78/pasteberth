@@ -6,8 +6,13 @@ from unittest import mock
 
 from tests.helpers import (
     _png_chunk,
+    make_avif,
+    make_bmp,
+    make_gif,
+    make_ico,
     make_jpeg,
     make_png,
+    make_svg,
     make_webp_lossy,
     make_webp_vp8l,
     make_webp_vp8x,
@@ -312,6 +317,36 @@ class TestWebp(unittest.TestCase):
             inspect_image(make_webp_lossy(), max_webp_chunks=0)
 
 
+class TestBrowserImages(unittest.TestCase):
+    def test_gif(self):
+        info = inspect_image(make_gif(12, 8))
+        self.assertEqual((info.fmt, info.width, info.height), ("gif", 12, 8))
+
+    def test_bmp(self):
+        info = inspect_image(make_bmp(12, 8))
+        self.assertEqual((info.fmt, info.width, info.height), ("bmp", 12, 8))
+
+    def test_ico(self):
+        info = inspect_image(make_ico(12, 8))
+        self.assertEqual((info.fmt, info.width, info.height), ("ico", 12, 8))
+
+    def test_avif(self):
+        info = inspect_image(make_avif(12, 8))
+        self.assertEqual((info.fmt, info.width, info.height), ("avif", 12, 8))
+
+    def test_svg(self):
+        info = inspect_image(make_svg())
+        self.assertEqual((info.fmt, info.width, info.height), ("svg", None, None))
+
+    def test_svg_avec_declaration_et_doctype(self):
+        data = b'<?xml version="1.0"?><!DOCTYPE svg><svg></svg>'
+        self.assertEqual(inspect_image(data).fmt, "svg")
+
+    def test_dimensions_bornees_pour_avif(self):
+        with self.assertRaises(InvalidImageError):
+            inspect_image(make_avif(20_000, 20_000))
+
+
 class TestRejets(unittest.TestCase):
     def test_empty(self):
         with self.assertRaises(InvalidImageError) as ctx:
@@ -323,12 +358,12 @@ class TestRejets(unittest.TestCase):
             inspect_image(b"hello world, definitely not an image")
         self.assertEqual(ctx.exception.code, "unsupported_format")
 
-    def test_gif_rejected(self):
+    def test_gif_truncated_rejected(self):
         with self.assertRaises(InvalidImageError) as ctx:
             inspect_image(b"GIF89a" + b"\x00" * 20)
-        self.assertEqual(ctx.exception.code, "unsupported_format")
+        self.assertEqual(ctx.exception.code, "invalid_image")
 
-    def test_bmp_rejected(self):
+    def test_bmp_truncated_rejected(self):
         with self.assertRaises(InvalidImageError):
             inspect_image(b"BM" + b"\x00" * 30)
 
@@ -339,7 +374,9 @@ class TestRejets(unittest.TestCase):
         self.assertTrue(mime_allowed(None))
         self.assertTrue(mime_allowed("image/png; charset=binary"))
         self.assertTrue(mime_allowed("text/plain"))
-        self.assertFalse(mime_allowed("image/gif"))
+        self.assertTrue(mime_allowed("image/gif"))
+        self.assertTrue(mime_allowed("image/avif"))
+        self.assertTrue(mime_allowed("image/svg+xml"))
         self.assertTrue(mime_allowed("text/html"))
 
     def test_mime_syntax_bornee(self):

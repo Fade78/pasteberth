@@ -206,9 +206,10 @@ responses keep `preview_url` and add `sha256`, `etag`, and `content_url`.
 Methods, authentication, mounted paths, and legacy status/error behavior are
 preserved, with the explicit read-mode differences described above and the
 new conditional-read behavior below. Content classification is unchanged:
-`kind: image`, dimensions, PNG/JPEG/WebP validation, image limits, and genuine
-image errors such as `invalid_image` remain image-specific. Neither persisted
-zones nor sidecars or journals need migration for this vocabulary change.
+`kind: image`, dimensions, browser-renderable image validation (PNG, JPEG,
+WebP, GIF, BMP, ICO, AVIF, and SVG), image limits, and genuine image errors
+such as `invalid_image` remain image-specific. Neither persisted zones nor
+sidecars or journals need migration for this vocabulary change.
 
 ### Upload
 
@@ -408,9 +409,10 @@ has replaced it before acquisition, the response is 412, not B under A's tag.
 
 GET streams at most 64 KiB per source read, up to the captured item size.
 `Content-Type` and `Content-Length` come from that captured metadata, with
-`Cache-Control: no-store` and the normal security headers. Non-PNG/JPEG/WebP
-content uses attachment disposition, including UTF-8 filename encoding; stored
-HTML is not rendered on the application's origin. HEAD performs the same
+`Cache-Control: no-store` and the normal security headers. Non-image content
+uses attachment disposition, including UTF-8 filename encoding; stored HTML is
+not rendered on the application's origin. SVG image previews use an additional
+restrictive content security policy. HEAD performs the same
 acquisition and validation but sends no body, including on errors. HEAD is
 routed explicitly for both content paths; it is not enabled for every GET route.
 

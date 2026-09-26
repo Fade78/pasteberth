@@ -2,7 +2,7 @@
 
 Static presentation **site 2.1**, integrated with the repository's **working-tree
 frontend**. The declared runtime version and latest published release are
-**2.1.27**; the demo is not the exact published frontend.
+**2.1.28**; the demo is not the exact published frontend.
 English by default, French selectable; the actual product UI remains English.
 No framework, backend changes, telemetry, remote fonts or deployment.
 
@@ -272,10 +272,10 @@ examples, license and three small historical captures were retained. No old
 preview images, old QA success reports or private screenshots were imported.
 
 **The screenshots remain historical 2.1.18 captures from the archive dated
-8 September 2026**, not screenshots of runtime 2.1.27. Their inherited capture
+8 September 2026**, not screenshots of runtime 2.1.28. Their inherited capture
 method and exact hashes are documented separately. The interactive demo, by
 contrast, uses the working-tree frontend and a memory-only adapter. Its displayed
-runtime version is 2.1.27, not a daemon certification.
+runtime version is 2.1.28, not a daemon certification.
 
 Demo uploads are limited to 8 MiB per file and 32 MiB of files in total; this is
 not a strict JavaScript memory ceiling or the server's configured upload limit

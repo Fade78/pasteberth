@@ -2020,6 +2020,31 @@ test("colle du texte et l'affiche", async ({ page }) => {
   await page.getByRole("button", { name: "Close" }).click();
 });
 
+test("prévisualise un SVG rendu nativement par le navigateur", async ({ page }) => {
+  const svg = '<svg xmlns="http://www.w3.org/2000/svg" width="4" height="3"><rect width="4" height="3" fill="red"/></svg>';
+  const response = await page.request.post("/api/zones/default/items", {
+    multipart: {
+      file: {
+        name: "vector.svg",
+        mimeType: "image/svg+xml",
+        buffer: Buffer.from(svg),
+      },
+      preserve_name: "1",
+    },
+  });
+  expect(response.ok()).toBe(true);
+
+  await openApp(page);
+  const defaultZone = page.locator('[data-zone="default"]');
+  const preview = defaultZone.locator(".thumb-big");
+  await expect(preview).toBeVisible();
+  await expect(defaultZone.locator(".file-box")).toHaveCount(0);
+  await expect.poll(() => preview.evaluate(image => image.naturalWidth)).toBeGreaterThan(0);
+  await preview.click();
+  await expect(page.locator("#pv")).toHaveAttribute("aria-label", "Preview of vector.svg");
+  await page.getByRole("button", { name: "Close" }).click();
+});
+
 test("copie un CSV UTF-8 sans BOM avec des caractères Unicode", async ({ page }) => {
   await deferClipboard(page);
   const csv = "name,city\nZoë,東京\n";

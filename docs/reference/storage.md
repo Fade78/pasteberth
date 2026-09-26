@@ -239,7 +239,10 @@ clipboard. Clipboard permissions are controlled by the browser.
 
 ### Content types
 
-- PNG, JPEG, and WebP images receive previews when structural validation passes.
+- PNG, JPEG, WebP, GIF, BMP, ICO, AVIF, and SVG images receive browser previews
+  when bounded structural validation passes. SVG dimensions remain browser-
+  determined because an SVG may use an intrinsic `viewBox` instead of fixed
+  pixel dimensions.
 - Valid UTF-8 content without NUL bytes is displayed as text.
 - Other content is treated as opaque binary.
 - A declared MIME type does not decide whether an image is valid; content
@@ -268,6 +271,8 @@ structure, and pixel budgets without fully decoding the codec bitstream. A
 structurally valid but undecodable file can therefore have a broken preview;
 the server never executes it. The default image budgets are `16,384 x 16,384`
 pixels, 25 MP, and 256 MiB of encoded input; all are operator-configurable.
+Browser-native formats without a standard-library codec decoder are checked as
+bounded containers only.
 
 ### After a deposit: inspect and act
 

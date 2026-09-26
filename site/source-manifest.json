@@ -1,7 +1,7 @@
 {
   "site_version": "2.1",
-  "runtime_version": "2.1.27",
-  "source_commit": "97315ada7715641dadf93364c73f9ddad0857f45",
+  "runtime_version": "2.1.28",
+  "source_commit": "65dc447d97ab3fac4fa6ae73e373b8e7c0122065",
   "note": "Commit is context; file hashes pin the actual working-tree bytes.",
   "frontend": [
     {

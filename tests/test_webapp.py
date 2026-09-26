@@ -22,8 +22,13 @@ from tests.helpers import (
     build_multipart,
     json_of,
     login,
+    make_avif,
+    make_bmp,
+    make_gif,
+    make_ico,
     make_jpeg,
     make_png,
+    make_svg,
     make_webp_lossy,
     request,
     write_config,
@@ -32,7 +37,9 @@ from tests.helpers import (
 from PasteBerth.runtime.webapp import _ChunkedWriter, _safe_log_text
 
 PASSWORD = "mot-de-passe-de-test-123"
-FILENAME_RE = re.compile(r"^\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}_[0-9a-f]{6}\.(png|jpg|webp)$")
+FILENAME_RE = re.compile(
+    r"^\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}_[0-9a-f]{6}\.(png|jpg|webp|gif|bmp|ico|avif|svg)$"
+)
 
 
 class Base(unittest.TestCase):
@@ -928,7 +935,7 @@ class TestPreviewsConcurrence(Base):
 
 
 class TestUploadsFormats(Base):
-    """(#1)(#2)(#3) PNG, JPEG, WebP ; (#8) faux MIME."""
+    """Browser-renderable image formats and advisory MIME handling."""
 
     def setUp(self):
         super().setUp()
@@ -961,6 +968,26 @@ class TestUploadsFormats(Base):
         self.assertEqual(status, 201)
         self.assertEqual(item["format"], "webp")
         self.assertTrue(item["filename"].endswith(".webp"))
+
+    def test_images_connues_du_navigateur_sont_previsualisees(self):
+        examples = (
+            (make_gif(), "image/gif", "gif"),
+            (make_bmp(), "image/bmp", "bmp"),
+            (make_ico(), "image/x-icon", "ico"),
+            (make_avif(), "image/avif", "avif"),
+            (make_svg(), "image/svg+xml", "svg"),
+        )
+        for data, mime, fmt in examples:
+            with self.subTest(fmt=fmt):
+                status, item = self._upload_raw("default", data, mime)
+                self.assertEqual(status, 201)
+                self.assertEqual((item["kind"], item["format"], item["mime"]), ("image", fmt, mime))
+                status, headers, preview = self.req("GET", item["preview_url"])
+                self.assertEqual((status, preview), (200, data))
+                self.assertEqual(headers["content-type"], mime)
+                self.assertNotIn("attachment", headers.get("content-disposition", ""))
+                if fmt == "svg":
+                    self.assertIn("script-src 'none'", headers["content-security-policy"])
 
     def test_mime_mensonger_contenu_jpeg(self):
         # Le navigateur déclare image/png mais le contenu est JPEG : le contenu gagne.
@@ -1306,11 +1333,12 @@ class TestRejetsUploads(Base):
             response = sock.recv(4096).decode("latin-1")
         self.assertTrue(response.startswith("HTTP/1.1 431"), response[:60])
 
-    def test_gif_refuse(self):
+    def test_gif_tronque_reste_un_binaire(self):
         status_code, _, body = self.req("POST", "/api/zones/default/images",
-                                        body=b"GIF89a" + b"\x00" * 30,
+                                        body=make_gif()[:-1],
                                         headers={"Content-Type": "image/gif"})
-        self.assertEqual(status_code, 415)
+        self.assertEqual(status_code, 201)
+        self.assertEqual(json_of(body)["kind"], "binary")
 
     def test_png_tronque_est_conserve_comme_binaire(self):
         truncated = make_png(8, 8)[:14]

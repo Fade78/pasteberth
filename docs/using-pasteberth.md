@@ -58,10 +58,11 @@ show full dates. This changes the display, not the stored timestamp.
 | Reuse text or HTML clipboard content | Use the text copy action. Rich HTML requires browser support and may fall back to plain text. |
 | Reuse several files | Select them and copy their references or download a ZIP. |
 
-PNG, JPEG, and WebP receive previews when structural validation succeeds. Valid
-UTF-8 without NUL bytes is treated as text; other accepted files are opaque
-binary. A PDF or workbook can be staged and downloaded without Pasteberth
-interpreting its pages or cells.
+PNG, JPEG, WebP, GIF, BMP, ICO, AVIF, and SVG receive browser previews when
+their bounded structural validation succeeds. Valid UTF-8 without NUL bytes is
+treated as text; other accepted files are opaque binary. A PDF or workbook can
+be staged and downloaded without Pasteberth interpreting its pages or cells.
+SVG previews are rendered under a restrictive content security policy.
 
 For stored HTML, the normal copy action sanitizes the HTML clipboard flavor,
 removing scripts, event handlers, CSS, forms, remote URLs, and non-raster

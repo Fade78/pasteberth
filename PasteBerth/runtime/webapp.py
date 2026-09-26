@@ -126,6 +126,15 @@ _SECURITY_HEADERS = (
     ("Referrer-Policy", "no-referrer"),
 )
 
+# SVG is rendered by the browser as an image, but it is also a document format
+# that can contain active or externally loaded elements. Keep the preview
+# useful while preventing stored SVG from becoming an application-origin page.
+_SVG_PREVIEW_CSP = (
+    "default-src 'none'; img-src data:; style-src 'unsafe-inline'; "
+    "script-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'; "
+    "frame-ancestors 'none'"
+)
+
 _SENSITIVE_QUERY_KEYS = frozenset({
     "accesstoken",
     "apikey",
@@ -2426,10 +2435,18 @@ def make_handler(
                             self.send_header("ETag", item.etag)
                         if self.close_connection:
                             self.send_header("Connection", "close")
-                        for key, value in self._security_headers():
+                        security_headers = self._security_headers()
+                        if item.mime == "image/svg+xml":
+                            security_headers = tuple(
+                                (key, value)
+                                for key, value in security_headers
+                                if key != "Content-Security-Policy"
+                            ) + (("Content-Security-Policy", _SVG_PREVIEW_CSP),)
+                        for key, value in security_headers:
                             self.send_header(key, value)
-                        if item.mime not in ("image/png", "image/jpeg", "image/webp"):
-                            # Never render stored HTML on the application's origin.
+                        if item.kind != "image":
+                            # Never render stored documents or arbitrary binary
+                            # data on the application's origin.
                             fallback = "".join(
                                 char if 32 <= ord(char) < 127 and char not in {'"', "\\"} else "_"
                                 for char in filename
