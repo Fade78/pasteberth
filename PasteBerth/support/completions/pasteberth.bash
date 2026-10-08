@@ -85,7 +85,7 @@ _pasteberth_complete() {
             values=()
             ;;
         copy|move)
-            options=(-h --help --config)
+            options=(-h --help --config --replace)
             values=()
             ;;
         rename)

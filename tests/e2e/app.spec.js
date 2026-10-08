@@ -337,6 +337,21 @@ async function uploadExternalFile(page, name = "external.txt") {
   expect(response.ok()).toBe(true);
 }
 
+async function uploadNamedItem(page, zone, name, contents, mimeType = "text/plain") {
+  const response = await page.request.post(`/api/zones/${zone}/items`, {
+    multipart: {
+      file: {
+        name,
+        mimeType,
+        buffer: Buffer.from(contents),
+      },
+      preserve_name: "1",
+    },
+  });
+  expect(response.ok()).toBe(true);
+  return response.json();
+}
+
 test.beforeEach(async ({ request }) => {
   await resetServer(request);
 });
@@ -1050,18 +1065,18 @@ test("les options filtrent les groupes vides et les compteurs", async ({ page })
   await expect(page.getByRole("button", { name: "Group options" })).toBeFocused();
 });
 
-test("configure la confirmation de retention par zone ou par groupe", async ({ page }) => {
+test("configure la confirmation des remplacements et de la retention par zone ou par groupe", async ({ page }) => {
   await openApp(page);
   const defaultZone = page.locator('[data-zone="default"]');
   const secondaryZone = page.locator('[data-zone="secondary"]');
   const zoneToggle = defaultZone.locator(".zone-confirm-btn");
 
   await expect(zoneToggle).toHaveAttribute("aria-pressed", "true");
-  await expect(zoneToggle).toHaveAttribute("title", "Confirm before deleting items");
+  await expect(zoneToggle).toHaveAttribute("title", "Confirm before replacing or deleting items");
   await expect(zoneToggle).toBeEnabled();
   await zoneToggle.click();
   await expect(zoneToggle).toHaveAttribute("aria-pressed", "false");
-  await expect(zoneToggle).toHaveAttribute("title", "Do not confirm before deleting items");
+  await expect(zoneToggle).toHaveAttribute("title", "Do not confirm before replacing or deleting items");
 
   await page.reload({ waitUntil: "domcontentloaded" });
   await expect(page.locator("#status-text")).toHaveText("online");
@@ -1070,7 +1085,7 @@ test("configure la confirmation de retention par zone ou par groupe", async ({ p
 
   await page.getByRole("button", { name: "Group options" }).click();
   await expect(page.getByRole("radio", { name: "Use zone setting" })).toBeChecked();
-  await page.getByRole("radio", { name: "Never ask before cleanup" }).click();
+  await page.getByRole("radio", { name: "Never confirm replacements or cleanup" }).click();
   await expect(defaultZone.locator(".zone-confirm-btn"))
     .toHaveAttribute("aria-pressed", "false");
   await expect(defaultZone.locator(".zone-confirm-btn")).toBeDisabled();
@@ -1535,6 +1550,126 @@ test("copie une sélection vers une autre zone depuis les actions accessibles", 
   await expect(secondary.locator(".thumb-wrap")).toHaveCount(2);
   await expect(defaultZone.locator(".thumb-wrap")).toHaveCount(2);
   await expect(page.locator("#toast")).toContainText("2 files copied to Secondary");
+});
+
+test("confirme les remplacements gérés pour copy et move", async ({ page }) => {
+  await uploadNamedItem(page, "default", "copy-collision.txt", "new copy");
+  await uploadNamedItem(page, "secondary", "copy-collision.txt", "old copy");
+  await uploadNamedItem(page, "default", "move-collision.txt", "new move");
+  await uploadNamedItem(page, "secondary", "move-collision.txt", "old move");
+
+  await openApp(page);
+  const source = page.locator('.zone[data-zone="default"]');
+  const target = page.locator('.zone[data-zone="secondary"]');
+  await expect(target.locator(".zone-confirm-btn")).toHaveAttribute("aria-pressed", "true");
+
+  await source.locator('.thumb-wrap[data-item-id="copy-collision.txt"]').click();
+  await source.locator(".transfer-target").selectOption("secondary");
+  await source.getByRole("button", { name: "Copy 1 selected files" }).click();
+  await expect(page.locator("#replace")).toBeVisible();
+  await expect(page.locator("#replace-filename")).toHaveText("copy-collision.txt");
+  const unchangedTarget = await page.request.get(
+    "/api/zones/secondary/items/copy-collision.txt/content",
+  );
+  expect(await unchangedTarget.text()).toBe("old copy");
+  await page.locator("#replace-cancel").click();
+  await expect(page.locator("#replace")).toBeHidden();
+
+  await source.locator('.thumb-wrap[data-item-id="copy-collision.txt"]').click();
+  await source.locator(".transfer-target").selectOption("secondary");
+  const copiedResponse = page.waitForResponse(response => (
+    response.url().endsWith("/api/transfers?schema=items") && response.status() === 200
+  ));
+  await source.getByRole("button", { name: "Copy 1 selected files" }).click();
+  await expect(page.locator("#replace")).toBeVisible();
+  await page.locator("#replace-confirm").click();
+  const copied = await copiedResponse;
+  expect(copied.request().postDataJSON().replace_filenames)
+    .toEqual(["copy-collision.txt"]);
+  const copiedContents = await page.request.get(
+    "/api/zones/secondary/items/copy-collision.txt/content",
+  );
+  expect(await copiedContents.text()).toBe("new copy");
+  const copySource = await page.request.get("/api/zones/default/items/copy-collision.txt/content");
+  expect(await copySource.text()).toBe("new copy");
+
+  await source.locator('.thumb-wrap[data-item-id="move-collision.txt"]').click();
+  await source.locator(".transfer-target").selectOption("secondary");
+  const movedResponse = page.waitForResponse(response => (
+    response.url().endsWith("/api/transfers?schema=items") && response.status() === 200
+  ));
+  await source.getByRole("button", { name: "Move 1 selected files" }).click();
+  await expect(page.locator("#replace")).toBeVisible();
+  await page.locator("#replace-confirm").click();
+  const moved = await movedResponse;
+  expect(moved.request().postDataJSON().replace_filenames)
+    .toEqual(["move-collision.txt"]);
+  const movedContents = await page.request.get(
+    "/api/zones/secondary/items/move-collision.txt/content",
+  );
+  expect(await movedContents.text()).toBe("new move");
+  const sourceItems = await page.request.get("/api/zones/default/items");
+  expect((await sourceItems.json()).items.some(item => item.filename === "move-collision.txt"))
+    .toBe(false);
+});
+
+test("désactive les demandes de confirmation pour les remplacements Web", async ({ page }) => {
+  await uploadNamedItem(page, "default", "silent-copy.txt", "new copy");
+  await uploadNamedItem(page, "secondary", "silent-copy.txt", "old copy");
+  await uploadNamedItem(page, "default", "silent-move.txt", "new move");
+  await uploadNamedItem(page, "secondary", "silent-move.txt", "old move");
+  await uploadNamedItem(page, "secondary", "silent-upload.zip", "old upload", "application/zip");
+
+  await openApp(page);
+  const source = page.locator('.zone[data-zone="default"]');
+  const target = page.locator('.zone[data-zone="secondary"]');
+  const toggle = target.locator(".zone-confirm-btn");
+  await toggle.click();
+  await expect(toggle).toHaveAttribute("aria-pressed", "false");
+
+  await source.locator('.thumb-wrap[data-item-id="silent-copy.txt"]').click();
+  await source.locator(".transfer-target").selectOption("secondary");
+  const transferResponse = page.waitForResponse(response => (
+    response.url().endsWith("/api/transfers?schema=items") && response.status() === 200
+  ));
+  await source.getByRole("button", { name: "Copy 1 selected files" }).click();
+  const transferred = await transferResponse;
+  expect(transferred.request().postDataJSON().replace_filenames).toEqual(["silent-copy.txt"]);
+  await expect(page.locator("#replace")).toBeHidden();
+  const copyContents = await page.request.get(
+    "/api/zones/secondary/items/silent-copy.txt/content",
+  );
+  expect(await copyContents.text()).toBe("new copy");
+
+  await source.locator('.thumb-wrap[data-item-id="silent-move.txt"]').click();
+  await source.locator(".transfer-target").selectOption("secondary");
+  const moveResponse = page.waitForResponse(response => (
+    response.url().endsWith("/api/transfers?schema=items") && response.status() === 200
+  ));
+  await source.getByRole("button", { name: "Move 1 selected files" }).click();
+  const moved = await moveResponse;
+  expect(moved.request().postDataJSON().replace_filenames).toEqual(["silent-move.txt"]);
+  await expect(page.locator("#replace")).toBeHidden();
+  const moveContents = await page.request.get(
+    "/api/zones/secondary/items/silent-move.txt/content",
+  );
+  expect(await moveContents.text()).toBe("new move");
+  const sourceItems = await page.request.get("/api/zones/default/items");
+  expect((await sourceItems.json()).items.some(item => item.filename === "silent-move.txt"))
+    .toBe(false);
+
+  const uploadResponse = page.waitForResponse(response => (
+    response.request().method() === "POST"
+      && response.url().endsWith("/api/zones/secondary/items")
+      && response.status() === 201
+  ));
+  await dispatchBinaryDrop(page, '.zone[data-zone="secondary"]', "silent-upload.zip");
+  await uploadResponse;
+  await expect(page.locator("#replace")).toBeHidden();
+  const uploadContents = await page.request.get(
+    "/api/zones/secondary/items/silent-upload.zip/content",
+  );
+  expect([...await uploadContents.body()]).toEqual([0, 1, 2, 3]);
 });
 
 test("déplace une sélection par glisser-déposer interne", async ({ page }) => {

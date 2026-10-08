@@ -113,10 +113,13 @@ producer must write directly, finish writing the regular file before
 Registration preserves data bytes and applies local validation, not daemon
 retention or zone policy; see [the CLI contract](cli.md#filesystem-register).
 
-Batch transfers preflight conflicts, but can partially succeed after that
-check. Move publishes the target pair before removing the source; it is not
-an atomic cross-zone or cross-filesystem move. Inspect partial results before
-retrying. Retention can also fail after a save has published an item.
+Batch transfers preflight targets. A same-named managed target requires explicit
+replacement authorization; the Web UI uses the destination's `Confirm`
+preference, while CLI `copy`/`move` require `--replace`. Foreign or incoherent
+target files remain conflicts. Transfers can partially succeed after preflight.
+Move publishes the target pair before removing the source; it is not an atomic
+cross-zone or cross-filesystem move. Inspect partial results before retrying.
+Retention can also fail after a save has published an item.
 
 Only supported local filesystems are within the official deployment boundary.
 Network mounts and concurrent file synchronization are not made safe merely by
@@ -217,12 +220,15 @@ target. A direct drop always targets the zone under the pointer. Several files
 are uploaded sequentially as independent operations; one failed file does not
 cancel the others.
 
-By default, the web UI asks for confirmation before an upload would exceed
-`retain`, because retention may remove existing managed items. The `Confirm`
-control in each zone can change that preference; the active group's options can
-apply the same choice to all of its zones. The server's
-[retention rules](#retention), including protection of the current publication,
-remain authoritative.
+The `Confirm` control in each zone governs Web UI replacement and retention
+prompts; the active group's options can apply the same choice to all of its
+zones. When enabled, a named upload, copy, or move asks before replacing a
+same-named managed item in the destination. When disabled, that replacement is
+silent. Foreign files or incoherent pairs are never replaced. The control also
+asks before an upload would exceed `retain`, because retention may remove
+existing managed items. The server's [retention rules](#retention), including
+protection of the current publication, remain authoritative. CLI copy/move
+requires explicit `--replace`; CLI drop keeps its own `--replace` flag.
 A successful upload that removed items includes their filenames in the
 `retention_deleted` response field; direct API clients should inspect it.
 

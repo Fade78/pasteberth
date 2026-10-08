@@ -1523,22 +1523,76 @@
     state.batchBusyZoneIds.add(sourceZone.id);
     state.batchBusyZoneIds.add(targetZone.id);
     renderAll();
+    const declinedReplacements = new Set();
+    const approvedReplacements = new Set();
+    let result = null;
+    let transferCancelled = false;
     try {
-      const result = await apiWithZoneRetry("/api/transfers?schema=items", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          mode,
-          source_zone: sourceZone.id,
-          target_zone: targetZone.id,
-          filenames: items.map(item => item.filename),
-        }),
-      });
-      await refresh();
-      if (mode === "move") {
-        state.selectedItemsByZone[sourceZone.id] = new Set();
-        state.selectionAnchorByZone[sourceZone.id] = null;
+      for (let attempt = 0; attempt < 3; attempt += 1) {
+        const currentTarget = state.zones.find(zone => zone.id === targetZoneId);
+        if (!currentTarget) throw new Error("The destination zone is no longer available");
+        const transferItems = [];
+        for (const item of items) {
+          const filename = item.filename;
+          if (declinedReplacements.has(filename)) continue;
+          const existsInTarget = currentTarget.items.some(
+            existing => existing.filename === filename,
+          );
+          if (!existsInTarget || approvedReplacements.has(filename)) {
+            transferItems.push(item);
+            continue;
+          }
+          if (!confirmationEnabled(targetZoneId)) {
+            approvedReplacements.add(filename);
+            transferItems.push(item);
+            continue;
+          }
+          if (await confirmReplacement(targetZoneId, filename)) {
+            approvedReplacements.add(filename);
+            transferItems.push(item);
+          } else {
+            declinedReplacements.add(filename);
+          }
+        }
+        if (!transferItems.length) break;
+        const newTargetItems = transferItems.filter(item => (
+          !currentTarget.items.some(existing => existing.filename === item.filename)
+        ));
+        if (!confirmRetention(targetZoneId, newTargetItems.length)) {
+          transferCancelled = true;
+          break;
+        }
+        try {
+          result = await apiWithZoneRetry("/api/transfers?schema=items", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              mode,
+              source_zone: sourceZone.id,
+              target_zone: targetZone.id,
+              filenames: transferItems.map(item => item.filename),
+              replace_filenames: transferItems
+                .map(item => item.filename)
+                .filter(filename => approvedReplacements.has(filename)),
+            }),
+          });
+          break;
+        } catch (err) {
+          if (err.code !== "replacement_required" || attempt >= 2) throw err;
+          // A target may have been published since the UI last refreshed.
+          // Refresh and ask about the newly visible collision before retrying.
+          await refresh();
+        }
       }
+      if (!result) {
+        if (transferCancelled) {
+          toast("Transfer cancelled", "info");
+        } else if (declinedReplacements.size) {
+          toast("No files transferred; replacement was declined", "info");
+        }
+        return;
+      }
+      await refresh();
       const transferred = Array.isArray(result.transferred) ? result.transferred : [];
       const failed = Array.isArray(result.failed) ? result.failed : [];
       const verb = mode === "copy" ? "copied" : "moved";
@@ -1546,7 +1600,10 @@
       const retentionWarning = retentionWarningMessage(
         Array.isArray(result.retention_deleted) ? result.retention_deleted.length : 0,
       );
-      const suffix = retentionWarning ? `; ${retentionWarning}` : "";
+      const skipped = declinedReplacements.size
+        ? `; ${declinedReplacements.size} replacement${declinedReplacements.size === 1 ? "" : "s"} skipped`
+        : "";
+      const suffix = `${retentionWarning ? `; ${retentionWarning}` : ""}${skipped}`;
       if (failed.length) {
         toast(
           `${transferred.length} ${itemLabel} ${verb} to ${targetZone.label}, ${failed.length} failed${suffix}`,
@@ -2163,14 +2220,14 @@
     return isRetentionConfirmationOverride(value) ? value : null;
   }
 
-  function activeGroupRetentionConfirmation() {
-    return groupRetentionConfirmation(
-      state.groups.find(group => group.name === state.activeGroupId),
-    );
+  function activeGroupRetentionConfirmation(zoneId = null) {
+    const group = state.groups.find(item => item.name === state.activeGroupId);
+    if (zoneId && !group?.zone_ids?.includes(zoneId)) return null;
+    return groupRetentionConfirmation(group);
   }
 
-  function retentionConfirmationEnabled(zoneId) {
-    const groupOverride = activeGroupRetentionConfirmation();
+  function confirmationEnabled(zoneId) {
+    const groupOverride = activeGroupRetentionConfirmation(zoneId);
     if (groupOverride) return groupOverride === "always";
     if (typeof state.zoneRetentionConfirmation[zoneId] === "boolean") {
       return state.zoneRetentionConfirmation[zoneId];
@@ -2213,26 +2270,26 @@
 
   function renderZoneRetentionToggle(zone) {
     const button = document.createElement("button");
-    const enabled = retentionConfirmationEnabled(zone.id);
-    const groupOverride = activeGroupRetentionConfirmation();
+    const enabled = confirmationEnabled(zone.id);
+    const groupOverride = activeGroupRetentionConfirmation(zone.id);
     button.type = "button";
     button.className = "zone-confirm-btn";
     button.textContent = "Confirm";
     button.setAttribute("aria-pressed", String(enabled));
     button.setAttribute(
       "aria-label",
-      `${enabled ? "Ask before cleanup" : "Clean up automatically"} in ${zone.label}`,
+      `${enabled ? "Confirm replacements and cleanup" : "Replace and clean up without confirmation"} in ${zone.label}`,
     );
     button.title = groupOverride
-      ? `Retention confirmation controlled by the active group (${groupOverride === "always" ? "always" : "never"})`
+      ? `Confirmation controlled by the active group (${groupOverride === "always" ? "always" : "never"})`
       : enabled
-        ? "Confirm before deleting items"
-        : "Do not confirm before deleting items";
+        ? "Confirm before replacing or deleting items"
+        : "Do not confirm before replacing or deleting items";
     button.disabled = Boolean(groupOverride);
     button.addEventListener("click", event => {
       event.stopPropagation();
-      if (activeGroupRetentionConfirmation()) return;
-      state.zoneRetentionConfirmation[zone.id] = !retentionConfirmationEnabled(zone.id);
+      if (activeGroupRetentionConfirmation(zone.id)) return;
+      state.zoneRetentionConfirmation[zone.id] = !confirmationEnabled(zone.id);
       saveRetentionConfirmationPreferences();
       rerenderZone(zone.id);
     });
@@ -2970,13 +3027,13 @@
       const fieldset = document.createElement("fieldset");
       fieldset.className = "group-retention-options";
       const legend = document.createElement("legend");
-      legend.textContent = "Retention confirmation";
+      legend.textContent = "Replacement and retention confirmation";
       fieldset.appendChild(legend);
       const selected = groupRetentionConfirmation(activeGroup) || "zone";
       for (const [value, labelText] of [
         ["zone", "Use zone setting"],
-        ["always", "Always confirm cleanup"],
-        ["never", "Never ask before cleanup"],
+        ["always", "Always confirm replacements and cleanup"],
+        ["never", "Never confirm replacements or cleanup"],
       ]) {
         const label = document.createElement("label");
         const input = document.createElement("input");
@@ -3350,7 +3407,7 @@
     if (!zone || incomingCount <= 0) return true;
     const excess = zone.items.length + incomingCount - zone.retain;
     if (excess <= 0) return true;
-    if (!retentionConfirmationEnabled(zoneId)) return true;
+    if (!confirmationEnabled(zoneId)) return true;
     const itemLabel = excess === 1 ? "item" : "items";
     const uploadLabel = incomingCount === 1 ? "this upload" : `${incomingCount} uploads`;
     return window.confirm(
@@ -3385,7 +3442,7 @@
     if (activeRefreshController) activeRefreshController.abort();
     try {
       if (preserveName && !allowReplace && file.name && hasManagedName(zoneId, file.name)) {
-        allowReplace = await askReplacement(file.name, zoneId);
+        allowReplace = await confirmReplacement(zoneId, file.name);
         if (!allowReplace) return null;
       }
       if (
@@ -3449,7 +3506,7 @@
         && file.name
         && !allowReplace
       ) {
-        const confirmed = await askReplacement(file.name, zoneId);
+        const confirmed = await confirmReplacement(zoneId, file.name);
         if (confirmed) {
           return upload(zoneId, file, {
             preserveName: true,
@@ -3575,6 +3632,12 @@
       replacementQueue.push({ filename, zoneId, resolve, invoker: document.activeElement });
       showNextReplacementPrompt();
     });
+  }
+
+  function confirmReplacement(zoneId, filename) {
+    return confirmationEnabled(zoneId)
+      ? askReplacement(filename, zoneId)
+      : Promise.resolve(true);
   }
 
   function settleReplacementPrompt(allowReplace) {

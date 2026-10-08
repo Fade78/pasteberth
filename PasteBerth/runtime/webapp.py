@@ -2184,17 +2184,23 @@ def make_handler(
                 self._error(400, "invalid_request", "transfer request must contain valid JSON")
                 return
             required = {"mode", "source_zone", "target_zone", "filenames"}
-            if not isinstance(payload, dict) or set(payload) != required:
+            allowed = required | {"replace_filenames"}
+            if (
+                not isinstance(payload, dict)
+                or not required.issubset(payload)
+                or set(payload) - allowed
+            ):
                 self._error(
                     400,
                     "invalid_request",
-                    "transfer request must contain only mode, source_zone, target_zone, and filenames",
+                    "transfer request must contain mode, source_zone, target_zone, filenames, and optional replace_filenames",
                 )
                 return
             mode = payload["mode"]
             source_zone = payload["source_zone"]
             target_zone = payload["target_zone"]
             filenames = payload["filenames"]
+            replace_filenames = payload.get("replace_filenames", [])
             if (
                 not isinstance(mode, str)
                 or not isinstance(source_zone, str)
@@ -2206,8 +2212,17 @@ def make_handler(
                     and len(filenames) > cfg.limits.max_batch_names
                 )
                 or not all(isinstance(filename, str) for filename in filenames)
+                or not isinstance(replace_filenames, list)
+                or not all(isinstance(filename, str) for filename in replace_filenames)
             ):
                 self._error(400, "invalid_request", "invalid transfer fields")
+                return
+            if (
+                len(set(filenames)) != len(filenames)
+                or len(set(replace_filenames)) != len(replace_filenames)
+                or not set(replace_filenames).issubset(filenames)
+            ):
+                self._error(400, "invalid_request", "invalid replacement filenames")
                 return
             source_permissions = PERMISSION_READ
             if mode == "move":
@@ -2219,15 +2234,36 @@ def make_handler(
             if target_access is None:
                 return
             principal = self._principal()
+            if principal.kind == "token" and replace_filenames and not target_access[1]:
+                self._error(
+                    403,
+                    "forbidden",
+                    "token is not authorized to replace target items",
+                )
+                return
             try:
                 result = service.transfer(
                     source_zone,
                     target_zone,
                     filenames,
                     mode=mode,
+                    replace_filenames=replace_filenames,
                     blocking=False,
                 )
             except ServiceError as exc:
+                if (
+                    exc.code == "replacement_required"
+                    and not getattr(self, "_item_schema", False)
+                    and not replace_filenames
+                ):
+                    # Preserve the pre-existing legacy transfer conflict
+                    # contract. The generic item API exposes the more specific
+                    # replacement_required response to clients that can retry.
+                    message = str(exc)
+                    prefix = "explicit replacement required for "
+                    if message.startswith(prefix):
+                        message = "target already exists: " + message[len(prefix):]
+                    exc = ServiceError("storage_conflict", message)
                 self._write_service_error(
                     target_access,
                     exc,

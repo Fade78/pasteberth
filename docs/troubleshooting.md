@@ -127,10 +127,13 @@ See [HTTP downloads](reference/api.md#downloads).
 
 ### A filename replacement is refused
 
-The name may be occupied by a foreign file, or the managed pair may require an
-explicit replacement flag. Browser replacement requires confirmation;
-filesystem and API operations require `--replace` or `replace=1`. Foreign
-files remain protected even with that flag.
+The name may be occupied by a foreign file, or the managed pair may require
+replacement authorization. In the Web UI, the destination zone's `Confirm`
+preference controls the prompt for managed replacements. CLI uploads and
+copy/move require `--replace`; HTTP named uploads use `preserve_name=1` and
+`replace=1`, while transfer requests use `replace_filenames`. Bearer tokens also
+need `allow_replace` on the target grant. Foreign or incoherent files remain
+protected in every mode.
 
 ### systemd cannot see a zone or temporary source
 

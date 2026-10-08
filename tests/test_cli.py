@@ -122,6 +122,7 @@ class TestVersion(unittest.TestCase):
         self.assertIn("complete -o bashdefault", proc.stdout)
         self.assertIn("copy", proc.stdout)
         self.assertIn("move", proc.stdout)
+        self.assertIn("--replace", proc.stdout)
 
     def test_drop_sans_configuration_utilise_le_demon_http_par_defaut(self):
         cfg = build_default_config()
@@ -1352,17 +1353,18 @@ class TestFilesystemTransfer(unittest.TestCase):
         self.assertEqual(proc.returncode, 0, proc.stderr)
         return source
 
-    def _run_transfer(self, mode, *files):
-        return run_cli(
-            [
-                mode,
-                "--config",
-                str(self.cfg),
-                str(self.source),
-                str(self.target),
-                *files,
-            ]
-        )
+    def _run_transfer(self, mode, *files, replace=False):
+        command = [mode]
+        if replace:
+            command.append("--replace")
+        command.extend([
+            "--config",
+            str(self.cfg),
+            str(self.source),
+            str(self.target),
+            *files,
+        ])
+        return run_cli(command)
 
     def test_copie_un_pair_gere_et_conserve_la_source(self):
         source = self._register()
@@ -1391,13 +1393,48 @@ class TestFilesystemTransfer(unittest.TestCase):
         target = self.target / source.name
         target.write_text("foreign", encoding="utf-8")
 
-        copied = self._run_transfer("copy", source.name)
+        copied = self._run_transfer("copy", source.name, replace=True)
 
         self.assertEqual(copied.returncode, 1)
         self.assertIn("target already exists", copied.stderr)
         self.assertEqual(source.read_text(encoding="utf-8"), "report")
         self.assertEqual(target.read_text(encoding="utf-8"), "foreign")
         self.assertFalse((self.target / (source.name + ".json")).exists())
+
+    def test_copy_replace_requires_flag_and_replaces_only_managed_target(self):
+        source = self._register("report.txt", "new report")
+        target = self.target / source.name
+        target.write_text("old report", encoding="utf-8")
+        registered = run_cli(["register", "--config", str(self.cfg), str(target)])
+        self.assertEqual(registered.returncode, 0, registered.stderr)
+
+        refused = self._run_transfer("copy", source.name)
+        self.assertEqual(refused.returncode, 1)
+        self.assertIn("explicit replacement required", refused.stderr)
+        self.assertEqual(target.read_text(encoding="utf-8"), "old report")
+
+        copied = self._run_transfer("copy", source.name, replace=True)
+        self.assertEqual(copied.returncode, 0, copied.stderr)
+        self.assertEqual(target.read_text(encoding="utf-8"), "new report")
+        self.assertEqual(source.read_text(encoding="utf-8"), "new report")
+        metadata = json.loads((self.target / (source.name + ".json")).read_text())
+        self.assertTrue(metadata["replaced"])
+
+    def test_move_replace_moves_new_content_and_keeps_no_old_target_bytes(self):
+        source = self._register("report.txt", "new report")
+        target = self.target / source.name
+        target.write_text("old report", encoding="utf-8")
+        registered = run_cli(["register", "--config", str(self.cfg), str(target)])
+        self.assertEqual(registered.returncode, 0, registered.stderr)
+
+        moved = self._run_transfer("move", source.name, replace=True)
+
+        self.assertEqual(moved.returncode, 0, moved.stderr)
+        self.assertFalse(source.exists())
+        self.assertFalse(source.with_name(source.name + ".json").exists())
+        self.assertEqual(target.read_text(encoding="utf-8"), "new report")
+        metadata = json.loads((self.target / (source.name + ".json")).read_text())
+        self.assertTrue(metadata["replaced"])
 
 
 class TestFilesystemDropZoneCollection(unittest.TestCase):

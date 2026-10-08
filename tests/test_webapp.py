@@ -2431,7 +2431,7 @@ class TestTransferHttp(Base):
             {"first.txt", "second.txt"},
         )
 
-    def test_move_conflict_reste_sans_effet_partiel(self):
+    def test_move_conflict_requires_authorization_then_replaces_managed_target(self):
         self._upload_named("default", "first.txt", b"first")
         self._upload_named("default", "second.txt", b"second")
         self._upload_named("secondary", "second.txt", b"existing")
@@ -2462,6 +2462,66 @@ class TestTransferHttp(Base):
             {item["filename"] for item in json_of(response)["images"]},
             {"second.txt"},
         )
+
+        status, _, response = self.req(
+            "POST",
+            "/api/transfers?schema=items",
+            body=json.dumps(
+                {
+                    "mode": "move",
+                    "source_zone": "default",
+                    "target_zone": "secondary",
+                    "filenames": ["first.txt", "second.txt"],
+                }
+            ).encode(),
+            headers={"Content-Type": "application/json"},
+        )
+
+        self.assertEqual(status, 428, response)
+        self.assertEqual(json_of(response)["error"]["code"], "replacement_required")
+
+        status, _, response = self.req(
+            "POST",
+            "/api/transfers?schema=items",
+            body=json.dumps(
+                {
+                    "mode": "move",
+                    "source_zone": "default",
+                    "target_zone": "secondary",
+                    "filenames": ["first.txt", "second.txt"],
+                    "replace_filenames": ["second.txt"],
+                }
+            ).encode(),
+            headers={"Content-Type": "application/json"},
+        )
+
+        self.assertEqual(status, 200, response)
+        self.assertEqual(json_of(response)["transferred"], ["first.txt", "second.txt"])
+        status, _, response = self.req("GET", "/api/zones/default/images")
+        self.assertEqual(json_of(response)["images"], [])
+        status, _, response = self.req("GET", "/api/zones/secondary/images")
+        target_items = {item["filename"]: item for item in json_of(response)["images"]}
+        self.assertEqual(set(target_items), {"first.txt", "second.txt"})
+        self.assertTrue(target_items["second.txt"]["replaced"])
+
+    def test_transfer_rejects_invalid_replace_filenames(self):
+        status, _, response = self.req(
+            "POST",
+            "/api/transfers",
+            body=json.dumps(
+                {
+                    "mode": "copy",
+                    "source_zone": "default",
+                    "target_zone": "secondary",
+                    "filenames": ["first.txt"],
+                    "replace_filenames": ["not-selected.txt"],
+                }
+            ).encode(),
+            headers={"Content-Type": "application/json"},
+        )
+
+        self.assertEqual(status, 400, response)
+        self.assertEqual(json_of(response)["error"]["code"], "invalid_request")
 
     def test_transfer_rejette_un_payload_invalide(self):
         status, _, response = self.req(

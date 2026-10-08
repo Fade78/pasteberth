@@ -5,8 +5,8 @@
     pasteberth drop [--config PATH] [--server URL] [--zone ID] [--replace] [ZONE_DIRECTORY] FILE...
     pasteberth register [--config PATH] FILE
     pasteberth mcp  [--config PATH] [--server URL] [--insecure]
-    pasteberth copy [--config PATH] SOURCE_DIRECTORY TARGET_DIRECTORY FILE...
-    pasteberth move [--config PATH] SOURCE_DIRECTORY TARGET_DIRECTORY FILE...
+    pasteberth copy [--config PATH] [--replace] SOURCE_DIRECTORY TARGET_DIRECTORY FILE...
+    pasteberth move [--config PATH] [--replace] SOURCE_DIRECTORY TARGET_DIRECTORY FILE...
     pasteberth rename [--config PATH] DIRECTORY SOURCE TARGET
     pasteberth delete [--config PATH] [--force] DIRECTORY FILE...
     pasteberth passwd  [--config PATH]
@@ -346,6 +346,7 @@ def _cmd_transfer(args: argparse.Namespace, mode: str) -> int:
             target_zone.id,
             args.files,
             mode=mode,
+            replace_filenames=args.files if args.replace else [],
         )
     except ConfigError as exc:
         print(f"pasteberth: configuration error\n  {exc}", file=sys.stderr)
@@ -1844,6 +1845,11 @@ def build_parser() -> argparse.ArgumentParser:
             "files",
             nargs="+",
             help="managed names to transfer, without paths",
+        )
+        p_transfer.add_argument(
+            "--replace",
+            action="store_true",
+            help="replace matching managed items in the target zone",
         )
         p_transfer.add_argument(
             "--config",

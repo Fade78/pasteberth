@@ -4,6 +4,13 @@ This file records user-visible changes to Pasteberth.
 
 ## [Unreleased]
 
+### Managed Transfers
+
+- let Web `copy` and `move` replace same-named managed targets after confirmation;
+- use the zone or active-group `Confirm` preference to ask or replace silently;
+- add explicit `--replace` to CLI `copy` and `move`, while always protecting
+  foreign or incoherent target files.
+
 ## [2.1.28] - 2026-09-26
 
 ### Browser-Native Image Previews

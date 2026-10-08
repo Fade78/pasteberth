@@ -210,9 +210,9 @@ and the [register-file recipe](../recipes/register-file.md).
 ### Filesystem copy and move
 
 ```text
-pasteberth copy [--config PATH] \
+pasteberth copy [--config PATH] [--replace] \
   /absolute/path/to/source/zone /absolute/path/to/target/zone report.pdf capture.png
-pasteberth move [--config PATH] \
+pasteberth move [--config PATH] [--replace] \
   /absolute/path/to/source/zone /absolute/path/to/target/zone report.pdf
 ```
 
@@ -220,10 +220,10 @@ The two directories must be the exact configured directories of different
 zones. The filenames are basenames, not paths, and each name must identify a
 coherent managed data/sidecar pair in the source zone. `copy` leaves the
 source pair unchanged. `move` publishes the target pair before removing the
-source pair. Existing target data, sidecars, foreign files, and malformed
-sidecars are never replaced. A batch conflict is checked before any item is
-copied. Successful operations print target references; a partial operation
-prints an error and exits with code `1`.
+source pair. An existing managed target requires `--replace`; foreign files and
+malformed sidecars are never replaced. A batch conflict is checked before any
+item is copied. Successful operations print target references; a partial
+operation prints an error and exits with code `1`.
 
 The target's retention, free-space, and file-group settings from the CLI
 configuration apply. A transfer is not an all-or-nothing batch: a later I/O or

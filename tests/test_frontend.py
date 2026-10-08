@@ -335,13 +335,16 @@ class TestContratsFrontend(unittest.TestCase):
         self.assertIn('aria-label="Zone groups"', self.index_html)
         self.assertIn('aria-current", "page"', self.app_js)
 
-    def test_zone_sidecar_applique_la_retention(self):
+    def test_preference_confirmation_applique_retention_et_remplacement(self):
         self.assertIn("const limit = zone.retain", self.app_js)
         self.assertIn("zone.items.length > zone.retain", self.app_js)
         self.assertIn("confirm_retention", self.app_js)
+        self.assertIn("function confirmationEnabled", self.app_js)
+        self.assertIn("function confirmReplacement", self.app_js)
+        self.assertIn('replace_filenames: transferItems', self.app_js)
         self.assertIn("zone-confirm-btn", self.app_js)
         self.assertIn("groupRetentionConfirmation", self.app_js)
-        self.assertIn("Always confirm cleanup", self.app_js)
+        self.assertIn("Always confirm replacements and cleanup", self.app_js)
         self.assertNotIn('zone.storage_mode === "directory"', self.app_js)
         self.assertNotIn("zone.max_items", self.app_js)
         self.assertNotIn('err.code === "storage_limit"', self.app_js)

@@ -431,6 +431,73 @@ class TokenHTTPTest(unittest.TestCase):
         )
         self.assertEqual(status, 404, response)
 
+    def test_transfer_replacement_requires_target_grant_permission(self):
+        for zone, data in (("default", b"new version"), ("secondary", b"old version")):
+            body, content_type = build_multipart(
+                filename="same.txt",
+                data=data,
+                content_type="text/plain",
+                extra_fields={"preserve_name": "1"},
+            )
+            status, _, response = self.req(
+                "POST",
+                f"/api/zones/{zone}/items",
+                body=body,
+                headers={"Content-Type": content_type},
+            )
+            self.assertEqual(status, 201, response)
+
+        token = self.create_token([
+            self.grant(SCOPE_ZONE, "default", ["L", "R"]),
+            self.grant(SCOPE_ZONE, "secondary", ["W"]),
+        ])["token"]
+        status, _, response = self.req(
+            "POST",
+            "/api/transfers?schema=items",
+            body=json.dumps({
+                "mode": "copy",
+                "source_zone": "default",
+                "target_zone": "secondary",
+                "filenames": ["same.txt"],
+                "replace_filenames": ["same.txt"],
+            }).encode(),
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Content-Type": "application/json",
+            },
+            cookie="",
+        )
+
+        self.assertEqual(status, 403, response)
+        self.assertEqual(json_of(response)["error"]["code"], "forbidden")
+        self.assertEqual(self.server.service._destinations["default"].read("same.txt"), b"new version")
+        self.assertEqual(self.server.service._destinations["secondary"].read("same.txt"), b"old version")
+
+        replacement_token = self.create_token([
+            self.grant(SCOPE_ZONE, "default", ["L", "R"]),
+            self.grant(SCOPE_ZONE, "secondary", ["W"], allow_replace=True),
+        ])["token"]
+        status, _, response = self.req(
+            "POST",
+            "/api/transfers?schema=items",
+            body=json.dumps({
+                "mode": "copy",
+                "source_zone": "default",
+                "target_zone": "secondary",
+                "filenames": ["same.txt"],
+                "replace_filenames": ["same.txt"],
+            }).encode(),
+            headers={
+                "Authorization": f"Bearer {replacement_token}",
+                "Content-Type": "application/json",
+            },
+            cookie="",
+        )
+
+        self.assertEqual(status, 200, response)
+        self.assertEqual(self.server.service._destinations["default"].read("same.txt"), b"new version")
+        self.assertEqual(self.server.service._destinations["secondary"].read("same.txt"), b"new version")
+
     def test_write_only_upload_errors_hide_service_details(self):
         write_token = self.create_token([
             self.grant(SCOPE_ZONE, "default", ["W"]),

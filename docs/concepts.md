@@ -69,6 +69,7 @@ ownership boundaries.
 | Filesystem | Read ordinary data files with tools that can access the zone directory. |
 | `drop` CLI | Ask the daemon to publish one or more source files, leaving the sources unchanged. Local staging can avoid HTTP payload transfer, but still calls the daemon. |
 | `register` CLI | Validate a file already in place and create or refresh only its sidecar, without contacting the daemon. |
+| `copy` / `move` CLI | Transfer managed files between configured zones; `--replace` explicitly authorizes replacing same-named managed targets. |
 | HTTP API | Publish and retrieve items, inspect zones, and perform documented managed operations. |
 | MCP adapter | Publish paths or supplied content through the daemon to a known zone using the `drop` tool. It does not browse zones or retrieve items. |
 

@@ -1048,6 +1048,7 @@ class PasteService:
         filenames: list[str],
         *,
         mode: str = "move",
+        replace_filenames: list[str] | None = None,
         blocking: bool = True,
     ) -> dict:
         """Copy or move coherent managed pairs between two zones."""
@@ -1060,6 +1061,18 @@ class PasteService:
         for filename in filenames:
             if not isinstance(filename, str) or not self._valid_filename(filename):
                 raise ServiceError("invalid_filename", "invalid filename")
+        replace_filenames = [] if replace_filenames is None else replace_filenames
+        if (
+            not isinstance(replace_filenames, list)
+            or not all(isinstance(filename, str) for filename in replace_filenames)
+            or len(set(replace_filenames)) != len(replace_filenames)
+            or not set(replace_filenames).issubset(filenames)
+        ):
+            raise ServiceError(
+                "invalid_request",
+                "replace_filenames must be unique names selected for transfer",
+            )
+        replacement_names = set(replace_filenames)
 
         with self.transfer_operation(
             source_zid,
@@ -1084,9 +1097,17 @@ class PasteService:
                     )
                 selected.append(item)
 
+            replacing_targets: dict[str, bool] = {}
             for item in selected:
                 try:
-                    target_destination.ensure_transfer_target_available(item.filename)
+                    replacing_targets[item.filename] = (
+                        target_destination.ensure_transfer_target_available(
+                            item.filename,
+                            allow_replace=item.filename in replacement_names,
+                        )
+                    )
+                except ReplacementRequiredError as exc:
+                    raise ServiceError("replacement_required", str(exc)) from exc
                 except StorageConflictError as exc:
                     raise ServiceError("storage_conflict", str(exc)) from exc
                 except (DestinationError, OSError) as exc:
@@ -1130,7 +1151,12 @@ class PasteService:
                             raise StorageConflictError(
                                 f"source content changed: {item.filename!r}"
                             )
-                        stored = target_destination.save_managed(data, item)
+                        stored = target_destination.save_managed(
+                            data,
+                            item,
+                            allow_replace=item.filename in replacement_names,
+                            replaced=item.replaced or replacing_targets[item.filename],
+                        )
                         target_published = True
                         removed = target_destination.apply_retention(
                             target_zone.retain,

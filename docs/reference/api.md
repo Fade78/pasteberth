@@ -114,7 +114,9 @@ permanent and an explicit duration is measured from creation time:
 ```
 
 `allow_replace` is policy, not a replacement request. A client must still send
-both `preserve_name=1` and `replace=1` for a named replacement. The admin
+both `preserve_name=1` and `replace=1` for a named upload replacement, or list
+the selected target names in `replace_filenames` for a transfer replacement.
+The admin
 listing reports `active`, `expired`, `revoked`, `suspended`, or `missing` grant
 states and the resolved zone IDs. The registry is external mutable state and
 must be included in protected backups.
@@ -459,27 +461,36 @@ slot are released on completion, timeout, disconnect, or failure. A truncated
 transfer is not a completed ZIP; retry only after checking the failure and
 selection. See [resource budgets](configuration.md#operational-budget-defaults).
 
-Internal transfers accept exactly this JSON object. New clients post to
-`/api/transfers?schema=items`; omitting the selector retains the legacy response:
+Internal transfers accept this JSON object; `replace_filenames` is optional.
+New clients post to `/api/transfers?schema=items`; omitting the selector retains
+the legacy response:
 
 ```json
 {
   "mode": "copy",
   "source_zone": "default",
   "target_zone": "secondary",
-  "filenames": ["report.txt", "capture.png"]
+  "filenames": ["report.txt", "capture.png"],
+  "replace_filenames": ["report.txt"]
 }
 ```
 
 `mode` is `copy` or `move`. Only coherent managed data/sidecar pairs are
-eligible. Filenames are preserved; an existing data file, sidecar, foreign file,
-or active transaction at the target returns `409 storage_conflict` before any
-item is copied. Copy leaves the source unchanged. Move publishes each target
-pair before deleting its source. The response contains `transferred`, `items`,
+eligible. Filenames are preserved. A managed target with the same name requires
+its name in `replace_filenames`; otherwise the request returns
+`428 replacement_required` before any item is copied in the `schema=items`
+contract. A legacy request without `schema=items` retains its existing `409
+storage_conflict` response when replacement was not requested. A token needs
+`allow_replace` on the target grant to request replacement. Foreign files,
+inconsistent pairs, and active transactions remain protected and return
+`409 storage_conflict`. Copy leaves the source unchanged. Move publishes each
+target pair before deleting its source. The response contains `transferred`, `items`,
 `retention_deleted`, and per-file `failed` entries; a failed entry may include
 `target_published: true` when the target was durable before a later step failed.
 The target zone's free-space reserve, retention, group, and permission rules
-apply. The two zone locks are acquired in a stable order, and a busy zone
+apply. The Web UI asks before adding colliding names to `replace_filenames`,
+unless its destination confirmation preference is disabled. The two zone locks
+are acquired in a stable order, and a busy zone
 returns `423 zone_busy` with `Retry-After: 1`.
 
 Stored dates are preserved, but each publication protects its own filename

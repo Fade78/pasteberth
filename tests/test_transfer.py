@@ -101,7 +101,7 @@ class TransferServiceTest(unittest.TestCase):
         self.upload("source", "second.txt", b"second")
         self.upload("target", "second.txt", b"existing")
 
-        with self.assertRaisesRegex(ServiceError, "target already exists") as raised:
+        with self.assertRaisesRegex(ServiceError, "explicit replacement required") as raised:
             self.service.transfer(
                 "source",
                 "target",
@@ -109,11 +109,79 @@ class TransferServiceTest(unittest.TestCase):
                 mode="copy",
             )
 
-        self.assertEqual(raised.exception.code, "storage_conflict")
+        self.assertEqual(raised.exception.code, "replacement_required")
         self.assertEqual(self.service.history("target")[0]["filename"], "second.txt")
         self.assertEqual(self.service.history("source")[0]["filename"], "second.txt")
         self.assertEqual(self.service.history("source")[1]["filename"], "first.txt")
         self.assertFalse((self.tmp / "target" / "first.txt").exists())
+
+    def test_copy_replaces_only_an_existing_managed_target_when_authorized(self):
+        self.upload("source", "report.txt", b"new report")
+        self.upload("target", "report.txt", b"old report")
+
+        result = self.service.transfer(
+            "source",
+            "target",
+            ["report.txt"],
+            mode="copy",
+            replace_filenames=["report.txt"],
+        )
+
+        self.assertEqual(result["transferred"], ["report.txt"])
+        self.assertEqual(self.service._destinations["source"].read("report.txt"), b"new report")
+        self.assertEqual(self.service._destinations["target"].read("report.txt"), b"new report")
+        target_item = self.service.history("target")[0]
+        self.assertTrue(target_item["replaced"])
+
+    def test_move_replaces_existing_managed_target_before_removing_source(self):
+        self.upload("source", "report.txt", b"new report")
+        self.upload("target", "report.txt", b"old report")
+
+        result = self.service.transfer(
+            "source",
+            "target",
+            ["report.txt"],
+            mode="move",
+            replace_filenames=["report.txt"],
+        )
+
+        self.assertEqual(result["transferred"], ["report.txt"])
+        self.assertEqual(self.service.history("source"), [])
+        self.assertEqual(self.service._destinations["target"].read("report.txt"), b"new report")
+        self.assertTrue(self.service.history("target")[0]["replaced"])
+
+    def test_replace_flag_does_not_overwrite_a_foreign_target(self):
+        self.upload("source", "report.txt", b"managed source")
+        target = self.tmp / "target" / "report.txt"
+        target.write_bytes(b"foreign target")
+
+        with self.assertRaises(ServiceError) as raised:
+            self.service.transfer(
+                "source",
+                "target",
+                ["report.txt"],
+                mode="copy",
+                replace_filenames=["report.txt"],
+            )
+
+        self.assertEqual(raised.exception.code, "storage_conflict")
+        self.assertEqual(target.read_bytes(), b"foreign target")
+        self.assertFalse(target.with_name("report.txt.json").exists())
+        self.assertEqual(self.service._destinations["source"].read("report.txt"), b"managed source")
+
+    def test_replace_names_must_be_selected_for_transfer(self):
+        self.upload("source", "report.txt", b"report")
+
+        with self.assertRaises(ServiceError) as raised:
+            self.service.transfer(
+                "source",
+                "target",
+                ["report.txt"],
+                mode="copy",
+                replace_filenames=["other.txt"],
+            )
+
+        self.assertEqual(raised.exception.code, "invalid_request")
 
     def test_transfer_rejects_same_zone_and_invalid_requests(self):
         self.upload("source", "report.txt")

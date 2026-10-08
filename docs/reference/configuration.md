@@ -223,7 +223,7 @@ Each `[[zones]]` table defines one independent project area:
 | `type` | `local` | Only `local` is implemented in v2.1.28. |
 | `directory` | required | Absolute path as seen by the server and the harness. |
 | `retain` | `10` | Number of managed items retained in the zone. |
-| `confirm_retention` | `true` | Ask before an upload removes older managed items. |
+| `confirm_retention` | `true` | Default for the Web UI's confirmation preference: ask before retention cleanup or a same-name managed replacement. |
 | `reference_prefix` | `@` | Text prepended to one returned reference. |
 | `reference_suffix` | empty | Text appended to one returned reference. |
 | `reference_list_prefix` | empty | Prefix for a copied list of references. |

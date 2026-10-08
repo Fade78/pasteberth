@@ -27,7 +27,7 @@ removes their source pairs. New references point into the target zone.
 
 - Pasteberth enforces no workflow order, roles, assignments, or approvals. A zone called `Review` does not require a reviewer, and a comment does not trigger a task.
 - You can instead organize zones by project or topic, with no stages at all. Interfaces are not assigned to particular participants.
-- Occupied target names are rejected rather than replaced. If an operation is partly successful, inspect both zones before retrying; a target may exist even if later source removal failed.
+- A same-named managed target requires explicit replacement authorization. The Web UI asks according to the target zone's `Confirm` preference; CLI copy/move require `--replace`. Foreign targets are never replaced. If an operation is partly successful, inspect both zones before retrying; a target may exist even if later source removal failed.
 - Target retention applies and can evict transferred items. Several selected files are not an atomic workflow bundle, a durable queue, or a guaranteed handoff.
 - Moving invalidates old source paths. Pass the current target reference to consumers and keep important files outside temporary retention.
 

@@ -3783,8 +3783,17 @@ class LocalDestination(Destination):
                     continue
         raise DestinationError(f"repeated filename-generation collision ({last_exc})")
 
-    def ensure_transfer_target_available(self, filename: str) -> None:
-        """Reject any existing target entry before a managed transfer starts."""
+    def ensure_transfer_target_available(
+        self,
+        filename: str,
+        *,
+        allow_replace: bool = False,
+    ) -> bool:
+        """Validate a transfer target and return whether it is being replaced.
+
+        Only a coherent managed pair can be replaced. Foreign files, orphan or
+        malformed sidecars, and active transactions remain conflicts.
+        """
         if not self._new_filename(filename):
             raise DestinationError(f"invalid filename: {filename!r}")
         with self._directory_fd() as directory_fd:
@@ -3792,12 +3801,36 @@ class LocalDestination(Destination):
                 raise StorageConflictError(
                     f"transaction in progress for filename: {filename!r}"
                 )
-            if self._entry_exists(directory_fd, filename) or self._entry_exists(
-                directory_fd, self._meta_name(filename)
-            ):
-                raise StorageConflictError(f"target already exists: {filename!r}")
+            data_exists = self._entry_exists(directory_fd, filename)
+            meta_exists = self._entry_exists(directory_fd, self._meta_name(filename))
+            if not data_exists and not meta_exists:
+                return False
+            if not data_exists or not meta_exists:
+                raise StorageConflictError(
+                    f"target already exists without a coherent managed pair: {filename!r}"
+                )
+            try:
+                owned, _meta_identity = self._require_owned(directory_fd, filename)
+            except (DestinationError, OSError) as exc:
+                raise StorageConflictError(
+                    f"target already exists without a coherent managed pair: {filename!r}"
+                ) from exc
+            else:
+                owned.close()
+            if not allow_replace:
+                raise ReplacementRequiredError(
+                    f"explicit replacement required for {filename!r}"
+                )
+            return True
 
-    def save_managed(self, data: bytes, item: StoredItem) -> StoredItem:
+    def save_managed(
+        self,
+        data: bytes,
+        item: StoredItem,
+        *,
+        allow_replace: bool = False,
+        replaced: bool | None = None,
+    ) -> StoredItem:
         """Publish a validated managed item without reclassifying its content."""
         info = ContentInfo(
             kind=item.kind,
@@ -3811,11 +3844,12 @@ class LocalDestination(Destination):
             data,
             info,
             filename=item.filename,
+            allow_replace=allow_replace,
             sha256=item.sha256,
             creation_method=item.creation_method,
             comment=item.comment,
             created_at=item.created_at,
-            replaced=item.replaced,
+            replaced=item.replaced if replaced is None else replaced,
         )
 
     def _blocked_read_targets(

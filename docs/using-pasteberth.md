@@ -25,9 +25,11 @@ results apart; there is no requirement to work on all projects at once.
 3. Check the upload result and the zone history. Several files are uploaded sequentially as independent operations; a failure does not cancel the others.
 
 An upload can fail because of size, content policy, free space, a busy zone, or a
-filename conflict. Replacing a managed filename requires explicit confirmation;
-a foreign file is not overwritten. The UI also asks before an upload would
-exceed retention, but the server decides which items are removed.
+filename conflict. The zone's **Confirm** preference controls whether the Web
+UI asks before replacing a same-name managed item or running retention cleanup.
+With confirmation off, Web replacements are silent; a foreign file is never
+overwritten. The server still decides which older managed items retention removes.
+CLI `copy` and `move` require `--replace` explicitly for a same-name managed target.
 
 After publication, the UI tries to copy the returned reference. Browser
 clipboard permission can prevent this even when the file was saved. Check the
