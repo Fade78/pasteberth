@@ -85,7 +85,7 @@ poll reads the completed registry. No configuration edit or service restart
 is needed; the directory must still be readable, writable, and
 traversable and satisfy the rule's depth and subtree constraints.
 
-**Since `2.1.22` (runtime version `2.1.28`):** zone and group overviews share
+**Since `2.1.22` (runtime version `2.1.29`):** zone and group overviews share
 a background cooldown of `max(10 seconds, last full refresh duration)` from
 completion, including registry installation. Startup, foreground, and failed
 refresh attempts also set it. The next eligible poll can launch one job;

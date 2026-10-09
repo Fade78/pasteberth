@@ -4,17 +4,19 @@ This file records user-visible changes to Pasteberth.
 
 ## [Unreleased]
 
+## [2.1.29] - 2026-10-10
+
 ### Managed Transfers
 
-- let Web `copy` and `move` replace same-named managed targets after confirmation;
-- use the zone or active-group `Confirm` preference to ask or replace silently;
-- add explicit `--replace` to CLI `copy` and `move`, while always protecting
-  foreign or incoherent target files.
+- replace same-named managed targets during Web `copy` and `move` after
+  confirmation, or silently when the destination's `Confirm` preference is off;
+- add explicit `--replace` to CLI `copy` and `move`, while protecting foreign
+  and incoherent target files.
 
 ### Image Preview Sizing
 
-- enlarge preview images to use available dialog space, preserving aspect ratio
-  and limiting upscaling to four times their native dimensions.
+- use the image preview dialog's available height while preserving the image
+  aspect ratio and limiting upscaling to four times native dimensions.
 
 ## [2.1.28] - 2026-09-26
 

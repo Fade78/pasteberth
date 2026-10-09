@@ -11,8 +11,8 @@ The release version has two source-of-truth locations:
 - `PasteBerth/runtime/__init__.py` for the runtime and Web UI version;
 - `pyproject.toml` for packaging metadata.
 
-The live wrapper currently reports `pasteberth 2.1.28`. Verify rather than
-copying that number into the next release:
+The live wrapper may lag behind the repository version. Verify it rather than
+assuming it matches the next release:
 
 ```sh
 PasteBerth/pasteberth --version

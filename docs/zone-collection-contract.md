@@ -2,8 +2,8 @@
 
 Status: implemented contract. This document describes `[[zone_collection]]`
 and the sidecar storage used by the zones it discovers. Changes marked
-Changes since `2.1.28` are marked **Unreleased**; the runtime version is
-`2.1.28`.
+Changes since `2.1.29` are marked **Unreleased**; the runtime version is
+`2.1.29`.
 
 For a setup walkthrough, see [provisioning](provisioning.md) and the
 [project-zones recipe](recipes/project-zones.md). This page is the detailed

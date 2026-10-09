@@ -220,7 +220,7 @@ Each `[[zones]]` table defines one independent project area:
 |---|---:|---|
 | `id` | required | Lowercase API/UI identifier, up to 64 characters. |
 | `label` | `id` | Human-readable UI label. |
-| `type` | `local` | Only `local` is implemented in v2.1.28. |
+| `type` | `local` | Only `local` is implemented in v2.1.29. |
 | `directory` | required | Absolute path as seen by the server and the harness. |
 | `retain` | `10` | Number of managed items retained in the zone. |
 | `confirm_retention` | `true` | Default for the Web UI's confirmation preference: ask before retention cleanup or a same-name managed replacement. |
