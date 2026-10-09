@@ -1,18 +1,18 @@
 {
   "site_version": "2.1",
   "runtime_version": "2.1.28",
-  "source_commit": "6010e839a1729badb6886cf2bfdb64092c4dbaa7",
+  "source_commit": "3fa5a953fa5b9d3b17d3b5bfc03998e41ce25ad1",
   "note": "Commit is context; file hashes pin the actual working-tree bytes.",
   "frontend": [
     {
       "file": "assets/product/app.js",
       "source": "PasteBerth/runtime/static/app.js",
-      "sha256": "3fdff9ba92d38446e5faedde29f6ad4a45370e6a94d557e996f0117f4bfc23a9"
+      "sha256": "7290db8ea17d7fc6bff7c6afe825c45f6dd70f5483bf2380177488cfc5677165"
     },
     {
       "file": "assets/product/style.css",
       "source": "PasteBerth/runtime/static/style.css",
-      "sha256": "dcf0cdd1f2ed1f64ea8577164121860200d6e45170217aae49f6f2b9eef68d8f"
+      "sha256": "3d8f3f4acdefa17ef094dce75ac2a19f2d2b87830b7ffad03787619edd957fc4"
     },
     {
       "file": "assets/product/favicon.svg",

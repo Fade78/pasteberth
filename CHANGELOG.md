@@ -11,6 +11,11 @@ This file records user-visible changes to Pasteberth.
 - add explicit `--replace` to CLI `copy` and `move`, while always protecting
   foreign or incoherent target files.
 
+### Image Preview Sizing
+
+- enlarge preview images to use available dialog space, preserving aspect ratio
+  and limiting upscaling to four times their native dimensions.
+
 ## [2.1.28] - 2026-09-26
 
 ### Browser-Native Image Previews

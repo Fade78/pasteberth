@@ -1215,6 +1215,7 @@
   }
 
   const PREVIEW_MAX_RETRIES = 3;
+  const PREVIEW_MAX_UPSCALE = 4;
 
   function previewAttemptUrl(url, retry) {
     if (!retry) return url;
@@ -1247,6 +1248,25 @@
     img._previewErrorHandler = onError;
     img.addEventListener("error", onError);
     img.src = url;
+  }
+
+  function resetPreviewImageSize() {
+    pvImg.style.removeProperty("width");
+    pvImg.style.removeProperty("height");
+  }
+
+  function fitPreviewImage(img) {
+    if (img !== pvImg || !img.naturalWidth || !img.naturalHeight) return;
+    const dialogWidth = Math.min(window.innerWidth * 0.92, 1100);
+    const maxWidth = Math.max(1, dialogWidth - 26); // dialog border and padding
+    const maxHeight = Math.max(1, window.innerHeight * 0.68);
+    const scale = Math.min(
+      PREVIEW_MAX_UPSCALE,
+      maxWidth / img.naturalWidth,
+      maxHeight / img.naturalHeight,
+    );
+    img.style.width = `${Math.max(1, Math.floor(img.naturalWidth * scale))}px`;
+    img.style.height = `${Math.max(1, Math.floor(img.naturalHeight * scale))}px`;
   }
 
   async function fetchPreview(url, options) {
@@ -4192,6 +4212,7 @@
     invalidatePreviewLoad();
     setRawHtmlButton(false);
     const storedFilename = filename || decodeURIComponent(url.split("/").pop());
+    resetPreviewImageSize();
     setPreviewSource(pvImg, url);
     pvImg.hidden = false;
     pvText.hidden = true;
@@ -4232,6 +4253,7 @@
     const invoker = document.activeElement;
     const generation = invalidatePreviewLoad();
     setRawHtmlButton(false);
+    resetPreviewImageSize();
     setPreviewSource(pvImg, "");
     setPreviewCopyLabel(item.kind);
     pvRef.textContent = item.reference;
@@ -4285,6 +4307,7 @@
     setPreviewCopyTarget(null, null);
     if (!closeDialog(pv)) {
       setPreviewSource(pvImg, "");
+      resetPreviewImageSize();
       pvText.hidden = true;
       pvImg.hidden = false;
       delete pvDelete.dataset.zone;
@@ -4317,10 +4340,12 @@
     }
   });
   document.getElementById("pv-close").addEventListener("click", closePreview);
+  pvImg.addEventListener("load", () => fitPreviewImage(pvImg));
   pv.addEventListener("click", (event) => { if (event.target === pv) closePreview(); });
   pv.addEventListener("close", () => {
     setRawHtmlButton(false);
     setPreviewSource(pvImg, "");
+    resetPreviewImageSize();
     pvText.hidden = true;
     pvImg.hidden = false;
     delete pvDelete.dataset.zone;
@@ -4341,6 +4366,7 @@
   });
 
   window.addEventListener("resize", () => {
+    if (pv.hasAttribute("open") && !pvImg.hidden) fitPreviewImage(pvImg);
     if (!grid.classList.contains("tab-layout")) return;
     clearTimeout(tabLayoutResizeTimer);
     tabLayoutResizeTimer = window.setTimeout(() => {

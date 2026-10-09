@@ -249,6 +249,8 @@ clipboard. Clipboard permissions are controlled by the browser.
   when bounded structural validation passes. SVG dimensions remain browser-
   determined because an SVG may use an intrinsic `viewBox` instead of fixed
   pixel dimensions.
+- The image preview dialog enlarges the original image to use available space,
+  preserves its aspect ratio, and caps upscaling at four times its native size.
 - Valid UTF-8 content without NUL bytes is displayed as text.
 - Other content is treated as opaque binary.
 - A declared MIME type does not decide whether an image is valid; content
@@ -301,8 +303,9 @@ download its content, copy image or text content when applicable, edit its
 comment, or delete the managed pair. For several selected items, the panel
 offers the corresponding group actions: copy all references, download a ZIP,
 delete the selection, or copy or move the files to another configured zone.
-These actions preserve stored filenames and metadata; a conflicting target is
-rejected without replacing either side.
+These actions preserve stored filenames and metadata. A same-named managed
+target requires replacement authorization; foreign or incoherent targets remain
+conflicts.
 
 Related post-deposit operations are available outside the browser. Use the
 filesystem commands in the [CLI reference](cli.md#command-line-interface) to rename,

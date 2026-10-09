@@ -1192,6 +1192,55 @@ test("colle une image et ouvre son aperçu au clavier", async ({ page }) => {
   await page.getByRole("button", { name: "Close" }).click();
 });
 
+test("agrandit une image dans l'aperçu sans dépasser quatre fois sa taille native", async ({ page }) => {
+  const base64 = await page.evaluate(() => {
+    const canvas = document.createElement("canvas");
+    canvas.width = 100;
+    canvas.height = 80;
+    const context = canvas.getContext("2d");
+    context.fillStyle = "#2563eb";
+    context.fillRect(0, 0, canvas.width, canvas.height);
+    return canvas.toDataURL("image/png").split(",", 2)[1];
+  });
+  const upload = await page.request.post("/api/zones/default/items", {
+    multipart: {
+      file: {
+        name: "native-size.png",
+        mimeType: "image/png",
+        buffer: Buffer.from(base64, "base64"),
+      },
+      preserve_name: "1",
+    },
+  });
+  expect(upload.ok()).toBe(true);
+
+  await openApp(page);
+  await page.locator('[data-zone="default"] .zoom-btn').click();
+  const image = page.locator("#pv-img");
+  await expect(image).toBeVisible();
+  await expect.poll(() => image.evaluate(img => img.naturalWidth)).toBe(100);
+  const dimensions = await image.evaluate(img => {
+    const bounds = img.getBoundingClientRect();
+    const maxWidth = Math.max(1, Math.min(window.innerWidth * 0.92, 1100) - 26);
+    const maxHeight = Math.max(1, window.innerHeight * 0.68);
+    const scale = Math.min(4, maxWidth / img.naturalWidth, maxHeight / img.naturalHeight);
+    return {
+      naturalWidth: img.naturalWidth,
+      naturalHeight: img.naturalHeight,
+      width: bounds.width,
+      height: bounds.height,
+      expectedWidth: Math.floor(img.naturalWidth * scale),
+      expectedHeight: Math.floor(img.naturalHeight * scale),
+    };
+  });
+  expect(dimensions.width).toBe(dimensions.expectedWidth);
+  expect(dimensions.height).toBe(dimensions.expectedHeight);
+  expect(dimensions.width / dimensions.naturalWidth).toBeLessThanOrEqual(4);
+  expect(dimensions.height / dimensions.naturalHeight).toBeLessThanOrEqual(4);
+  expect(dimensions.width).toBeGreaterThan(dimensions.naturalWidth);
+  await page.getByRole("button", { name: "Close" }).click();
+});
+
 test("ignore le résultat tardif d'une copie automatique dépassée", async ({ page }) => {
   await deferClipboard(page);
   await openApp(page);
