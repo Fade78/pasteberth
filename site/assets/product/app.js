@@ -1257,9 +1257,34 @@
 
   function fitPreviewImage(img) {
     if (img !== pvImg || !img.naturalWidth || !img.naturalHeight) return;
-    const dialogWidth = Math.min(window.innerWidth * 0.92, 1100);
-    const maxWidth = Math.max(1, dialogWidth - 26); // dialog border and padding
-    const maxHeight = Math.max(1, window.innerHeight * 0.68);
+    const dialogStyle = window.getComputedStyle(pv);
+    const toolbar = pv.querySelector(".pv-bar");
+    const toolbarStyle = toolbar ? window.getComputedStyle(toolbar) : null;
+    const horizontalChrome = [
+      dialogStyle.paddingLeft,
+      dialogStyle.paddingRight,
+      dialogStyle.borderLeftWidth,
+      dialogStyle.borderRightWidth,
+    ].reduce((total, value) => total + (Number.parseFloat(value) || 0), 0);
+    const verticalChrome = [
+      dialogStyle.paddingTop,
+      dialogStyle.paddingBottom,
+      dialogStyle.borderTopWidth,
+      dialogStyle.borderBottomWidth,
+      toolbarStyle?.marginTop,
+      toolbarStyle?.marginBottom,
+      toolbar ? `${toolbar.getBoundingClientRect().height}px` : "0",
+    ].reduce((total, value) => total + (Number.parseFloat(value) || 0), 0);
+    const maxWidth = Math.max(
+      1,
+      (Number.parseFloat(dialogStyle.maxWidth) || window.innerWidth * 0.92)
+        - horizontalChrome,
+    );
+    const maxHeight = Math.max(
+      1,
+      (Number.parseFloat(dialogStyle.maxHeight) || window.innerHeight * 0.92)
+        - verticalChrome,
+    );
     const scale = Math.min(
       PREVIEW_MAX_UPSCALE,
       maxWidth / img.naturalWidth,
@@ -4231,6 +4256,7 @@
     pvDelete.dataset.filename = storedFilename;
     setPreviewItemLabels(storedFilename);
     openDialog(pv);
+    if (pvImg.complete) fitPreviewImage(pvImg);
   }
 
   function setPreviewItemLabels(filename) {

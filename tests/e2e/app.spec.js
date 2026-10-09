@@ -1241,6 +1241,53 @@ test("agrandit une image dans l'aperçu sans dépasser quatre fois sa taille nat
   await page.getByRole("button", { name: "Close" }).click();
 });
 
+test("utilise la hauteur disponible du dialogue pour une image pleine résolution", async ({ page }) => {
+  const base64 = await page.evaluate(() => {
+    const canvas = document.createElement("canvas");
+    canvas.width = 700;
+    canvas.height = 900;
+    const context = canvas.getContext("2d");
+    context.fillStyle = "#b45309";
+    context.fillRect(0, 0, canvas.width, canvas.height);
+    return canvas.toDataURL("image/png").split(",", 2)[1];
+  });
+  const upload = await page.request.post("/api/zones/default/items", {
+    multipart: {
+      file: {
+        name: "full-resolution.png",
+        mimeType: "image/png",
+        buffer: Buffer.from(base64, "base64"),
+      },
+      preserve_name: "1",
+    },
+  });
+  expect(upload.ok()).toBe(true);
+
+  await openApp(page);
+  await page.locator('[data-zone="default"] .zoom-btn').click();
+  const image = page.locator("#pv-img");
+  await expect(image).toBeVisible();
+  await expect.poll(() => image.evaluate(img => img.naturalHeight)).toBe(900);
+  const dimensions = await page.evaluate(() => {
+    const imageElement = document.getElementById("pv-img");
+    const dialog = document.getElementById("pv");
+    const toolbar = dialog.querySelector(".pv-bar");
+    return {
+      imageHeight: imageElement.getBoundingClientRect().height,
+      toolbarHeight: toolbar.getBoundingClientRect().height,
+      dialogHeight: dialog.getBoundingClientRect().height,
+      dialogScrollHeight: dialog.scrollHeight,
+      viewportHeight: window.innerHeight,
+    };
+  });
+  expect(dimensions.imageHeight).toBeGreaterThan(dimensions.viewportHeight * 0.68);
+  expect(dimensions.dialogHeight).toBeLessThanOrEqual(dimensions.viewportHeight * 0.92 + 1);
+  expect(dimensions.dialogScrollHeight).toBeLessThanOrEqual(dimensions.dialogHeight + 1);
+  expect(dimensions.imageHeight + dimensions.toolbarHeight)
+    .toBeLessThan(dimensions.dialogHeight);
+  await page.getByRole("button", { name: "Close" }).click();
+});
+
 test("ignore le résultat tardif d'une copie automatique dépassée", async ({ page }) => {
   await deferClipboard(page);
   await openApp(page);

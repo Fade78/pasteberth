@@ -1202,7 +1202,7 @@ dialog.dialog-fallback[open] {
 #pv-img {
   display: block;
   max-width: 100%;
-  max-height: 68vh;
+  max-height: 92vh;
   object-fit: contain;
   border-radius: 8px;
 }
